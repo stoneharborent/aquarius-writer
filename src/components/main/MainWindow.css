@@ -1,0 +1,270 @@
+.main-window {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 240px 1fr 320px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* ── Editor ── */
+.mw-editor {
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+  min-width: 0;
+  /* Containing block for the viewers (`.viewer` is absolute/inset:0). Without
+     it they resolve against `.main-window` and cover the sidebar + Spark pane. */
+  position: relative;
+}
+
+.mw-editor-split {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+}
+
+.mw-prose-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.mw-prose-modes {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 6px;
+  z-index: 2;
+}
+
+.mw-mode-btn {
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: 0.5px solid var(--line);
+  background: var(--surface);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.mw-mode-btn:hover { background: var(--bg-soft); color: var(--ink); }
+
+.mw-lock {
+  font-size: 9px;
+  color: var(--accent);
+  margin-left: 4px;
+}
+
+.mw-mono-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+
+.mw-prose {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 40px 56px 56px;
+}
+
+.mw-prose-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+  letter-spacing: 0.02em;
+  margin-bottom: 18px;
+}
+
+.mw-prose-crumb {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mw-status {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.mw-status-final    { background: rgba(91, 139, 92, 0.18); color: var(--success); }
+.mw-status-drafting { background: rgba(194, 139, 34, 0.18); color: var(--starred); }
+.mw-status-rev      { background: rgba(182, 110, 46, 0.18); color: var(--warn); }
+.mw-status-outline  { background: var(--line-strong); color: var(--ink-soft); }
+
+.mw-save {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+}
+.mw-save-dirty  { color: var(--starred); }
+.mw-save-saving { color: var(--accent); }
+.mw-save-saved  { color: var(--success); }
+.mw-save-error  { color: var(--danger); }
+
+.mw-popout-btn {
+  background: transparent;
+  border: 0.5px solid var(--line);
+  color: var(--ink-soft);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.mw-popout-btn:hover {
+  background: var(--surface);
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.4);
+}
+
+.mw-prose-title {
+  font-family: var(--font-serif);
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink-prose);
+  margin: 0 0 22px;
+  line-height: 1.15;
+}
+
+.mw-prose-editor {
+  /* Grow-to-content embed (the editors no longer scroll internally): size to
+     the content so the footer sits below it instead of overlapping. */
+  flex: none;
+  min-height: 320px;
+}
+
+.mw-prose-loading {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  font-style: italic;
+  color: var(--ink-mute);
+}
+
+.mw-prose-foot {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+  display: flex;
+  gap: 14px;
+}
+
+/* placeholder */
+.mw-editor-placeholder {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 40px;
+}
+
+.mw-editor-placeholder > * {
+  display: block;
+  margin: 0 auto 12px;
+}
+
+.mw-editor-title {
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--ink-prose);
+}
+
+.mw-editor-sub {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+/* ── AI panel ── */
+.mw-ai-panel {
+  background: var(--panel);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+}
+
+.mw-ai-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.mw-ai-body { padding: 14px; overflow: auto; }
+
+.mw-ai-idle {
+  font-family: var(--font-serif);
+  font-size: 13px;
+  color: var(--ink-mute);
+  margin: 0;
+}
+
+/* ── split editors ── */
+.mw-split-host { display: flex; height: 100%; min-width: 0; }
+.mw-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+.mw-pane > * { flex: 1; min-height: 0; }
+.mw-pane-secondary { border-left: 1px solid var(--line); }
+.mw-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-soft);
+  flex: none;
+}
+.mw-pane-crumb {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mw-mode-btn.on { background: var(--accent-soft); color: var(--accent); }
+.mw-pane-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mw-pane-body > * { flex: 1; min-height: 0; }
+/* Reference mode: read-only — block editor input, keep scrolling. */
+.mw-readonly .cm-content { pointer-events: none; user-select: text; }

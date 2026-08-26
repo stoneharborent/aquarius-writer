@@ -1,0 +1,46 @@
+/* Print-layout preview — white US-Letter pages, Courier 12, industry indents.
+   Rendered at 612×792 CSS px (1pt = 1px). */
+.sp-scroll {
+  overflow: auto;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 6px 0 14px;
+  background: var(--bg-soft);
+  border-radius: 8px;
+}
+
+.sp-page {
+  position: relative;
+  width: 612px;
+  min-height: 792px;
+  background: #fff;
+  color: #000;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  padding: 72px 0;
+  font: 12px/12px var(--font-mono);
+  flex: none;
+}
+
+.sp-pagenum {
+  position: absolute;
+  top: 30px;
+  right: 72px;
+  font: 12px/12px var(--font-mono);
+}
+
+.sp-line { white-space: pre-wrap; word-wrap: break-word; min-height: 12px; }
+.sp-scene { padding: 24px 72px 0 108px; font-weight: 700; }
+.sp-action, .sp-blank { padding: 12px 72px 0 108px; }
+.sp-action + .sp-action, .sp-blank + .sp-blank,
+.sp-action + .sp-blank, .sp-blank + .sp-action { padding-top: 0; }
+.sp-shot { padding: 24px 72px 0 108px; }
+.sp-character { padding: 12px 90px 0 252px; font-weight: 700; }
+.sp-paren { padding: 0 216px; color: #333; }
+.sp-dialogue { padding: 0 180px; }
+.sp-transition { padding: 12px 101px 0 396px; text-align: right; font-weight: 700; }
+.sp-section { padding: 12px 72px 0 108px; color: var(--accent); font-weight: 700; }
+.sp-synopsis { padding: 0 72px 0 108px; font-style: italic; color: #555; }

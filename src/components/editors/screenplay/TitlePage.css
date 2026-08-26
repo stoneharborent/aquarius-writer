@@ -1,0 +1,45 @@
+.tp {
+  font-family: var(--font-mono);
+  text-align: center;
+  padding: 28px 0 32px;
+  margin-bottom: 28px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.tp-title {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin: 0 0 28px;
+}
+
+.tp-credit,
+.tp-author,
+.tp-source {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 0 0 6px;
+}
+
+.tp-author {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+
+.tp-source {
+  font-style: italic;
+  color: var(--ink-mute);
+}
+
+.tp-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 24px;
+  font-size: 11px;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+}

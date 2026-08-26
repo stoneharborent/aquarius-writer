@@ -1,0 +1,22 @@
+/* Grow-to-content embed: the surrounding article (.mw-prose) is the scroll
+   container. A fixed-height editor with its own internal scroller broke CM's
+   viewport virtualization here (only ~27 lines ever rendered, phantom
+   scroll height) — growing the editor and scrolling the page fixes it. */
+.prose-editor {
+  display: flex;
+}
+
+.prose-editor .cm-editor {
+  flex: 1;
+  height: auto;
+}
+
+.prose-editor .cm-scroller {
+  overflow: visible;
+}
+
+.prose-editor .cm-content {
+  font-family: var(--font-serif);
+  font-size: var(--prose-size);
+  line-height: var(--prose-leading);
+}

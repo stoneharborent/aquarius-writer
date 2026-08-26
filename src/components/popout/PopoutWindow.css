@@ -1,0 +1,64 @@
+.popout {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 32px 1fr;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.popout-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 0.5px solid var(--line);
+  background: var(--bg-soft);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.popout-title {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popout-reattach {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: 0.5px solid var(--line);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.popout-reattach:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.popout-body {
+  overflow: auto;
+  padding: 28px 36px 36px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.popout-loading {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--ink-mute);
+  margin: 60px auto;
+}

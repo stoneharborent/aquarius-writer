@@ -1,0 +1,105 @@
+/* Shared styles for the Find/Trash/VersionDiff sheets. */
+.fr { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+
+.fr-inputs { display: flex; gap: 8px; }
+.fr-inputs input {
+  flex: 1;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+}
+.fr-inputs input:focus { outline: none; border-color: var(--accent); }
+
+.fr-note { margin: 0; font-size: 11px; color: var(--accent); }
+.fr-idle { color: var(--ink-mute); font-size: 12px; padding: 10px 2px; }
+
+.fr-hits {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  max-height: 52vh;
+}
+
+.fr-hit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 9px;
+  background: var(--bg-soft);
+}
+
+.fr-hit-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.fr-hit-main.as-text { cursor: default; }
+
+.fr-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fr-preview {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fr-count { font-family: var(--font-mono); font-size: 10px; color: var(--ink-mute); }
+
+.fr-replace {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  flex: none;
+}
+.fr-replace:hover { background: var(--accent-soft); }
+.fr-replace.danger { color: var(--danger, #c8463b); }
+
+/* diff */
+.vd { min-height: 0; }
+.vd-pre {
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.vd-line { display: block; padding: 0 6px; border-radius: 3px; }
+.vd-add {
+  color: var(--success, #1f9e8c);
+  background: color-mix(in srgb, var(--success, #1f9e8c) 12%, transparent);
+}
+.vd-del {
+  color: var(--danger, #c8463b);
+  background: color-mix(in srgb, var(--danger, #c8463b) 10%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--danger, #c8463b) 45%, transparent);
+}
+.vd-skip { display: block; color: var(--ink-mute); text-align: center; user-select: none; }

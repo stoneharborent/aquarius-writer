@@ -1,0 +1,126 @@
+/* Aquarius Writer — design tokens
+ * Ported from `Aquarius Writer/vault/theme.jsx`.
+ * Theme: [data-theme="parchment" | "midnight"] on <html>.
+ * Accent: [data-accent="blue" | "purple" | "sepia" | "sage"] on <html>.
+ */
+
+:root {
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-serif: "Source Serif 4", "Source Serif Pro", "Iowan Old Style", Georgia, serif;
+  --font-mono: "Courier Prime", "Courier New", ui-monospace, monospace;
+
+  --prose-size: 17px;
+  --prose-leading: 1.65;
+  --ui-size: 13px;
+}
+
+/* ─── Parchment ─── */
+:root[data-theme="parchment"] {
+  --desktop: radial-gradient(120% 100% at 70% 0%, #d8c8a4 0%, #b89c70 55%, #8c6f48 100%);
+
+  --bg: #F4EDE0;
+  --bg-soft: #EDE5D4;
+  --sidebar: rgba(244, 237, 224, 0.86);
+  --surface: #FAF5E9;
+  --surface-alt: #EFE7D3;
+  --panel: #F8F1E2;
+
+  --ink: #2A241D;
+  --ink-prose: #1F1A14;
+  --ink-soft: #5B5247;
+  --ink-mute: #8E8470;
+  --ink-inverse: #FAF5E9;
+
+  --line: rgba(42, 36, 29, 0.08);
+  --line-strong: rgba(42, 36, 29, 0.16);
+
+  --starred: #C28B22;
+  --success: #5B8B5C;
+  --warn: #B66E2E;
+  --danger: #B84A3A;
+
+  --shadow-window: 0 28px 80px rgba(60, 40, 20, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+  --shadow-float: 0 16px 40px rgba(60, 40, 20, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+
+  --spark-bubble: #FBF6EA;
+  --spark-bubble-ink: #2A241D;
+
+  --accent-alpha-soft: 0.14;
+  --accent-alpha-selection: 0.18;
+  --accent-alpha-ring: 0.35;
+}
+
+/* ─── Midnight ─── */
+:root[data-theme="midnight"] {
+  --desktop: radial-gradient(140% 100% at 80% 0%, #2a1d3a 0%, #0e0d12 55%, #050507 100%);
+
+  --bg: #161519;
+  --bg-soft: #1B1A20;
+  --sidebar: rgba(22, 21, 25, 0.84);
+  --surface: #1C1B22;
+  --surface-alt: #23222A;
+  --panel: #1E1D24;
+
+  --ink: #EAE3D4;
+  --ink-prose: #E4DDCD;
+  --ink-soft: #A8A092;
+  --ink-mute: #6E685F;
+  --ink-inverse: #161519;
+
+  --line: rgba(232, 226, 214, 0.07);
+  --line-strong: rgba(232, 226, 214, 0.14);
+
+  --starred: #E6B947;
+  --success: #7BAE7C;
+  --warn: #D8945A;
+  --danger: #D87070;
+
+  --shadow-window: 0 24px 80px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+
+  --spark-bubble: rgba(232, 226, 214, 0.05);
+  --spark-bubble-ink: #EAE3D4;
+
+  --accent-alpha-soft: 0.18;
+  --accent-alpha-selection: 0.22;
+  --accent-alpha-ring: 0.4;
+}
+
+/* ─── Accents (independent of theme) ─── */
+:root[data-theme="parchment"][data-accent="blue"]   { --accent: #3D5FB8; --accent-rgb: 61, 95, 184; }
+:root[data-theme="parchment"][data-accent="purple"] { --accent: #6E51D6; --accent-rgb: 110, 81, 214; }
+:root[data-theme="parchment"][data-accent="sepia"]  { --accent: #A8693B; --accent-rgb: 168, 105, 59; }
+:root[data-theme="parchment"][data-accent="sage"]   { --accent: #5B8B5C; --accent-rgb: 91, 139, 92; }
+
+:root[data-theme="midnight"][data-accent="blue"]    { --accent: #7E9CEC; --accent-rgb: 126, 156, 236; }
+:root[data-theme="midnight"][data-accent="purple"]  { --accent: #9B82FF; --accent-rgb: 155, 130, 255; }
+:root[data-theme="midnight"][data-accent="sepia"]   { --accent: #D9A56B; --accent-rgb: 217, 165, 107; }
+:root[data-theme="midnight"][data-accent="sage"]    { --accent: #7BAE7C; --accent-rgb: 123, 174, 124; }
+
+:root {
+  --accent-soft: rgba(var(--accent-rgb), var(--accent-alpha-soft));
+  --selection: rgba(var(--accent-rgb), var(--accent-alpha-selection));
+  --ring-focus: rgba(var(--accent-rgb), var(--accent-alpha-ring));
+  --accent-ink: #FFFFFF;
+}
+
+/* ─── Base reset & body ─── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--ui-size);
+  color: var(--ink);
+  background: var(--desktop);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+::selection { background: var(--selection); }

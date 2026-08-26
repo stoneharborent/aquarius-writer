@@ -1,0 +1,48 @@
+.gv { padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
+
+.gv-legend {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.gv-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gv-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.gv-meta {
+  margin-left: auto;
+  color: var(--ink-mute);
+}
+
+.gv-svg {
+  background: var(--bg);
+  border: 0.5px solid var(--line);
+  border-radius: 8px;
+}
+
+.gv-node {
+  cursor: pointer;
+}
+
+.gv-node:hover circle {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.gv-node:hover text {
+  font-weight: 600;
+  fill: var(--accent);
+}

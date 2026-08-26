@@ -1,0 +1,43 @@
+/* Grow-to-content embed: the surrounding article (.mw-prose) is the scroll
+   container. A fixed-height editor with its own internal scroller broke CM's
+   viewport virtualization here (only ~27 lines ever rendered, phantom
+   scroll height) — growing the editor and scrolling the page fixes it. */
+.screenplay-editor {
+  display: flex;
+}
+
+.screenplay-editor .cm-editor {
+  flex: 1;
+  height: auto;
+}
+
+.screenplay-editor .cm-scroller {
+  overflow: visible;
+}
+
+.screenplay-editor .cm-content {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 12px;
+}
+
+/* Estimated page breaks — a top rule + "p. N" label on the first line of
+   each new page (line decoration; pure CSS, no widgets). */
+.cm-aq-pagebreak-line {
+  border-top: 1px solid var(--line);
+  margin-top: 22px;
+  padding-top: 10px !important;
+  position: relative;
+}
+.cm-aq-pagebreak-line::before {
+  content: attr(data-page);
+  position: absolute;
+  top: -8px;
+  right: 0;
+  background: var(--surface);
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+}

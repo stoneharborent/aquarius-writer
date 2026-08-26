@@ -1,0 +1,158 @@
+/* Shared rail vocabulary — chapter rail + scenes rail use the same primitives:
+   28px collapsed gutter, drag grip, drop indicator. HANDOFF §2 makes this
+   non-negotiable. */
+
+.rail {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-soft);
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+  user-select: none;
+}
+
+.rail-collapsed {
+  width: 28px;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  gap: 8px;
+}
+
+.rail-title {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.rail-toggle {
+  background: transparent;
+  border: none;
+  color: var(--ink-mute);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.rail-toggle:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+  overflow: auto;
+  flex: 1;
+}
+
+.rail-item {
+  display: grid;
+  grid-template-columns: 12px 6px 18px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 6px 6px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  position: relative;
+}
+
+/* Scenes rail variant — replace the status dot column with a prefix chip. */
+.rail-item .rail-scene-prefix {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+  background: var(--line);
+  padding: 1px 4px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.rail-item.selected .rail-scene-prefix {
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--accent);
+}
+
+.rail-item:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+:root[data-theme="midnight"] .rail-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.rail-item.selected {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+
+.rail-item.drag-over::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.rail-grip {
+  color: var(--ink-mute);
+  font-size: 9px;
+  letter-spacing: -2px;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.rail-item:hover .rail-grip,
+.rail-item.selected .rail-grip {
+  opacity: 0.6;
+}
+
+.rail-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.rail-num {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+  text-align: right;
+}
+
+.rail-item.selected .rail-num {
+  color: var(--accent);
+}
+
+.rail-title-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-words {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+}

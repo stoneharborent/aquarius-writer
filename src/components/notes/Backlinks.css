@@ -1,0 +1,90 @@
+.backlinks {
+  margin-top: 28px;
+  padding: 16px 18px;
+  background: var(--bg-soft);
+  border: 0.5px solid var(--line);
+  border-radius: 10px;
+}
+
+.bl-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-bottom: 10px;
+}
+
+.bl-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--surface);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.bl-empty {
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-style: italic;
+  color: var(--ink-mute);
+  line-height: 1.5;
+}
+
+.bl-empty code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--surface);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 0.5px solid var(--line);
+  font-style: normal;
+}
+
+.bl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bl-link {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--ink);
+  width: 100%;
+}
+
+.bl-link:hover {
+  background: var(--surface);
+}
+
+.bl-name {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.bl-ctx {
+  font-family: var(--font-serif);
+  font-size: 12px;
+  font-style: italic;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}

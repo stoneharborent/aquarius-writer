@@ -1,0 +1,71 @@
+.ov-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: grid;
+  place-items: start center;
+  padding-top: 12vh;
+  z-index: 50;
+  animation: ov-fade 120ms ease;
+}
+
+@keyframes ov-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ov-panel {
+  background: var(--surface);
+  border: 0.5px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-float);
+  max-height: 76vh;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+  animation: ov-rise 140ms ease;
+}
+
+@keyframes ov-rise {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.ov-head {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 0.5px solid var(--line);
+  background: var(--bg-soft);
+  border-radius: 12px 12px 0 0;
+}
+
+.ov-title {
+  flex: 1;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ov-close {
+  background: transparent;
+  border: none;
+  color: var(--ink-mute);
+  font-size: 18px;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ov-close:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.ov-body {
+  flex: 1;
+  overflow: auto;
+}
