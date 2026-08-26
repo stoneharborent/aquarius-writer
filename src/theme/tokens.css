@@ -25,6 +25,22 @@
   --prose-size: 17px;
   --prose-leading: 1.65;
   --ui-size: 13px;
+
+  /* Radius + motion, declared for every theme.
+     AquariusOS overrides them with the tokens.md values (7/9/12/16px,
+     120/220ms at `cubic-bezier(.22,1,.36,1)`). The defaults below are the
+     numbers the component CSS has always hard-coded, so Parchment and
+     Midnight render exactly as they did — this block adds names for values
+     that already existed, it does not change any of them.
+     Only the Stage 4 window chrome reads these so far; the other 94
+     `border-radius` declarations in the component CSS are still literals. */
+  --radius-input: 5px;
+  --radius-button: 6px;
+  --radius-card: 8px;
+  --radius-panel: 12px;
+  --ease: cubic-bezier(.22, 1, .36, 1);
+  --motion-fast: 120ms;
+  --motion-medium: 220ms;
 }
 
 /* ─── Parchment ─── */
@@ -34,6 +50,12 @@
   --bg: #F4EDE0;
   --bg-soft: #EDE5D4;
   --sidebar: rgba(244, 237, 224, 0.86);
+  /* The same colour with the transparency taken out, for browsers with no
+     `backdrop-filter` — WebKitGTK on Linux may be one. See Sidebar.css. */
+  --sidebar-solid: #F4EDE0;
+  /* Hover fill for window furniture (the Linux minimise/maximise/close). It
+     has to differ from `--bg-soft`, which is what the title bar itself is. */
+  --chrome-hover: rgba(42, 36, 29, 0.08);
   --surface: #FAF5E9;
   --surface-alt: #EFE7D3;
   --panel: #F8F1E2;
@@ -70,6 +92,8 @@
   --bg: #161519;
   --bg-soft: #1B1A20;
   --sidebar: rgba(22, 21, 25, 0.84);
+  --sidebar-solid: #161519;
+  --chrome-hover: rgba(232, 226, 214, 0.09);
   --surface: #1C1B22;
   --surface-alt: #23222A;
   --panel: #1E1D24;
@@ -113,6 +137,8 @@
   --bg: #06070C;                    /* void — the app/window background */
   --bg-soft: #161A29;               /* surface-2 — raised chrome: title bar, status bar, hovers */
   --sidebar: rgba(6, 7, 12, 0.86);  /* void, translucent behind the sidebar blur */
+  --sidebar-solid: #06070C;         /* void — the no-backdrop-filter fallback */
+  --chrome-hover: #1D2236;          /* surface-3 — window-furniture hover */
 
   /* THE WRITING SURFACE EXCEPTION.
      `--surface` is the editor page (`.mw-editor`) as well as cards and
@@ -176,10 +202,12 @@
   --font-mono: "AQ JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --ui-size: 13.5px;                /* the OS UI size (KDE ships it as 10pt) */
 
-  /* Radius + motion, straight from tokens.md. Nothing consumes these yet:
-     component CSS hard-codes its radii and transitions, and Stage 3 was scoped
-     not to restructure it. They are declared so the Linux window chrome
-     (Stage 4) has the correct values to reach for. */
+  /* Radius + motion, straight from tokens.md. The Linux window controls read
+     these (Stage 4); the rest of the component CSS still hard-codes its radii
+     and transitions, which Stage 3 was scoped not to restructure. The base
+     `:root` block declares the same names with the values Parchment and
+     Midnight have always drawn, so overriding them here changes only this
+     theme. */
   --radius-input: 7px;
   --radius-button: 9px;
   --radius-card: 12px;

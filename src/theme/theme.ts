@@ -1,3 +1,5 @@
+import { detectPlatform } from "@/lib/platform";
+
 export type ThemeName = "parchment" | "midnight" | "aquarius";
 export type AccentName = "blue" | "purple" | "sepia" | "sage";
 
@@ -37,21 +39,9 @@ export function isAccentName(v: unknown): v is AccentName {
  * stock writing app and should look like the OS on first boot. Everywhere else
  * keeps Parchment, exactly as the design handoff intends.
  *
- * Detection is deliberately the user-agent string rather than a Rust call:
- * the theme has to be on the <html> element before the first paint, an
- * `invoke()` is a promise, and this same check works in the browser preview
- * (`npm run dev`) where there is no Tauri at all.
+ * The platform check itself lives in `lib/platform.ts` — Stage 4's window
+ * chrome asks the same question, so it is one function, not two.
  */
-export function detectPlatform(): "linux" | "macos" | "windows" | "other" {
-  if (typeof navigator === "undefined") return "other";
-  const ua = `${navigator.userAgent} ${navigator.platform ?? ""}`;
-  if (/android/i.test(ua)) return "other";
-  if (/linux|x11|cros/i.test(ua)) return "linux";
-  if (/mac/i.test(ua)) return "macos";
-  if (/win/i.test(ua)) return "windows";
-  return "other";
-}
-
 export function defaultTheme(): ThemeName {
   return detectPlatform() === "linux" ? "aquarius" : "parchment";
 }

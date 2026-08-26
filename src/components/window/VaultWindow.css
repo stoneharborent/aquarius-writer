@@ -11,6 +11,10 @@
 
 /* Titlebar */
 .vw-titlebar {
+  /* `relative` is load-bearing: the Linux window controls hang off the right
+     edge absolutely so that adding them cannot push the centred title
+     off-centre, and so the macOS layout is byte-for-byte what it was. */
+  position: relative;
   display: grid;
   grid-template-columns: 1fr;
   align-items: center;
@@ -35,6 +39,21 @@
 .vw-title-main { font-weight: 600; color: var(--ink); }
 .vw-title-sep { color: var(--ink-mute); }
 .vw-title-sub { color: var(--ink-soft); }
+
+/* Linux only: the title stays centred, but it is not allowed to grow wide
+   enough to slide under the window controls. A long workflow name ellipsises
+   instead. macOS is untouched — the rule never matches there. */
+.vault-window[data-platform="linux"] .vw-title {
+  max-width: calc(100% - 220px);
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.vault-window[data-platform="linux"] .vw-title-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Body */
 .vw-body {
