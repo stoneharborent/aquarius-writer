@@ -13,12 +13,18 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Vault backend (Stage 2). Everything here is cross-platform: std, notify's
+# portable backends (FSEvents on macOS, inotify on Linux), and pure-Rust
+# time/uuid helpers. No Apple-only APIs.
+notify = "6"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
