@@ -4,7 +4,7 @@
 byte-for-byte as delivered. It is never edited. When reality has moved on from
 what it says, the discrepancy is recorded here instead.
 
-Last reviewed: 2026-08-25 (Stage 2 of the Linux port — the Rust vault backend).
+Last reviewed: 2026-08-25 (Stage 3 of the Linux port — the AquariusOS skin).
 
 ---
 
@@ -24,12 +24,12 @@ npm package, pinned in `package.json` at `^1.2.4`, wrapped in `src/lib/fountain.
 The *intent* of the non-negotiable is preserved and still holds: we do not write
 our own Fountain parser, we wire through a library and pin it.
 
-## 2. "Two themes only" — Stage 3 adds a third
+## 2. "Two themes only" — Stage 3 added a third
 
 **HANDOFF.md §2** lists as a non-negotiable: "Two themes only: Parchment (light,
 warm) and Midnight (dark, plum)."
 
-Stage 3 of the Linux port adds a third theme, **AquariusOS**, built from
+Stage 3 of the Linux port added a third theme, **AquariusOS**, built from
 `os-image/branding/tokens.md`. The reason is that this app is the operating
 system's stock writing app, and a stock app that doesn't look like its OS on first
 boot is a bad first-boot story.
@@ -37,12 +37,115 @@ boot is a bad first-boot story.
 The amendment is narrow:
 
 - Parchment and Midnight both remain, and remain selectable on every platform.
+  Neither theme's values changed by a single digit.
 - Parchment stays the **default on macOS**, exactly as the handoff intends.
 - AquariusOS becomes the **default on Linux only**.
 - It reuses the existing mechanism (`:root[data-theme]` + `[data-accent]` CSS
   custom properties) — it is additive, not a rework.
 
-Accent hues (blue / purple / sepia / sage) are unaffected.
+Accent hues (blue / purple / sepia / sage) are unaffected **for Parchment and
+Midnight**. Under AquariusOS the accent is locked — see §2b.
+
+### 2a. Who decides the theme
+
+In order of authority, highest first:
+
+1. **`?theme=` in the URL** — `http://localhost:1420/?theme=aquarius`. A dev and
+   screenshot override; it holds for that tab and is never written to disk.
+2. **What the writer picked** in Settings, the footer, or the command palette.
+   Saved in `localStorage` under `aquarius.theme`, and it wins from then on.
+3. **The theme saved in the workflow** being opened (`.aquarius/workflow.json`).
+4. **The platform default** — AquariusOS on Linux, Parchment everywhere else.
+
+Rule 2 beating rule 3 is deliberate: once someone has chosen a theme, opening an
+older workflow must not silently change the app out from under them. Before Stage
+3 the workflow always won, and the Settings panel and the footer each kept their
+own copy of the theme, which could drift apart. Both now read one store
+(`src/state/themeStore.ts`).
+
+Platform detection is the **user-agent string**, not a Rust call. The theme has to
+be on `<html>` before the first paint, `invoke()` is a promise, and the same check
+works in the browser preview where there is no Tauri at all. `src-tauri/` was not
+touched by this stage.
+
+### 2b. The accent is locked under AquariusOS, and the picker is hidden
+
+tokens.md allows exactly one accent colour: `starlight #8AB4FF`. `nebula` is
+explicitly "never a button colour on its own" and `ancient` gold is "rare on
+purpose", so **there is no legal value for purple, sepia or sage under this
+theme**. Rather than offer three choices that all break the OS look, the accent
+picker is hidden while AquariusOS is selected — in Settings, in the window
+footer, and in the command palette.
+
+The lock is structural, not just UI: `--accent` is declared on
+`:root[data-theme="aquarius"]` itself rather than in four `[data-accent]` rules,
+so a stale `accent: "sepia"` sitting in someone's `workflow.json` cannot leak a
+non-OS colour. Switching back to Parchment or Midnight restores the four hues
+and the picker, with the previous choice intact.
+
+### 2c. The writing surface is deliberately not void black
+
+**This is the decision Royce should look at first in the screenshots.**
+
+The theme's chrome is `void #06070C` — the sidebar, the rails, the window
+background. The **editor page is `surface-1 #10121C` with `text-1` text**, and the
+editor keeps its serif content font (Source Serif). Nothing about the writing
+surface is starlight blue.
+
+The reason: pure void black under a bright blue chrome is a *desktop* look, and
+this app is where someone spends three hours writing a chapter. The lifted, calmer
+page reads as a sheet sitting on the void, which is also what tokens.md itself
+describes surface-1 as ("cards and panels sitting on the void"). The OS identity
+lives in the chrome around the page.
+
+The stage plan (Stage 3, item 4) says this call is Royce's, by screenshot review,
+not the agent's. What is in the repo is the recommendation, not a final answer —
+`docs/screenshots/aquarius/01-main-window.png` shows it, and
+`docs/screenshots/parchment/01-main-window.png` is the control. If Royce wants the
+page to stay parchment-warm inside the dark chrome instead, that is two variables
+(`--surface` and `--ink-prose`); if he wants the page to be void like everything
+else, that is one.
+
+### 2d. Where the gold is
+
+`ancient #E6DDB8` appears **once in the whole app**: the streak line in the Today
+panel ("🔥 6-day streak"), via a theme-scoped rule at the end of `tokens.css`.
+
+It is not used for `--starred`, which sounds like the obvious home for it but is
+really the "drafting" status colour — it paints chapter rows, corkboard cards, the
+outline, the graph and the save indicator, several of them on screen at once.
+That would break tokens.md's "if you are using it twice on one screen you are
+using it wrong". `--starred` takes `warning #E6C069` instead.
+
+### 2e. Type, and why the families are prefixed
+
+Sora (display), Inter (UI) and JetBrains Mono (mono) are bundled as woff2 in
+`src/fonts/` with their OFL licence texts. They are registered as **"AQ Sora"**,
+**"AQ Inter"** and **"AQ JetBrains Mono"**.
+
+The prefix is the point: Parchment and Midnight already list `"Inter"` first in
+`--font-ui`, so registering a webfont named `Inter` would silently change how
+those two themes render on any machine that doesn't have Inter installed. The
+prefix guarantees only AquariusOS asks for the bundled faces.
+
+Each file is a variable font covering its whole weight range, which is why there
+is one file per subset (latin, latin-ext) rather than one per weight. Sora ships
+600–700 only, so two headings that asked for weight 500 are bumped to 600 under
+this theme rather than left to a synthesised weight.
+
+`--font-display` is new and defaults to `var(--font-serif)`, so the six chrome
+headings that now use it render identically under Parchment and Midnight.
+
+### 2f. Radii and motion are declared but nothing reads them
+
+`--radius-input/button/card/panel` (7/9/12/16px) and `--ease` +
+`--motion-fast/medium` (120/220ms, `cubic-bezier(.22,1,.36,1)`) are in the theme
+block with the correct tokens.md values, but **no component uses them**: all 94
+`border-radius` declarations and all 15 transitions in the component CSS are
+hardcoded, and parameterising them was out of scope for this stage. They are
+there so Stage 4's Linux window chrome has the right values to reach for. Anyone
+wiring them up must give Parchment and Midnight the same variables first, or those
+two themes will lose their radii.
 
 ## 3. The on-disk model — built in Stage 2, with three deviations
 
@@ -200,3 +303,26 @@ Two consequences for later stages:
   either, so this is a product gap rather than a backend one.
 - **`macOSPrivateApi`** (§6) is still unset and transparency still inactive. It
   now matters to Stage 3/4, which own the window chrome.
+
+## 9. What Stage 3 left for later
+
+- **Nothing is verified on Linux.** The whole skin was built and screenshotted on
+  macOS in Chrome. WebKitGTK is the renderer on Linux, and the two things most
+  likely to differ are `backdrop-filter: blur(20px)` on the sidebar and the
+  variable-font weight axis. Worth a look the first time the AppImage runs.
+- **The window chrome is still macOS-shaped** (§4, §6). Stage 4 owns it. When it
+  draws Linux window controls, `--radius-panel` (16px), `--line`, `--bg-soft` and
+  the shadow tokens are already correct for AquariusOS; the same controls need
+  Parchment/Midnight values chosen too.
+- **The theme is not written back to the workflow.** Nothing in the app has ever
+  saved `settings.theme` into `workflow.json` — it is read, never written. The
+  writer's choice persists in `localStorage` instead. If per-workflow themes are
+  ever meant to be real, that write is the missing piece.
+- **Type sizes other than `--ui-size` were left alone.** tokens.md's body copy
+  (15px/1.6) and mono label (11px, +0.14em) rules are not applied, because the
+  component CSS sets font sizes directly and this stage was not restructuring it.
+- **Reproducing the screenshots:** start `npm run dev`, then
+  `npm install --no-save playwright-core && node scripts/screenshot-theme.mjs
+  aquarius`. `playwright-core` is installed with `--no-save` on purpose — it is
+  review tooling, not a dependency of the product — and it drives the copy of
+  Chrome already on the machine instead of downloading a browser.

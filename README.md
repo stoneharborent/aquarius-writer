@@ -174,8 +174,8 @@ From `AquariusOS/docs/aquarius-writer-port-plan.md`:
 |---|---|---|
 | **1** | Land the repo here, install the toolchain, prove both dev modes boot on the Mac | ✅ **done** |
 | **2** | **The Rust vault backend.** Implement the 9 file operations for real: open a folder, walk the tree, read/write files with safe atomic saves, soft-delete to trash, watch for outside edits. Move version history / comments / trash off browser storage and onto disk in `.aquarius/`. | ✅ **done** |
-| **3** | **The AquariusOS skin.** A third theme matching the OS design tokens, with the Sora / Inter / JetBrains Mono fonts bundled. Default on Linux; Parchment stays default on macOS. | next |
-| **4** | **Linux identity + packaging.** Draw our own window buttons on Linux, app id `os.aquarius.writer`, desktop entry and icons, AppImage built by CI. | after 2 |
+| **3** | **The AquariusOS skin.** A third theme matching the OS design tokens, with the Sora / Inter / JetBrains Mono fonts bundled. Default on Linux; Parchment stays default on macOS. | ✅ **done** |
+| **4** | **Linux identity + packaging.** Draw our own window buttons on Linux, app id `os.aquarius.writer`, desktop entry and icons, AppImage built by CI. | next |
 | **5** | **Spark on Linux.** Local model lifecycle (Ollama is Linux-native), provider routing, and the rule that every feature is drivable by Spark. | last |
 
 ---
@@ -187,7 +187,8 @@ src/                     the interface (React + TypeScript)
   components/            every screen and panel
   lib/vault/             ← the important seam, see below
   lib/dev/smoke.ts       development-only backend check (AQ_DEV_SMOKE)
-  theme/                 Parchment + Midnight themes (CSS variables)
+  theme/                 Parchment, Midnight + AquariusOS themes (CSS variables)
+  fonts/                 the OS typefaces, bundled (Sora / Inter / JetBrains Mono)
   state/                 app state (zustand stores)
 src-tauri/               the desktop shell (Rust)
   src/lib.rs             app setup + the list of commands the UI can call
@@ -259,10 +260,18 @@ the **`fountain-js` npm package** instead, which is already installed and wired
 up. Don't go looking for the Swift one.
 
 **"Two themes only."** The handoff says Parchment and Midnight and nothing else.
-Stage 3 adds a third, AquariusOS, because the app is the OS's stock app and has to
-look like the OS on first boot. That is a deliberate amendment, recorded in
-`docs/NOTES.md`.
+Stage 3 added a third, AquariusOS, because the app is the OS's stock app and has to
+look like the OS on first boot. It is the default on Linux; Parchment is still the
+default everywhere else, and all three are selectable anywhere. Parchment and
+Midnight are untouched. That is a deliberate amendment, recorded in
+`docs/NOTES.md` §2 — which also explains why the writing page inside the dark
+chrome is deliberately not pure black, the decision Royce is asked to sign off on
+from `docs/screenshots/`.
 
 **Licensing.** Unlike Aquarius Cut (which is an AGPL fork of someone else's app),
-every line here is Royce's own. There are no license obligations — this repo can
-stay private and still ship preinstalled on the OS.
+every line of code here is Royce's own — this repo can stay private and still ship
+preinstalled on the OS. The one obligation comes from the three bundled typefaces
+in `src/fonts/`: Sora, Inter and JetBrains Mono are all SIL Open Font License 1.1,
+which means their licence files travel with the app (they are in that folder) and
+the font files themselves can't be sold on their own. Nothing about OFL touches
+the app's own code or price.
