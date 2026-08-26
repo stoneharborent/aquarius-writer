@@ -1,0 +1,45 @@
+[Desktop Entry]
+# The Linux application entry — what the app is called in the KDE launcher, what
+# icon it uses, and which files it offers to open.
+#
+# This is a Handlebars TEMPLATE, not the finished file. Tauri renders it while
+# bundling and hands us three values:
+#
+#   {{name}}  the productName from tauri.conf.json  -> "Aquarius Writer"
+#   {{exec}}  the binary file name                  -> "aquarius-writer"
+#   {{icon}}  the installed icon's base name        -> "aquarius-writer"
+#
+# It is wired up at bundle.linux.deb.desktopTemplate. That reads like a Debian-
+# only setting, but the AppImage bundler builds a .deb payload first and wraps
+# it, so the AppImage gets this same entry. There is no separate AppImage hook.
+#
+# Everything else below is written out literally, because Tauri exposes no
+# variable for it.
+Type=Application
+Name={{name}}
+GenericName=Writing Studio
+Comment=Local-first writing studio for novels, notes and screenplays
+Exec={{exec}} %U
+Icon={{icon}}
+Terminal=false
+StartupNotify=true
+
+# Where it files in the application menu. Office is the top-level section;
+# WordProcessor is the shelf inside it.
+Categories=Office;WordProcessor;
+
+# Which files "Open With" should offer this app for. Markdown has two names in
+# the wild — the registered `text/markdown` and the older `text/x-markdown`
+# still emitted by some tools — so both are claimed.
+#
+# ⚠️ The `%U` on Exec above is what makes this legal: a desktop entry may only
+# declare MimeType if its Exec accepts a file argument. The app does not read
+# argv yet, so opening a file this way currently just launches the app with the
+# last workflow. Wiring the argument through is a to-do in docs/NOTES.md.
+MimeType=text/markdown;text/x-markdown;
+
+# Ties a running window back to this entry, so the taskbar shows the app's real
+# name and icon instead of a generic window. It has to match the WM_CLASS the
+# toolkit reports, which for a GTK app is the program name — the binary. That is
+# `{{exec}}`, the same value Exec uses.
+StartupWMClass={{exec}}
