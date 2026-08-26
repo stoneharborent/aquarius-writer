@@ -54,14 +54,24 @@ In order of authority, highest first:
    screenshot override; it holds for that tab and is never written to disk.
 2. **What the writer picked** in Settings, the footer, or the command palette.
    Saved in `localStorage` under `aquarius.theme`, and it wins from then on.
-3. **The theme saved in the workflow** being opened (`.aquarius/workflow.json`).
-4. **The platform default** — AquariusOS on Linux, Parchment everywhere else.
+3. **On Linux, the OS skin.** The app is AquariusOS's stock writing app, so it
+   boots looking like the OS unless the writer has said otherwise.
+4. **The theme saved in the workflow** being opened (`.aquarius/workflow.json`).
+5. **Parchment.**
 
-Rule 2 beating rule 3 is deliberate: once someone has chosen a theme, opening an
+Rule 2 beating rule 4 is deliberate: once someone has chosen a theme, opening an
 older workflow must not silently change the app out from under them. Before Stage
 3 the workflow always won, and the Settings panel and the footer each kept their
 own copy of the theme, which could drift apart. Both now read one store
 (`src/state/themeStore.ts`).
+
+Rule 3 beating rule 4 matters more than it looks, and the first version of this
+work got it wrong. **Every `workflow.json` ever written says
+`theme: "parchment"`** — it is the Rust struct's default and nothing in the app
+has ever written a different value (see §9). Without rule 3, a fresh Linux install
+booted in the OS skin and then dropped straight back to Parchment the moment it
+opened its first workflow. On macOS nothing changes: the platform default is
+Parchment there, so per-workflow themes behave exactly as they always have.
 
 Platform detection is the **user-agent string**, not a Rust call. The theme has to
 be on `<html>` before the first paint, `invoke()` is a promise, and the same check

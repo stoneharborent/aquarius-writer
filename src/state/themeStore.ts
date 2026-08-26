@@ -15,11 +15,20 @@ import {
  *
  *   1. `?theme=` in the URL — dev/screenshot override, this tab only.
  *   2. What the writer picked in Settings — saved here, wins forever after.
- *   3. The theme saved in the workflow being opened.
- *   4. The platform default: AquariusOS on Linux, Parchment everywhere else.
+ *   3. On Linux, the OS skin. This app is AquariusOS's stock writing app; it
+ *      boots looking like the OS unless the writer has said otherwise.
+ *   4. The theme saved in the workflow being opened.
+ *   5. Parchment.
  *
- * Rule 2 beating rule 3 is the point: once someone has chosen a theme, opening
+ * Rule 2 beating rule 4 is the point: once someone has chosen a theme, opening
  * an older workflow must not silently change the app out from under them.
+ *
+ * Rule 3 beating rule 4 matters more than it looks. Every workflow.json ever
+ * written says `theme: "parchment"` — it is the Rust struct's default and
+ * nothing in the app has ever written a different value — so without this, a
+ * fresh Linux install would open its first workflow and immediately drop out of
+ * the OS skin. On macOS nothing changes: the platform default is Parchment
+ * there, so workflow themes behave exactly as they always have.
  */
 
 const KEY = "aquarius.theme";
@@ -67,6 +76,9 @@ function persist(s: Stored) {
 const stored = load();
 const override = themeFromQuery();
 
+/** True on the OS itself, where the stock look is not a workflow file's call. */
+const osSkinIsStock = defaultTheme() === "aquarius";
+
 const initial: Stored = {
   theme: override.theme ?? stored.theme,
   accent: override.accent ?? stored.accent,
@@ -99,7 +111,7 @@ export const useTheme = create<ThemeState>((set, get) => ({
 
   adoptWorkflow(c) {
     const s = get();
-    if (s.explicit) return;
+    if (s.explicit || osSkinIsStock) return;
     const theme = isThemeName(c.theme) ? c.theme : s.theme;
     const accent = isAccentName(c.accent) ? c.accent : s.accent;
     if (theme === s.theme && accent === s.accent) return;
