@@ -52,9 +52,31 @@ impl SelfWrites {
 /// Resolve symlinks so the ledger and the watcher agree on one spelling of a
 /// path. macOS reports events under `/private/var/...` for a vault opened as
 /// `/var/...`; without this, echo suppression would silently never match.
-/// A path that no longer exists (a delete event) keeps its literal form.
+///
+/// The path itself may not exist at the moment we canonicalise it — the ledger
+/// is stamped *before* a write, so a brand-new file has no inode yet (nor does
+/// the folder the write is about to create), and a delete is checked *after*
+/// the file is gone. So walk up to the nearest ancestor that does exist,
+/// canonicalise that, and re-attach the tail. Without this, the two halves of a
+/// file creation (stamped `/var/…`, reported `/private/var/…`) never match and
+/// the app's own new file reads as an external edit.
 fn canonical(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    if let Ok(resolved) = std::fs::canonicalize(path) {
+        return resolved;
+    }
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = path;
+    while let (Some(parent), Some(name)) = (cursor.parent(), cursor.file_name()) {
+        tail.push(name.to_os_string());
+        if let Ok(mut resolved) = std::fs::canonicalize(parent) {
+            for part in tail.iter().rev() {
+                resolved.push(part);
+            }
+            return resolved;
+        }
+        cursor = parent;
+    }
+    path.to_path_buf()
 }
 
 /// Should this path produce a "vault changed" notification?
@@ -210,6 +232,29 @@ mod tests {
             is_interesting(root, Path::new("/vault/Drafts/Ch_02.md"), &sw),
             "a different file is still an external change"
         );
+    }
+
+    #[test]
+    fn a_path_stamped_before_it_exists_still_matches_its_event() {
+        // The ledger is stamped *before* the write, so at `record` time neither
+        // the new file nor the folder it lands in exists yet. Both spellings
+        // have to canonicalise the same way or a file the app creates itself
+        // comes back as an external edit.
+        let t = TempDir::new("watch-create");
+        let target = t.path().join("Drafts/Ch_09.md");
+        let sw = SelfWrites::default();
+        sw.record(&target);
+
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "new").unwrap();
+
+        assert!(sw.is_own(&target), "the create's own event must be suppressed");
+        assert!(!is_interesting(t.path(), &target, &sw));
+
+        // And a file it did not write is still an external change.
+        let other = t.path().join("Drafts/Ch_10.md");
+        std::fs::write(&other, "external").unwrap();
+        assert!(is_interesting(t.path(), &other, &sw));
     }
 
     #[test]
