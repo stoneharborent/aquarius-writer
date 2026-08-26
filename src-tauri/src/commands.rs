@@ -16,7 +16,7 @@ use crate::model::{AssetRef, LoadedWorkflow, WorkflowSummary};
 use crate::state::AppState;
 use crate::vault::{self, paths, registry, tree, workflow};
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 /// Emitted when a workflow's folder changed on disk. Payload: `{ workflowId }`.
@@ -29,15 +29,7 @@ fn io(e: impl std::fmt::Display) -> String {
 }
 
 fn root_of(state: &AppState, workflow_id: &str) -> R<PathBuf> {
-    let reg = state.registry.lock().unwrap();
-    let entry = reg
-        .find(workflow_id)
-        .ok_or_else(|| format!("unknown workflow: {workflow_id}"))?;
-    let path = PathBuf::from(&entry.path);
-    if !path.is_dir() {
-        return Err(format!("workflow folder is not available: {}", entry.path));
-    }
-    Ok(path)
+    state.root_for(workflow_id)
 }
 
 fn file_in(state: &AppState, workflow_id: &str, rel: &str) -> R<PathBuf> {
@@ -337,6 +329,64 @@ pub fn trash_restore(
 pub fn trash_purge(state: State<'_, AppState>, workflow_id: String, id: String) -> R<()> {
     let root = root_of(&state, &workflow_id)?;
     trash::purge(&root, &id).map_err(io)
+}
+
+// ── the MCP server ───────────────────────────────────────────────────────
+//
+// Three commands, all for the Settings panel: read the state, flip the switch,
+// change the port. The server itself lives in `crate::mcp`.
+
+#[tauri::command]
+pub fn mcp_status(app: AppHandle) -> R<crate::mcp::McpStatus> {
+    Ok(crate::mcp::status(&app, None))
+}
+
+#[tauri::command]
+pub fn mcp_set_enabled(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> R<crate::mcp::McpStatus> {
+    let mcp = app.state::<crate::mcp::McpState>();
+    // Persist the intent even if starting fails, so the toggle reflects what
+    // the writer asked for and Settings can show why it isn't running.
+    {
+        let mut config = mcp.config.lock().unwrap();
+        config.enabled = enabled;
+        let _ = crate::mcp::save_config(&state.config_dir, &config);
+    }
+    let error = if enabled {
+        crate::mcp::start(&app).err()
+    } else {
+        crate::mcp::stop(&app);
+        None
+    };
+    Ok(crate::mcp::status(&app, error))
+}
+
+#[tauri::command]
+pub fn mcp_set_port(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    port: u16,
+) -> R<crate::mcp::McpStatus> {
+    crate::mcp::validate_port(port)?;
+    let was_running = {
+        let mcp = app.state::<crate::mcp::McpState>();
+        let running = mcp.running.lock().unwrap().is_some();
+        let mut config = mcp.config.lock().unwrap();
+        config.port = port;
+        let _ = crate::mcp::save_config(&state.config_dir, &config);
+        running
+    };
+    // A live server has to be rebound; a stopped one just remembers the number.
+    let error = if was_running {
+        crate::mcp::stop(&app);
+        crate::mcp::start(&app).err()
+    } else {
+        None
+    };
+    Ok(crate::mcp::status(&app, error))
 }
 
 // ── development entry points ─────────────────────────────────────────────

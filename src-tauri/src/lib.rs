@@ -4,10 +4,16 @@
 //! Nine `VaultService` methods, a file watcher, and the `.aquarius/` metadata
 //! store, all written against `std` and portable crates so the same code
 //! serves macOS today and AquariusOS/Linux next.
+//!
+//! Since Stage 5 there is a **second door onto the same service**: an opt-in
+//! MCP server (`mcp/`) that lets an external AI app — Claude Code, Claude
+//! Desktop — drive the vault. Both doors call the same `vault::ops`; neither
+//! has logic the other lacks.
 
 mod aux_store;
 mod commands;
 mod fs_ops;
+mod mcp;
 mod model;
 mod state;
 mod testutil;
@@ -28,8 +34,20 @@ pub fn run() {
             std::fs::create_dir_all(&config_dir).ok();
             let registry = vault::registry::load(&config_dir);
             app.manage(AppState::new(config_dir, registry));
+            app.manage(mcp::McpState::default());
             open_dev_vault(app.handle());
+            // After the dev vault, so a smoke run has something registered by
+            // the time a client can connect.
+            mcp::restore_on_launch(app.handle());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Closing the last window ends the process, but the listener is
+            // ours to close politely — and on a platform where the app can
+            // outlive its window, an orphaned open port would be a surprise.
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                mcp::stop(&window.app_handle().clone());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::vault_list_workflows,
@@ -53,6 +71,9 @@ pub fn run() {
             commands::aux_trash_list,
             commands::trash_restore,
             commands::trash_purge,
+            commands::mcp_status,
+            commands::mcp_set_enabled,
+            commands::mcp_set_port,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aquarius Writer");
