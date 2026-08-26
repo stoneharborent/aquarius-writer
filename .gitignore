@@ -1,6 +1,9 @@
 # --- JavaScript / Node ---
 node_modules
 node_modules.nosync
+# iCloud makes "node_modules 2", "node_modules 3"… when it thinks two machines
+# touched the folder at once. Never commit those.
+node_modules [0-9]*
 npm-debug.log*
 yarn-error.log*
 .npm
