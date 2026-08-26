@@ -34,7 +34,7 @@ async function shot(name) {
 await page.goto(`${base}/?theme=${theme}`, { waitUntil: "networkidle" });
 await page.evaluate(() => document.fonts.ready);
 
-// 1. The main window: sidebar, editor, Spark panel.
+// 1. The main window: sidebar, editor, right pane.
 await shot("01-main-window");
 
 // 2. An overlay on top of it — the command palette.

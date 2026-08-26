@@ -10,11 +10,9 @@ import {
 import { useTheme } from "@/state/themeStore";
 import { useVault } from "@/state/vaultStore";
 import { PROVIDERS, useSync } from "@/state/syncStore";
-import { useLicense } from "@/state/licenseStore";
 import "./Settings.css";
-import "@/components/pricing/Pricing.css";
 
-type Tab = "appearance" | "sync" | "workflows" | "pricing" | "about";
+type Tab = "appearance" | "sync" | "workflows" | "about";
 
 export function Settings() {
   const [tab, setTab] = useState<Tab>("appearance");
@@ -28,7 +26,7 @@ export function Settings() {
     <Overlay title="Settings" width={720}>
       <div className="st">
         <nav className="st-nav">
-          {(["appearance", "sync", "workflows", "pricing", "about"] as Tab[]).map((t) => (
+          {(["appearance", "sync", "workflows", "about"] as Tab[]).map((t) => (
             <button
               key={t}
               className={`st-nav-btn${tab === t ? " active" : ""}`}
@@ -117,8 +115,6 @@ export function Settings() {
 
           {tab === "sync" && <SyncTab />}
 
-          {tab === "pricing" && <PricingTab />}
-
           {tab === "workflows" && (
             <>
               <div className="st-section">
@@ -141,110 +137,18 @@ export function Settings() {
             <div className="st-section st-about">
               <h3>Aquarius Writer</h3>
               <div className="st-about-version">v0.0.1 · build phase 9</div>
-              <p>Local-first writing studio. No telemetry. Files live on disk.</p>
+              <p>
+                Local-first writing studio. Free, no tiers, no telemetry. Files
+                live on disk.
+              </p>
               <p className="st-help">
-                Stack: Tauri 2 · React 18 · TypeScript · CodeMirror 6 · pdf.js · Ollama · Pandoc.
+                Stack: Tauri 2 · React 18 · TypeScript · CodeMirror 6 · pdf.js · Pandoc.
               </p>
             </div>
           )}
         </div>
       </div>
     </Overlay>
-  );
-}
-
-function PricingTab() {
-  const license = useLicense();
-
-  return (
-    <>
-      <div className="st-section">
-        <h3>Your tier</h3>
-        <div className="pr-current">
-          <span className="pr-current-tier">
-            {license.base}{license.spark ? " · Spark" : ""}
-          </span>
-          <span className="pr-current-detail">
-            {license.base === "studio"
-              ? "Studio · the whole writing toolkit, paid once."
-              : "Notes · free forever. Markdown editor, themes, graph, terminal, markdown/PDF export."}
-            {license.spark && " Spark add-on enabled — local AI runs on this machine."}
-          </span>
-        </div>
-      </div>
-
-      <div className="st-section">
-        <h3>All tiers</h3>
-        <div className="pr-grid">
-          <article className={`pr-card${license.base === "notes" && !license.spark ? " active" : ""}`}>
-            <div className="pr-name">Notes</div>
-            <div className="pr-price">Free forever</div>
-            <ul className="pr-perks">
-              <li>Markdown editor + WYSIWYG</li>
-              <li>Themes (Parchment / Midnight / AquariusOS)</li>
-              <li>Graph view + search</li>
-              <li>Terminal pane (BYO CLI agent)</li>
-              <li>Markdown + PDF export</li>
-            </ul>
-            {license.base === "studio" && (
-              <button className="pr-action ghost" onClick={() => license.downgradeToNotes()}>
-                Downgrade
-              </button>
-            )}
-          </article>
-
-          <article className={`pr-card${license.base === "studio" ? " active" : ""}`}>
-            <span className="pr-tag">Recommended</span>
-            <div className="pr-name">Studio</div>
-            <div className="pr-price">$50 once</div>
-            <ul className="pr-perks">
-              <li>Everything in Notes</li>
-              <li>Manuscript outline + corkboard</li>
-              <li>Screenplay editor (Fountain) + scenes rail</li>
-              <li>Chapter rail inside the prose editor</li>
-              <li>EPUB · Word · FDX · PDF export</li>
-              <li>All future writing tools</li>
-            </ul>
-            {license.base !== "studio" && (
-              <button className="pr-action" onClick={() => license.upgradeToStudio()}>
-                Unlock · $50
-              </button>
-            )}
-          </article>
-
-          <article className={`pr-card${license.spark ? " active" : ""}`}>
-            <div className="pr-name">Spark</div>
-            <div className="pr-price">$5/mo add-on</div>
-            <ul className="pr-perks">
-              <li>Local AI writing companion</li>
-              <li>Bundled model, runs offline</li>
-              <li>Persona presets</li>
-              <li>No API keys, no telemetry</li>
-              <li>Works on Notes or Studio</li>
-            </ul>
-            {!license.spark ? (
-              <button className="pr-action" disabled title="Spark ships in a later web phase">
-                Set up Spark
-              </button>
-            ) : (
-              <button className="pr-action ghost" onClick={() => license.disableSpark()}>
-                Disable
-              </button>
-            )}
-          </article>
-        </div>
-      </div>
-
-      <div className="st-section">
-        <h3>Fine print</h3>
-        <p className="st-help">
-          Studio is a one-time purchase, tied to your machine but transferable.
-          Spark is $5/month and can be paused anytime — the model on disk stays
-          yours. There's no enterprise tier and no per-seat pricing; if you're
-          a team, every writer buys their own copy.
-        </p>
-      </div>
-    </>
   );
 }
 

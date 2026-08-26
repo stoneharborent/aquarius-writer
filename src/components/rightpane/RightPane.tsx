@@ -1,5 +1,8 @@
-// Right pane — Comments + Versions tabs, the web mirror of the desktop's
-// right pane with Spark/terminal excluded (spec 2026-07-25). Collapsible.
+// Right pane — Comments + Versions tabs. Collapsible.
+//
+// There is no third tab. The embedded AI panel this pane once made room for
+// was cut in Stage 5 (Royce, 2026-08-25: no embedded agent); external AI apps
+// drive the vault through the MCP server instead — see src-tauri/src/mcp/.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelRightIcon } from "@/icons";
 import { useVault } from "@/state/vaultStore";

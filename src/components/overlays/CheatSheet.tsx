@@ -35,16 +35,7 @@ const GROUPS: { name: string; rows: ShortcutRow[] }[] = [
     name: "View",
     rows: [
       { combo: "⌘\\", label: "Toggle sidebar" },
-      { combo: "⌘⌥\\", label: "Toggle Spark panel" },
       { combo: "⌘⇧L", label: "Toggle theme (Parchment / Midnight)" },
-    ],
-  },
-  {
-    name: "AI",
-    rows: [
-      { combo: "⌘J", label: "Focus Spark prompt" },
-      { combo: "⌘⇧J", label: "Open Terminal pane" },
-      { combo: "⌘⇧P", label: "Pin reference chip" },
     ],
   },
   {

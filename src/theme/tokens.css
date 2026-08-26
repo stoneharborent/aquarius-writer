@@ -58,7 +58,6 @@
   --chrome-hover: rgba(42, 36, 29, 0.08);
   --surface: #FAF5E9;
   --surface-alt: #EFE7D3;
-  --panel: #F8F1E2;
 
   --ink: #2A241D;
   --ink-prose: #1F1A14;
@@ -77,9 +76,6 @@
   --shadow-window: 0 28px 80px rgba(60, 40, 20, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
   --shadow-float: 0 16px 40px rgba(60, 40, 20, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
 
-  --spark-bubble: #FBF6EA;
-  --spark-bubble-ink: #2A241D;
-
   --accent-alpha-soft: 0.14;
   --accent-alpha-selection: 0.18;
   --accent-alpha-ring: 0.35;
@@ -96,7 +92,6 @@
   --chrome-hover: rgba(232, 226, 214, 0.09);
   --surface: #1C1B22;
   --surface-alt: #23222A;
-  --panel: #1E1D24;
 
   --ink: #EAE3D4;
   --ink-prose: #E4DDCD;
@@ -114,9 +109,6 @@
 
   --shadow-window: 0 24px 80px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
   --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
-
-  --spark-bubble: rgba(232, 226, 214, 0.05);
-  --spark-bubble-ink: #EAE3D4;
 
   --accent-alpha-soft: 0.18;
   --accent-alpha-selection: 0.22;
@@ -149,7 +141,6 @@
   --surface: #10121C;               /* surface-1 */
   --surface-alt: #161A29;           /* surface-2 — popovers, menus */
   --surface-3: #1D2236;             /* surface-3 — tooltips / topmost layer */
-  --panel: #10121C;                 /* surface-1 — the Spark panel */
 
   --ink: #EDEFF7;                   /* text-1 */
   --ink-prose: #EDEFF7;             /* text-1 — body text on the writing surface */
@@ -174,9 +165,6 @@
 
   --shadow-window: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 0.5px rgba(237, 239, 247, 0.08);  /* pop shadow + border-1 hairline */
   --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(237, 239, 247, 0.08);  /* card shadow + border-1 hairline */
-
-  --spark-bubble: #161A29;          /* surface-2 */
-  --spark-bubble-ink: #EDEFF7;      /* text-1 */
 
   --accent-alpha-soft: 0.16;        /* selection wash — starlight @ 16% */
   --accent-alpha-selection: 0.16;   /* selection */
@@ -248,7 +236,6 @@
       -0.02em tracking. */
 :root[data-theme="aquarius"] .sw-title,
 :root[data-theme="aquarius"] .ms-title { font-weight: 600; letter-spacing: -0.02em; }
-:root[data-theme="aquarius"] .ul-title { letter-spacing: -0.02em; }
 
 /* 2. Ancient gold, used exactly once in the whole app: the Today panel's
       streak line. tokens.md — "if you are using it twice on one screen you are
@@ -257,21 +244,16 @@
 
 /* 3. Accent hover / press. Everywhere else these buttons brighten with a
       filter; AquariusOS has exact values for both states, so use them.
-      `.ghost` is excluded — it is not an accent-filled button. */
+      (`.pr-action` and `.ul-primary` were in this list until the pricing
+      surfaces were removed in Stage 5.) */
 :root[data-theme="aquarius"] .cm-go:hover,
-:root[data-theme="aquarius"] .cf-keep:hover,
-:root[data-theme="aquarius"] .ul-primary:hover,
-:root[data-theme="aquarius"] .sp-go:hover:not(:disabled),
-:root[data-theme="aquarius"] .pr-action:not(.ghost):hover {
+:root[data-theme="aquarius"] .cf-keep:hover {
   background: var(--accent-hover);
   filter: none;
 }
 
 :root[data-theme="aquarius"] .cm-go:active,
-:root[data-theme="aquarius"] .cf-keep:active,
-:root[data-theme="aquarius"] .ul-primary:active,
-:root[data-theme="aquarius"] .sp-go:active:not(:disabled),
-:root[data-theme="aquarius"] .pr-action:not(.ghost):active {
+:root[data-theme="aquarius"] .cf-keep:active {
   background: var(--accent-press);
   filter: none;
 }

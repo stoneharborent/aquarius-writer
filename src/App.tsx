@@ -4,8 +4,6 @@ import { MainWindow } from "@/components/main/MainWindow";
 import { SelectWorkflow } from "@/components/workflows/SelectWorkflow";
 import { OverlayRoot } from "@/components/overlays/OverlayRoot";
 import { ConflictDialog } from "@/components/safety/ConflictDialog";
-import { UnlockDialog } from "@/components/pricing/UnlockDialog";
-import { useLicense } from "@/state/licenseStore";
 import {
   ACCENTS,
   AccentName,
@@ -29,7 +27,6 @@ export default function App() {
   const overlay = useOverlay();
   const popout = usePopout();
   const popoutPath = getPopoutPath();
-  const license = useLicense();
 
   const shortcuts = useMemo<Shortcut[]>(() => [
     { id: "palette", combo: "⌘P", group: "navigation", label: "Command palette",
@@ -103,9 +100,6 @@ export default function App() {
       footerLeft={
         <>
           <span>v0.0.1</span>
-          <span className={`lic-badge ${license.base === "studio" ? "studio" : ""} ${license.spark ? "spark" : ""}`}>
-            {license.base}
-          </span>
           {current && (
             <button className="vw-link" onClick={closeWorkflow}>
               ← workflows
@@ -149,7 +143,6 @@ export default function App() {
       {current ? <MainWindow /> : booted ? <SelectWorkflow /> : null}
       <OverlayRoot />
       <ConflictDialog />
-      <UnlockDialog />
     </VaultWindow>
   );
 }

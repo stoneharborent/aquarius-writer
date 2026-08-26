@@ -15,7 +15,6 @@ import { VideoViewer } from "@/components/viewers/VideoViewer";
 import { useSplit } from "@/state/splitStore";
 import { GhostSlot } from "@/components/popout/GhostSlot";
 import { usePopout } from "@/state/popoutStore";
-import { useLicense } from "@/state/licenseStore";
 import { Backlinks } from "@/components/notes/Backlinks";
 import { ManuscriptView } from "@/components/manuscript/ManuscriptView";
 import { RightPane } from "@/components/rightpane/RightPane";
@@ -75,7 +74,6 @@ export function MainWindow() {
 /** One document rendered by kind — shared by the primary and split panes. */
 function DocView({ path, secondary = false }: { path: string | null; secondary?: boolean }) {
   const { current, selectPath, setView, reorderChapters, activeDraftId } = useVault();
-  const license = useLicense();
   const draft = current?.drafts.find((d) => d.id === activeDraftId) ?? current?.drafts[0];
   const chapters = draft?.chapterOrder ?? current?.manuscripts[0]?.chapterOrder ?? [];
   const isChapter = path ? chapters.includes(path) : false;
@@ -85,7 +83,7 @@ function DocView({ path, secondary = false }: { path: string | null; secondary?:
   if (isChapter) {
     return (
       <div className="mw-editor-split">
-        {license.base === "studio" && !secondary && (
+        {!secondary && (
           <ChapterRail
             chapters={chapters}
             selected={path}
@@ -96,13 +94,11 @@ function DocView({ path, secondary = false }: { path: string | null; secondary?:
         <div className="mw-prose-wrap">
           {!secondary && (
             <div className="mw-prose-modes">
-              <button className="mw-mode-btn"
-                onClick={() => license.requestStudioFeature("manuscript") && setView("outline")}>
-                Outline {license.base !== "studio" && <span className="mw-lock">✦</span>}
+              <button className="mw-mode-btn" onClick={() => setView("outline")}>
+                Outline
               </button>
-              <button className="mw-mode-btn"
-                onClick={() => license.requestStudioFeature("corkboard") && setView("corkboard")}>
-                Cards {license.base !== "studio" && <span className="mw-lock">✦</span>}
+              <button className="mw-mode-btn" onClick={() => setView("corkboard")}>
+                Cards
               </button>
             </div>
           )}
@@ -124,10 +120,7 @@ function DocView({ path, secondary = false }: { path: string | null; secondary?:
     return <VideoViewer key={path} workflowId={current.id} path={path} />;
   }
   if (path.endsWith(".fountain")) {
-    return license.base === "studio"
-      ? <ScreenplayPane key={path} workflowId={current.id} path={path} />
-      : <GatedPlaceholder onUnlock={() => license.requestStudioFeature("fountain")}
-          kind="fountain" path={path} />;
+    return <ScreenplayPane key={path} workflowId={current.id} path={path} />;
   }
   if (path.endsWith(".md")) {
     return <NotePane key={path} workflowId={current.id} path={path} />;
@@ -345,31 +338,6 @@ function SaveBadge({ status }: { status: string }) {
     : status === "error" ? "save failed"
     : "clean";
   return <span className={`mw-save mw-save-${status}`}>{label}</span>;
-}
-
-function GatedPlaceholder({
-  path, onUnlock,
-}: { kind: "fountain"; path: string; onUnlock: () => boolean }) {
-  return (
-    <div className="mw-editor-placeholder">
-      <ScreenplayIconStub />
-      <h1 className="mw-editor-title">Screenplay editor is a Studio feature</h1>
-      <p className="mw-editor-sub">
-        <span className="mw-mono-path">{path}</span> is a Fountain screenplay.
-        Studio unlocks the editor, scenes rail, title page, and FDX export.
-      </p>
-      <button className="ul-primary" onClick={onUnlock}>Unlock Studio · $50 once</button>
-    </div>
-  );
-}
-
-function ScreenplayIconStub() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 16 16" fill="none" stroke="var(--ink-mute)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2.5" y="2.5" width="11" height="11" rx="1.2" />
-      <path d="M5 6h6M5 8.5h6M5 11h4" />
-    </svg>
-  );
 }
 
 function EditorPlaceholder({ selectedPath }: { selectedPath: string | null }) {
