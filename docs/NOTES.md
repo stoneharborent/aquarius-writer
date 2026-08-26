@@ -68,7 +68,53 @@ On Linux, `decorations: false` means the window would have **no close/minimise/
 maximise buttons at all**. Stage 4 draws platform-correct controls. These settings
 were deliberately left untouched in Stage 1.
 
-## 5. No Tauri capabilities file
+## 5. App icons were missing entirely, and are now the Swift app's logo
+
+`src-tauri/icons/` arrived **empty**, while `tauri.conf.json` listed five icon
+files under it. This is a hard build failure, not a cosmetic gap — Tauri's
+`generate_context!` macro reads the icons at compile time, so the Rust crate
+would not compile at all:
+
+```
+error: proc macro panicked
+  = help: message: failed to open icon .../src-tauri/icons/32x32.png:
+          No such file or directory (os error 2)
+```
+
+Stage 1 generated the full set with `npx tauri icon`, using
+`Branches/Apps/AquariusWriter/swift/Logo-Master-4K.png` (the Swift app's own
+4096×4096 master logo) as the source — the app's real identity, not a placeholder
+shape.
+
+Two things to know:
+
+- The generator also emitted `icons/android/` and `icons/ios/`. This repo is the
+  desktop track (macOS + Linux); those folders are unused. They were left in
+  place rather than deleted, and `npx tauri icon <source>` regenerates everything
+  in one command if the source logo ever changes.
+- **Stage 4 owns final Linux identity** — app id `os.aquarius.writer`, the
+  `.desktop` entry, and icons generated from `os-image/branding/logo.svg`. If
+  Royce wants the OS-branded mark instead of the Writer mark on Linux, that
+  decision belongs to Stage 4, and these icons are what it replaces.
+
+## 6. Transparent window without `macOSPrivateApi`
+
+Running the shell prints:
+
+```
+The window is set to be transparent but the `macos-private-api` is not enabled.
+```
+
+`tauri.conf.json` sets `transparent: true`, but `app.macOSPrivateApi` is not set,
+so transparency is silently inactive on macOS. The app runs fine — this is a
+warning, not an error.
+
+It was **deliberately not changed in Stage 1**, because enabling
+`macOSPrivateApi` has a real consequence: apps using it are rejected from the Mac
+App Store. That is a distribution decision for Royce, and the window-chrome work
+belongs to Stages 3–4 anyway.
+
+## 7. No Tauri capabilities file
 
 Tauri 2 gates every plugin call behind a permission set in
 `src-tauri/capabilities/*.json`. This repo has **no `capabilities/` directory**,
