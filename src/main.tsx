@@ -9,3 +9,19 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
   </React.StrictMode>,
 );
+
+// Development-only backend check. Runs when the shell was started with
+// AQ_DEV_VAULT + AQ_DEV_SMOKE=1 (see src/lib/dev/smoke.ts); the dynamic import
+// inside the DEV guard keeps it out of production bundles entirely.
+if (import.meta.env.DEV && typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
+  void (async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    try {
+      const ctx = await invoke<{ workflowId: string | null; smoke: boolean }>("dev_context");
+      if (ctx.smoke && ctx.workflowId) {
+        const { runDevSmoke } = await import("@/lib/dev/smoke");
+        await runDevSmoke(ctx.workflowId);
+      }
+    } catch { /* not a dev shell — nothing to do */ }
+  })();
+}
