@@ -170,9 +170,11 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Local time, matching the snapshot folders — a writer looking in `trash/`
+/// should see the hour they actually deleted something.
 fn stamp(now_ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(now_ms)
-        .map(|dt| dt.format("%Y-%m-%dT%H-%M-%S").to_string())
+        .map(|dt| dt.with_timezone(&chrono::Local).format("%Y-%m-%dT%H-%M-%S").to_string())
         .unwrap_or_else(|| "unknown-time".into())
 }
 

@@ -271,7 +271,17 @@ pub fn hydrate(root: &Path) -> AuxSnapshot {
         }
     }
 
-    let trash = crate::fs_ops::trash::read_index(root)
+    AuxSnapshot {
+        versions,
+        comments: read_comments(root),
+        trash: trash_entries(root),
+        searches: read_searches(root),
+    }
+}
+
+/// The Recently Deleted list, rebuilt from the real trash on disk.
+pub fn trash_entries(root: &Path) -> Vec<TrashEntry> {
+    crate::fs_ops::trash::read_index(root)
         .entries
         .into_iter()
         .map(|r| {
@@ -285,14 +295,7 @@ pub fn hydrate(root: &Path) -> AuxSnapshot {
                 body: fs::read_to_string(&stored).unwrap_or_default(),
             }
         })
-        .collect();
-
-    AuxSnapshot {
-        versions,
-        comments: read_comments(root),
-        trash,
-        searches: read_searches(root),
-    }
+        .collect()
 }
 
 fn stamp(at_ms: i64) -> String {

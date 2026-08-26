@@ -250,7 +250,10 @@ pub fn vault_watch_start(app: AppHandle, state: State<'_, AppState>, workflow_id
     let handle = app.clone();
     let id = workflow_id.clone();
     let watch = WorkflowWatch::start(&root, state.self_writes.clone(), move || {
-        let _ = handle.emit(CHANGE_EVENT, serde_json::json!({ "workflowId": id }));
+        if cfg!(debug_assertions) {
+            println!("[watch] {id}: external change — notifying the renderer");
+        }
+        let _ = handle.emit(CHANGE_EVENT, serde_json::json!({ "workflowId": &id }));
     })
     .map_err(io)?;
     watches.insert(workflow_id, watch);
@@ -303,6 +306,17 @@ pub fn aux_save_searches(
     aux_store::save_searches(&root, &queries).map_err(io)
 }
 
+/// Just the Recently Deleted list — cheap enough to re-read after every
+/// delete/restore/purge, unlike a full aux hydration.
+#[tauri::command]
+pub fn aux_trash_list(
+    state: State<'_, AppState>,
+    workflow_id: String,
+) -> R<Vec<aux_store::TrashEntry>> {
+    let root = root_of(&state, &workflow_id)?;
+    Ok(aux_store::trash_entries(&root))
+}
+
 #[tauri::command]
 pub fn trash_restore(
     state: State<'_, AppState>,
@@ -325,9 +339,57 @@ pub fn trash_purge(state: State<'_, AppState>, workflow_id: String, id: String) 
     trash::purge(&root, &id).map_err(io)
 }
 
-/// The folder `AQ_DEV_VAULT` pointed at, if the app opened one at startup.
-/// Lets the renderer show which vault a dev session is on without guessing.
+// ── development entry points ─────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevContext {
+    /// Set when `AQ_DEV_VAULT` opened a folder at startup.
+    pub workflow_id: Option<String>,
+    /// `AQ_DEV_SMOKE=1` — run the renderer's backend smoke pass on boot.
+    pub smoke: bool,
+}
+
 #[tauri::command]
-pub fn vault_dev_workflow_id(state: State<'_, AppState>) -> R<Option<String>> {
-    Ok(state.dev_workflow_id.lock().unwrap().clone())
+pub fn dev_context(state: State<'_, AppState>) -> R<DevContext> {
+    Ok(DevContext {
+        workflow_id: state.dev_workflow_id.lock().unwrap().clone(),
+        smoke: std::env::var("AQ_DEV_SMOKE").map(|v| v == "1").unwrap_or(false),
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevStat {
+    pub len: u64,
+    /// mtime in epoch milliseconds.
+    pub modified_ms: i64,
+}
+
+/// Size and mtime of a vault file. Exists so a headless check can prove the
+/// byte-for-byte rule — that an unchanged save leaves the file's mtime alone —
+/// from inside the running app rather than by taking the backend's word for it.
+#[tauri::command]
+pub fn dev_stat(state: State<'_, AppState>, workflow_id: String, rel_path: String) -> R<DevStat> {
+    let path = file_in(&state, &workflow_id, &rel_path)?;
+    let meta = std::fs::metadata(&path).map_err(io)?;
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    Ok(DevStat { len: meta.len(), modified_ms })
+}
+
+/// Print a line from the renderer to the terminal running `tauri dev`.
+///
+/// Only useful for headless verification: the WebView's own console isn't
+/// visible from a shell, so a scripted check has no way to report what it
+/// found. Debug builds only.
+#[tauri::command]
+pub fn dev_log(line: String) {
+    if cfg!(debug_assertions) {
+        println!("[smoke] {line}");
+    }
 }
