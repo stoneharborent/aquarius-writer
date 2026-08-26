@@ -1,10 +1,31 @@
+/* The sidebar is the only frosted surface in the app.
+ *
+ * `--sidebar` is a *translucent* colour, and it only reads correctly when the
+ * blur behind it actually happens. WebKitGTK — the engine Tauri uses on Linux —
+ * has shipped `backdrop-filter` only behind a flag in some builds, and where it
+ * is missing the sidebar would render as a washed-out see-through panel with the
+ * editor page showing through it.
+ *
+ * So: the default is the *opaque* colour, and the translucent-plus-blur version
+ * is applied only where the browser says it can do the blur. On macOS/Chrome
+ * nothing changes; on a WebKitGTK build without it the sidebar is simply solid,
+ * which is the right failure. Both prefixes are tested because Safari and older
+ * WebKit only advertise the `-webkit-` one.
+ */
 .sidebar {
   display: grid;
   grid-template-rows: auto 1fr auto;
-  background: var(--sidebar);
-  backdrop-filter: blur(20px);
+  background: var(--sidebar-solid);
   border-right: 1px solid var(--line);
   min-width: 0;
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+  .sidebar {
+    background: var(--sidebar);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+  }
 }
 
 .sb-header {
