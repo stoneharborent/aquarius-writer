@@ -246,3 +246,72 @@
   border-radius: 50%;
   background: var(--accent);
 }
+
+/* ── MCP tab ──
+   The one panel that reports on something running rather than a preference,
+   so it needs a live/idle dot, a place to show a start failure, and a code
+   line long enough to hold `claude mcp add …` without wrapping mid-URL. */
+
+.st-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.st-switch input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+
+.st-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+}
+
+.st-dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-mute);
+}
+
+.st-dot.live { color: var(--success); }
+.st-dot.live::before { background: var(--success); }
+
+.st-warn {
+  margin: 8px 0 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.st-code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  background: var(--bg-soft);
+  border: 0.5px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink);
+  user-select: all;
+}
+
+.st-code-inline {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink);
+  user-select: all;
+}
+
+.st-input-narrow { flex: none; width: 110px; }

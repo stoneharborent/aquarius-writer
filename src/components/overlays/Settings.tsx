@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Overlay } from "./Overlay";
+import { isTauriShell } from "@/lib/platform";
 import {
   ACCENTS,
   THEMES,
@@ -12,7 +14,7 @@ import { useVault } from "@/state/vaultStore";
 import { PROVIDERS, useSync } from "@/state/syncStore";
 import "./Settings.css";
 
-type Tab = "appearance" | "sync" | "workflows" | "about";
+type Tab = "appearance" | "sync" | "workflows" | "mcp" | "about";
 
 export function Settings() {
   const [tab, setTab] = useState<Tab>("appearance");
@@ -26,13 +28,13 @@ export function Settings() {
     <Overlay title="Settings" width={720}>
       <div className="st">
         <nav className="st-nav">
-          {(["appearance", "sync", "workflows", "about"] as Tab[]).map((t) => (
+          {(["appearance", "sync", "workflows", "mcp", "about"] as Tab[]).map((t) => (
             <button
               key={t}
               className={`st-nav-btn${tab === t ? " active" : ""}`}
               onClick={() => setTab(t)}
             >
-              {t.charAt(0).toUpperCase() + t.slice(1)}
+              {t === "mcp" ? "MCP" : t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
         </nav>
@@ -115,6 +117,8 @@ export function Settings() {
 
           {tab === "sync" && <SyncTab />}
 
+          {tab === "mcp" && <McpTab />}
+
           {tab === "workflows" && (
             <>
               <div className="st-section">
@@ -150,6 +154,182 @@ export function Settings() {
       </div>
     </Overlay>
   );
+}
+
+/**
+ * The MCP server tab.
+ *
+ * Aquarius Writer has no AI of its own — Stage 5 removed the embedded agent on
+ * purpose. This is the replacement: turn the switch on and the app speaks MCP
+ * on localhost, so Claude Code (or any other MCP client) can read and edit the
+ * vault with the same operations a human has here.
+ *
+ * All the state lives in Rust. This panel only reads `mcp_status` and asks for
+ * changes, so the switch can never disagree with what is actually listening.
+ */
+function McpTab() {
+  const [status, setStatus] = useState<McpStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [portDraft, setPortDraft] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const inShell = isTauriShell();
+
+  const apply = useCallback(async (call: Promise<McpStatus>) => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      const next = await call;
+      setStatus(next);
+      setPortDraft(String(next.port));
+    } catch (e) {
+      setProblem(String((e as Error)?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!inShell) return;
+    void apply(invoke<McpStatus>("mcp_status"));
+  }, [inShell, apply]);
+
+  if (!inShell) {
+    return (
+      <div className="st-section">
+        <h3>MCP server</h3>
+        <p className="st-help">
+          The MCP server runs in the desktop app. This is the browser preview,
+          which has no vault and no listener — open Aquarius Writer itself to
+          switch it on.
+        </p>
+      </div>
+    );
+  }
+
+  const on = status?.enabled ?? false;
+
+  return (
+    <>
+      <div className="st-section">
+        <h3>MCP server</h3>
+        <p className="st-help">
+          Lets an outside AI app — Claude Code, Claude Desktop — read and edit
+          your vaults: everything you can do here, it can do too. The server
+          listens on this machine only (127.0.0.1) and is off until you turn it
+          on.
+        </p>
+        <div className="st-row">
+          <label className="st-switch">
+            <input
+              type="checkbox"
+              checked={on}
+              disabled={busy}
+              onChange={(e) =>
+                void apply(invoke<McpStatus>("mcp_set_enabled", { enabled: e.target.checked }))
+              }
+            />
+            <span>{on ? "On" : "Off"}</span>
+          </label>
+          {status && (
+            <span className={`st-dot${status.running ? " live" : ""}`}>
+              {status.running ? "listening" : "not listening"}
+            </span>
+          )}
+        </div>
+        {status?.error && <p className="st-warn">Could not start: {status.error}</p>}
+        {problem && <p className="st-warn">{problem}</p>}
+      </div>
+
+      {on && status && (
+        <div className="st-section">
+          <h3>Connect Claude Code</h3>
+          <p className="st-help">
+            Run this once in a terminal. Claude Code remembers it; the app has
+            to be running for the connection to work.
+          </p>
+          <div className="st-row">
+            <code className="st-code">{status.claudeCommand}</code>
+            <button
+              className="st-chip"
+              onClick={() => {
+                void navigator.clipboard?.writeText(status.claudeCommand).then(
+                  () => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1600);
+                  },
+                  () => setProblem("The clipboard is not available here — select the line and copy it."),
+                );
+              }}
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <p className="st-help">
+            Other clients want the URL on its own: <code className="st-code-inline">{status.url}</code>
+          </p>
+        </div>
+      )}
+
+      <div className="st-section">
+        <h3>Port</h3>
+        <p className="st-help">
+          Change this only if something else on your machine already uses{" "}
+          {status?.port ?? 1729}. Changing it while the server is on restarts it,
+          and any client you already connected needs the new URL.
+        </p>
+        <div className="st-row">
+          <input
+            className="st-input st-input-narrow"
+            type="number"
+            min={1024}
+            max={65535}
+            value={portDraft}
+            disabled={busy}
+            onChange={(e) => setPortDraft(e.target.value)}
+            spellCheck={false}
+          />
+          <button
+            className="st-chip"
+            disabled={busy || portDraft === String(status?.port ?? "")}
+            onClick={() => {
+              const port = Number(portDraft);
+              if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+                setProblem("Pick a whole number between 1024 and 65535.");
+                return;
+              }
+              void apply(invoke<McpStatus>("mcp_set_port", { port }));
+            }}
+          >
+            Use this port
+          </button>
+        </div>
+      </div>
+
+      <div className="st-section">
+        <h3>What it can reach</h3>
+        <p className="st-help">
+          Every vault in your workflow list, not just the one open here — a
+          client names the vault it wants. It can create, read, rewrite,
+          re-order and trash documents. Deleting is the same soft delete the app
+          uses: files go to Recently Deleted and can be restored for 30 days.
+          There is no way for a client to delete anything permanently. There is
+          no password on the connection, because nothing outside this machine
+          can reach the port.
+        </p>
+      </div>
+    </>
+  );
+}
+
+/** Mirrors `McpStatus` in `src-tauri/src/mcp/mod.rs`. */
+interface McpStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  url: string;
+  claudeCommand: string;
+  error?: string;
 }
 
 function SyncTab() {
