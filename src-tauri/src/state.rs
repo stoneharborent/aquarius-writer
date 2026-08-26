@@ -40,6 +40,23 @@ impl AppState {
         self.self_writes.record(path);
     }
 
+    /// Where a workflow's folder is on this machine.
+    ///
+    /// The single place either door — the renderer's commands or the MCP
+    /// server's tools — turns a workflow id into a path, so both get the same
+    /// answer and the same error when a vault has been moved or unplugged.
+    pub fn root_for(&self, workflow_id: &str) -> Result<PathBuf, String> {
+        let reg = self.registry.lock().unwrap();
+        let entry = reg
+            .find(workflow_id)
+            .ok_or_else(|| format!("unknown workflow: {workflow_id}"))?;
+        let path = PathBuf::from(&entry.path);
+        if !path.is_dir() {
+            return Err(format!("workflow folder is not available: {}", entry.path));
+        }
+        Ok(path)
+    }
+
     /// Let the asset protocol serve files from this workflow's folder.
     ///
     /// The scope has to be granted at runtime because the folder is whatever

@@ -1,8 +1,10 @@
 //! The vault: workflow registry, workflow metadata, and the file tree.
 
 pub mod frontmatter;
+pub mod ops;
 pub mod paths;
 pub mod registry;
+pub mod search;
 pub mod tree;
 pub mod workflow;
 
