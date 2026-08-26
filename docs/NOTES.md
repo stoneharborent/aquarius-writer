@@ -4,7 +4,7 @@
 byte-for-byte as delivered. It is never edited. When reality has moved on from
 what it says, the discrepancy is recorded here instead.
 
-Last reviewed: 2026-08-25 (Stage 4 of the Linux port — identity + packaging).
+Last reviewed: 2026-08-25 (Stage 5 — the MCP server, and two features removed).
 
 ---
 
@@ -512,3 +512,216 @@ the controls draw and do nothing, which is what makes the screenshot possible.
 - **No signing, notarisation, updater or Releases.** All four need Royce's Apple
   account or a signing key. The TODO block at the end of
   `.github/workflows/build.yml` says what each would take.
+
+## 13. Stage 5's two removals, and what replaced them
+
+Royce made two calls on 2026-08-25 and this stage implemented both. They are
+recorded here rather than in `HANDOFF.md`, which is never edited.
+
+### 13a. No pricing. The app is free.
+
+**HANDOFF.md §9.2** describes three tiers: Notes (free), Studio ($50 once), and
+Spark ($5/month). All of it is gone. Every feature is simply available.
+
+Removed: `src/components/pricing/` (`UnlockDialog.tsx`, `SparkSetup.tsx`,
+`Pricing.css`), `src/state/licenseStore.ts`, the Settings **Pricing** tab, the
+tier badge in the window footer, the `✦` lock marks on Outline and Cards, the
+gate in front of the screenplay editor, the `tier` field and Studio badges on
+the compile formats, and the `.lic-badge` / `.pr-*` / `.ul-*` / `.mw-lock` CSS
+that dressed them. Six files deleted, eight edited.
+
+Three consequences worth stating plainly, because they are behaviour changes
+rather than cosmetic ones:
+
+- **The chapter rail is always in the prose editor.** It used to appear only on
+  Studio.
+- **`.fountain` files open in the screenplay editor** rather than in an unlock
+  pitch.
+- **EPUB, Word and FDX are selectable in Compile.** They are still not
+  *implemented* — Compile has never actually exported anything — but they are no
+  longer marked as something to buy. The remaining greyed-out cards in that
+  dialog are source-kind mismatches ("Not available for manuscript"), which is a
+  different thing and is correct.
+
+**Old persisted state.** A tier saved in `localStorage` under `aquarius.license`
+is not migrated and not deleted: nothing reads that key any more, so a stale
+value simply sits there inertly. Deliberate — a cleanup pass would be one more
+code path to own forever, for a key nobody will look at again.
+
+**What "spark" still means in this tree.** `SparkleIcon` in `src/icons/glyphs.tsx`
+is a four-point star used by the Today and Compile palette entries, and
+`spark14` / `.td-spark` in the Today panel is a *sparkline*. Neither has anything
+to do with Spark the agent, and a grep for the word will find them.
+
+### 13b. No embedded AI. The app is driven over MCP instead.
+
+The original Stage 5 plan was a bundled Ollama, a provider router and the Spark
+panel. It is dead. The app will not talk to a model itself; it exposes an **MCP
+server** so Claude Code, Claude Desktop or whatever comes next can drive it.
+
+Removed: the (already-empty) `src/components/ai-panel/`, `SparkSetup.tsx` with
+its model download and persona picker, the dead `.mw-ai-*` panel CSS, the
+`--spark-bubble` / `--spark-bubble-ink` chat-bubble tokens in all three themes,
+the now-unreferenced `--panel` token, and the cheat sheet's whole **AI** section
+plus its "Toggle Spark panel" row — five shortcuts that opened nothing.
+
+**The Terminal pane does not exist in this tree.** The port plan says it stays,
+and `RightPane.tsx` carried a comment implying it had been considered and cut
+before this repo existed. There is no xterm.js host, no dependency, no
+component — nothing to keep and, per the stage brief, nothing to build here.
+Whoever builds it later gets the BYO-agent story the plan describes, and it
+pairs with the MCP server rather than competing with it.
+
+### 13c. Why rmcp rather than a hand-rolled JSON-RPC server
+
+The stage brief allowed either. We took the SDK.
+
+`rmcp` 3.1.4's `transport-streamable-http-server` feature gives a
+`StreamableHttpService` that implements `tower::Service`, so hosting it is a
+fifteen-line axum router over a plain `TcpListener` — the awkwardness the brief
+worried about did not materialise. What we would have owned by hand instead:
+session lifecycle, protocol-version negotiation across five known versions,
+`Host`-header validation against DNS rebinding, SSE framing, and re-owning all
+of it every time the spec moves. That is a lot of surface for a local tool.
+
+The cost is real and worth naming: **91 new crates** in the dependency tree
+(axum, hyper, tower, schemars, sse-stream and their friends), and the crate's
+MSRV forced `rust-version` in `Cargo.toml` from 1.77 to **1.88**. CI uses
+`dtolnay/rust-toolchain@stable`, so nothing there needed changing. A clean
+release build is roughly 20 seconds longer.
+
+**We left rmcp's transport defaults alone**, including SSE framing and session
+mode. The SDK also offers `json_response`, which would answer a tool call with
+plain `application/json` — every tool here is request-in/response-out, so
+nothing would be lost, and it is friendlier to a hand-written client. It was
+tried and reverted: it only applies with `legacy_session_mode` off, and trading
+the SDK's best-tested path for a tidier reply is not a bet to make against
+clients we cannot test here. The MCP spec requires clients to accept both
+framings. If a client ever turns out to need JSON, the change is two lines in
+`mcp::start`.
+
+### 13d. The port, and the security posture
+
+**1729.** Clear of 1420 (this app's own Vite dev server), 5173 and 4173 (Vite's
+other defaults), 4747 (Miracle OS's HUD on Royce's Mac), and the usual
+3000/8000/8080. Configurable in Settings; ports below 1024 and 1420 itself are
+refused.
+
+The listener binds `127.0.0.1` explicitly — verified during Stage 5 with `lsof`
+(`TCP 127.0.0.1:1729 (LISTEN)`, IPv4 loopback only) and by confirming that the
+machine's own LAN address refuses the connection.
+
+**There is no authentication, and that is only safe because of the bind.**
+Anything that can reach the socket is a process on this machine running as this
+user, which can already read the vault directly, so a token would protect
+nothing. **If this is ever bound to any other interface — a `0.0.0.0` default, a
+container port mapping, a tunnel — it needs a bearer token first.** That is not
+a nice-to-have; without the loopback bind, the current server hands the whole
+vault to anyone who can route to the port.
+
+### 13e. Why MCP writes emit `vault://changed` themselves
+
+§3c says any code that writes into a vault outside `vault_write_file` must call
+`state.note_self_write()` first. The MCP tools do. But that has a consequence
+the UI's own saves do not have: the watcher then *deliberately ignores* the
+write, so the open window would never learn that a client had changed a file.
+
+So the tools emit `commands::CHANGE_EVENT` explicitly, once per call, right
+after the write. This is better than the alternative of leaving the write
+unstamped and letting the watcher notice: exactly one event, no 300 ms debounce
+race, and no possibility of the reload loop the ledger exists to prevent.
+
+Verified during Stage 5: seven MCP writes against a scratch vault produced
+**zero** `[watch]` lines with `AQ_WATCH_DEBUG=1`, while a control edit made by a
+different program produced exactly one. The watcher is alive; the suppression is
+specific.
+
+### 13f. A ledger bug the MCP server exposed
+
+`SelfWrites` canonicalises paths so the stamp and the event agree on one
+spelling (§3c). It did that by asking the filesystem to resolve the path — but
+the ledger is stamped *before* the write, and a brand-new file has no inode yet,
+nor does the folder the write is about to create. So a create stamped `/var/…`
+and the event came back `/private/var/…`, never matched, and a file the app made
+itself looked like an external edit.
+
+Nothing hit this before because nothing in the app could create a file — the
+renderer's `VaultService` has no create method (§8). `create_document` does.
+`canonical()` now walks up to the nearest ancestor that exists, canonicalises
+that, and re-attaches the tail. The mirror-image case is fixed with it: a delete
+is checked *after* the file is gone and used to fall back to the literal path
+too. Regression test:
+`fs_ops::watcher::tests::a_path_stamped_before_it_exists_still_matches_its_event`.
+
+### 13g. Search is a mirror, not a gap
+
+The stage brief said to skip `search` if it lived only in the renderer and note
+the gap. It does live only in the renderer — `searchWorkflow` in
+`src/lib/vault/aux.ts` — and we implemented it in Rust anyway
+(`src-tauri/src/vault/search.rs`). Flagging that as a deliberate deviation.
+
+The reasoning: search is the single most useful thing an AI client can do before
+it edits anything, the renderer's version is thirty lines of fully-specified
+behaviour (case-insensitive substring, markdown/fountain/txt only, ranked by
+count), and the alternative — a client reading every file through
+`read_document` to grep it itself — is worse for everyone. This repo already has
+the precedent: `vault::frontmatter` is explicitly a mirror of
+`src/lib/frontmatter.ts`.
+
+**The parity obligation is real.** If either side's search behaviour changes,
+change the other in the same commit. The same now applies to
+`frontmatter::upsert`, which is new in this stage and mirrors the TypeScript
+`stringify`.
+
+### 13h. `reorder_chapters` is the first thing that ever persists chapter order
+
+`vaultStore.reorderChapters` in the renderer updates React state and stops
+there — dragging a chapter in the UI has never written `workflow.json`. The MCP
+tool does, through `vault::ops::reorder_chapters`.
+
+So the two are not yet symmetrical, and this is the one place the doctrine in
+§13i is not fully honoured in the direction you would expect: the *client* can
+do something durably that the *human* cannot. Wiring the UI's drag to the same
+`ops` function is a small job and is the obvious next one.
+
+### 13i. The doctrine, written down
+
+The old Spark-drivability rule (AquariusWriter's CLAUDE.md rule 11) is
+reinterpreted for this app:
+
+> **If a human can do it in the app, an MCP client can do it too. New
+> user-facing features ship with their MCP tool in the same change.**
+
+Concretely: a feature that touches a vault belongs in `src-tauri/src/vault/ops.rs`,
+where both doors reach it — `commands.rs` for the renderer, `mcp/tools.rs` for a
+client. A tool that needs behaviour `ops` does not have is a sign the feature was
+built in the wrong place, not a reason to reimplement it in `mcp/`.
+
+The one deliberate exception is **permanent deletion**. `trash::purge` stays a
+UI-only operation. Everything a client can destroy, it can also restore.
+
+### 13j. What Stage 5 left for later
+
+- **The Terminal pane** (§13b) — not built, by instruction.
+- **The UI's chapter drag does not persist** (§13h).
+- **Snapshots are read-only over MCP, and a client's write does not take one.**
+  The version trail is written by the editor's autosave; a `write_document` call
+  replaces a file without recording what was there first. A client can read the
+  old text and say so, but "undo the AI's edit" is not one click. Taking a
+  snapshot inside `ops::write_document` would fix it and would also start
+  recording versions for the UI's own path in a way it does not expect — worth
+  designing rather than bolting on.
+- **`claude mcp add` was not actually run.** The `initialize` result was checked
+  against the spec shape by hand (`protocolVersion`, `capabilities.tools`,
+  `serverInfo`, `instructions`) and all fifteen tools were driven end-to-end
+  with raw JSON-RPC, but registering the server in Royce's real Claude Code
+  config is his change to make, not an agent's.
+- **The live MCP Settings panel is not in the screenshots.** The switch and the
+  `claude mcp add` line only render inside the desktop shell, and the shell's
+  window cannot be driven headlessly from a Mac. `docs/screenshots/*/07-settings-mcp.png`
+  shows the tab and the preview's explanatory message; the raw MCP exchange is
+  the evidence for what sits behind the switch.
+- **Nothing about the server has run on Linux**, like everything else in §10.
+  The bind is `Ipv4Addr::LOCALHOST` and the transport is portable, so there is
+  nothing platform-specific to go wrong — but that sentence has been written
+  about four stages now.

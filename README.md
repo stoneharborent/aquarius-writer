@@ -7,6 +7,14 @@ copy to a thumb drive. No cloud account, no database, no lock-in.
 This is the app that ships with **AquariusOS** as its stock writing/vault app —
 the slot Obsidian would fill on someone else's system.
 
+**It is free.** There are no tiers, no unlock screens and nothing held back —
+every feature in the app is available to everyone who runs it.
+
+**It has no AI of its own.** Instead it can hand the vault to whichever AI app
+you already use — Claude Code, Claude Desktop — over MCP. Flip one switch in
+Settings and they can read, write, re-order and file your work, using the same
+operations you have in the window. See "Letting an AI app drive it" below.
+
 ---
 
 ## Where this came from (read this once)
@@ -126,7 +134,7 @@ This can only ever build the *Mac* app. For the Linux one, see below.
 
 - The full UI exists — sidebar and vault tree, the prose editor, the note editor,
   the screenplay (Fountain) editor, manuscript outline and corkboard, PDF and
-  image viewers, the Spark panel, command palette, settings, pricing dialogs.
+  image viewers, the command palette and settings.
 - The **desktop app reads and writes actual files.** Point it at a folder and it
   becomes a vault: it writes `.aquarius/workflow.json`, walks the folder into the
   sidebar, saves your edits, keeps version history, moves deletions to a trash
@@ -139,8 +147,11 @@ This can only ever build the *Mac* app. For the Linux one, see below.
   bar, and unlike macOS (where the system floats its traffic lights over ours)
   nothing on Linux would draw them for us. On the Mac nothing changed at all.
 
-What is *not* done yet: Spark, the local AI (Stage 5). And nothing here has ever
-actually run on Linux — see "Building the Linux app" below.
+- The **MCP server** is in and switched off until you want it (Settings → MCP).
+  On, an AI app on this machine can drive the vault.
+
+What is *not* done yet: nothing here has ever actually run on Linux — see
+"Building the Linux app" below.
 
 ### Opening a folder
 
@@ -181,6 +192,77 @@ pass over every backend operation (`src/lib/dev/smoke.ts`) and prints the result
 in the terminal — useful for proving the backend still works after a change.
 **That pass edits and deletes files in the folder it is given, so point it at a
 scratch copy, never at real writing.** Both are development-only.
+
+---
+
+## Letting an AI app drive it
+
+Aquarius Writer has no AI inside it, and that is on purpose. Instead it can open
+a small door on your own machine that AI apps know how to knock on — a standard
+called **MCP**. Turn it on and Claude Code (or Claude Desktop, or anything else
+that speaks MCP) can read your chapters, rewrite them, re-order your manuscript,
+set a chapter's status and put a draft in the trash — the same things you can do
+in the window, done through the same code.
+
+### Turning it on
+
+1. Open **Settings** (⌘,) and click **MCP**.
+2. Flick the switch to **On**. A green "listening" dot appears.
+3. Copy the line it shows you and paste it into a terminal once:
+
+   ```bash
+   claude mcp add --transport http aquarius-writer http://127.0.0.1:1729/mcp
+   ```
+
+That is the whole setup. Claude Code remembers it from then on. **Aquarius
+Writer has to be running** for the connection to work — the door is in the app,
+so when the app is closed there is no door.
+
+If you change the port in Settings, the URL changes with it and you would run
+`claude mcp add` again with the new number.
+
+### Is that safe?
+
+The door only opens onto *this computer*. In network terms the app listens on
+`127.0.0.1`, which is the address a machine uses to talk to itself — another
+computer on your wifi cannot reach it, and neither can anything on the internet.
+That is why there is no password: the only things that can knock are programs
+already running as you, which could open your files directly anyway.
+
+Two more things worth knowing:
+
+- **Nothing can permanently delete your work through it.** The only delete an AI
+  client has is the same one the app's Trash button uses: the file moves into
+  `.aquarius/trash/` and can be restored for 30 days.
+- **It is off unless you turn it on**, and it stays however you left it the next
+  time you open the app.
+
+### What it can do
+
+Fifteen operations, and the rule going forward is that this list keeps pace with
+the app: **if you can do it in the window, an AI client can do it too.**
+
+| | |
+|---|---|
+| `list_workflows`, `get_workflow` | which vaults exist; one vault's manifest and file tree |
+| `list_folder`, `search` | look around; find text across the vault |
+| `read_document`, `write_document`, `create_document` | read a file, replace one, make a new one |
+| `set_frontmatter_status` | mark a chapter final / drafting / rev / outline |
+| `reorder_chapters` | rearrange the manuscript |
+| `trash_document`, `list_trash`, `restore_document` | the reversible delete, and undoing it |
+| `list_snapshots`, `read_snapshot` | read the version history (read-only) |
+| `server_info` | a connectivity check |
+
+### If something goes wrong
+
+- **The switch turns itself back off, or shows an error.** Almost always the port
+  is already taken by something else. Pick a different number in Settings.
+- **Claude Code says it cannot connect.** Check the app is actually open and the
+  dot in Settings says "listening".
+- **You changed a file through Claude and the app is showing the old text.** The
+  sidebar and the tree update immediately, but a document you had *open and
+  half-edited* keeps your unsaved text, and your next save wins. Close the
+  document (or save it) before handing it to an AI client.
 
 ---
 
@@ -279,7 +361,7 @@ From `AquariusOS/docs/aquarius-writer-port-plan.md`:
 | **2** | **The Rust vault backend.** Implement the 9 file operations for real: open a folder, walk the tree, read/write files with safe atomic saves, soft-delete to trash, watch for outside edits. Move version history / comments / trash off browser storage and onto disk in `.aquarius/`. | ✅ **done** |
 | **3** | **The AquariusOS skin.** A third theme matching the OS design tokens, with the Sora / Inter / JetBrains Mono fonts bundled. Default on Linux; Parchment stays default on macOS. | ✅ **done** |
 | **4** | **Linux identity + packaging.** Draw our own window buttons on Linux, app id `os.aquarius.writer`, desktop entry and icons, AppImage built by CI. | ✅ **done** (the AppImage waits on the GitHub repo — see below) |
-| **5** | **Spark on Linux.** Local model lifecycle (Ollama is Linux-native), provider routing, and the rule that every feature is drivable by Spark. | next |
+| **5** | **MCP server, and no embedded AI.** Royce decided on 2026-08-25 that the app will not carry a model of its own and will not have paid tiers. So: the pricing plumbing and the Spark UI came out, and the app now speaks MCP on localhost so any AI app can drive it. | ✅ **done** |
 
 ---
 
@@ -299,6 +381,8 @@ src-tauri/               the desktop shell (Rust)
   src/lib.rs             app setup + the list of commands the UI can call
   src/commands.rs        every invoke() the interface makes, in one file
   src/vault/             workflow registry, workflow.json, the folder walk
+  src/vault/ops.rs       the operations the UI and the MCP server both use
+  src/mcp/               the MCP server: the switch, and the 15 tools
   src/fs_ops/            saving, trash + retention, the file watcher
   src/aux_store.rs       version history / comments / searches in .aquarius/
   capabilities/          what the app is permitted to do (kept deliberately tiny)

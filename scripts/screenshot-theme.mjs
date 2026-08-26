@@ -52,6 +52,21 @@ await page.keyboard.press("Meta+T");
 await shot("04-today-gold-streak");
 await page.keyboard.press("Escape");
 
+// 6. Compile, after Stage 5 took the pricing tiers out: every format is
+//    selectable and no card wears a "✦ Studio" mark. (5 is the Linux window
+//    controls, taken through ?platform=linux — see docs/NOTES.md §11.)
+await page.keyboard.press("Meta+E");
+await shot("06-compile-no-tiers");
+await page.keyboard.press("Escape");
+
+// 7. Settings on the MCP tab — the tab that replaced Pricing. In the browser
+//    preview there is no shell and no listener, so the panel says so; the
+//    point of the shot is that the tab is there and the nav has no Pricing.
+await page.keyboard.press("Meta+Comma");
+await page.getByRole("button", { name: "MCP", exact: true }).click();
+await shot("07-settings-mcp");
+await page.keyboard.press("Escape");
+
 // Sanity check for the bundled variable fonts: if the weight axis were dead,
 // 400 and 700 would measure the same width.
 const weights = await page.evaluate(async () => {
