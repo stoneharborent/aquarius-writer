@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { VaultWindow } from "@/components/window/VaultWindow";
 import { MainWindow } from "@/components/main/MainWindow";
 import { SelectWorkflow } from "@/components/workflows/SelectWorkflow";
@@ -9,11 +9,12 @@ import { useLicense } from "@/state/licenseStore";
 import {
   ACCENTS,
   AccentName,
-  applyTheme,
-  readTheme,
   THEMES,
+  THEME_LABEL,
   ThemeName,
+  themeLocksAccent,
 } from "@/theme/theme";
+import { useTheme } from "@/state/themeStore";
 import { useVault } from "@/state/vaultStore";
 import { useOverlay } from "@/state/overlayStore";
 import { usePopout } from "@/state/popoutStore";
@@ -23,9 +24,7 @@ import { getPopoutPath } from "@/lib/popout";
 import { PopoutWindow } from "@/components/popout/PopoutWindow";
 
 export default function App() {
-  const initial = readTheme();
-  const [theme, setTheme] = useState<ThemeName>(initial.theme);
-  const [accent, setAccent] = useState<AccentName>(initial.accent);
+  const { theme, accent, setTheme, setAccent, adoptWorkflow } = useTheme();
   const { current, closeWorkflow, setView, selectedPath, bootstrap, booted } = useVault();
   const overlay = useOverlay();
   const popout = usePopout();
@@ -81,22 +80,21 @@ export default function App() {
     return <PopoutWindow path={popoutPath} />;
   }
 
-  useEffect(() => {
-    applyTheme(theme, accent);
-  }, [theme, accent]);
-
   // Launch straight into the last workflow instead of the welcome screen.
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
 
-  // Adopt the workflow's own theme / accent on open.
+  // Adopt the workflow's own theme / accent on open — unless the writer has
+  // picked a theme themselves, in which case their choice stands.
   useEffect(() => {
     if (current?.settings) {
-      setTheme(current.settings.theme);
-      setAccent(current.settings.accent);
+      adoptWorkflow({
+        theme: current.settings.theme,
+        accent: current.settings.accent,
+      });
     }
-  }, [current?.id, current?.settings]);
+  }, [current?.id, current?.settings, adoptWorkflow]);
 
   return (
     <VaultWindow
@@ -132,15 +130,19 @@ export default function App() {
           <label className="vw-toggle">
             theme
             <select value={theme} onChange={(e) => setTheme(e.target.value as ThemeName)}>
-              {THEMES.map((t) => <option key={t} value={t}>{t}</option>)}
+              {THEMES.map((t) => <option key={t} value={t}>{THEME_LABEL[t]}</option>)}
             </select>
           </label>
-          <label className="vw-toggle">
-            accent
-            <select value={accent} onChange={(e) => setAccent(e.target.value as AccentName)}>
-              {ACCENTS.map((a) => <option key={a} value={a}>{a}</option>)}
-            </select>
-          </label>
+          {/* AquariusOS locks the accent to starlight, so the picker has
+              nothing to offer under it. */}
+          {!themeLocksAccent(theme) && (
+            <label className="vw-toggle">
+              accent
+              <select value={accent} onChange={(e) => setAccent(e.target.value as AccentName)}>
+                {ACCENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </label>
+          )}
         </>
       }
     >

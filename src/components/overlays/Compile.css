@@ -195,7 +195,7 @@
 
 .cm-go {
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   border-color: transparent;
   display: inline-flex;
   align-items: center;

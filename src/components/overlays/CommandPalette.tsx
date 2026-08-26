@@ -15,7 +15,8 @@ import {
   SettingsIcon,
   SparkleIcon,
 } from "@/icons";
-import { ACCENTS, applyTheme, THEMES, readTheme } from "@/theme/theme";
+import { ACCENTS, THEMES, THEME_LABEL, themeLocksAccent } from "@/theme/theme";
+import { useTheme } from "@/state/themeStore";
 import "./CommandPalette.css";
 
 interface PaletteItem {
@@ -34,6 +35,7 @@ export function CommandPalette() {
 
   const { tree, selectPath, setView } = useVault();
   const { open: openOv, close } = useOverlay();
+  const { theme, setTheme, setAccent } = useTheme();
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
@@ -60,22 +62,26 @@ export function CommandPalette() {
     out.push({ id: "ov:cheats", group: "Action", label: "Keyboard cheat sheet", hint: "⌘?",
       icon: <CommandIcon size={13} color="var(--ink-soft)" />, run: () => { openOv("cheatsheet"); } });
 
-    // Theme + accent
+    // Theme + accent. Both go through the theme store, so picking one here
+    // counts as an explicit choice and sticks — same as picking it in Settings.
     for (const t of THEMES) {
       out.push({
         id: `theme:${t}`, group: "Theme",
-        label: `Theme · ${t}`,
+        label: `Theme · ${THEME_LABEL[t]}`,
         icon: <SettingsIcon size={13} color="var(--ink-soft)" />,
-        run: () => { const a = readTheme().accent; applyTheme(t, a); close(); },
+        run: () => { setTheme(t); close(); },
       });
     }
-    for (const a of ACCENTS) {
-      out.push({
-        id: `accent:${a}`, group: "Theme",
-        label: `Accent · ${a}`,
-        icon: <SettingsIcon size={13} color="var(--ink-soft)" />,
-        run: () => { const th = readTheme().theme; applyTheme(th, a); close(); },
-      });
+    // AquariusOS locks the accent to starlight — no accent commands under it.
+    if (!themeLocksAccent(theme)) {
+      for (const a of ACCENTS) {
+        out.push({
+          id: `accent:${a}`, group: "Theme",
+          label: `Accent · ${a}`,
+          icon: <SettingsIcon size={13} color="var(--ink-soft)" />,
+          run: () => { setAccent(a); close(); },
+        });
+      }
     }
 
     // Files
@@ -96,7 +102,7 @@ export function CommandPalette() {
     }
 
     return out;
-  }, [tree, selectPath, setView, openOv, close]);
+  }, [tree, selectPath, setView, openOv, close, theme, setTheme, setAccent]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return items;

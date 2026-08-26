@@ -20,7 +20,7 @@
 }
 
 .ul-title {
-  font-family: var(--font-serif);
+  font-family: var(--font-display);
   font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -130,7 +130,7 @@
 
 .ul-primary {
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   border-color: transparent;
   font-weight: 600;
 }
@@ -192,7 +192,7 @@
 }
 
 .pr-name {
-  font-family: var(--font-serif);
+  font-family: var(--font-display);
   font-size: 18px;
   font-weight: 600;
   color: var(--ink);
@@ -214,7 +214,7 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   padding: 2px 6px;
   border-radius: 3px;
 }
@@ -247,7 +247,7 @@
 .pr-action {
   margin-top: 10px;
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   border: none;
   border-radius: 6px;
   padding: 7px 12px;
@@ -312,7 +312,7 @@
   height: 26px;
   border-radius: 50%;
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 700;
@@ -419,7 +419,7 @@
 
 .sp-go {
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   border: none;
   border-radius: 6px;
   padding: 9px 18px;

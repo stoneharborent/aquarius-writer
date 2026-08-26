@@ -2,13 +2,12 @@ import { useState } from "react";
 import { Overlay } from "./Overlay";
 import {
   ACCENTS,
-  AccentName,
-  applyTheme,
-  readTheme,
   THEMES,
-  ThemeName,
+  THEME_LABEL,
   ACCENT_LABEL,
+  themeLocksAccent,
 } from "@/theme/theme";
+import { useTheme } from "@/state/themeStore";
 import { useVault } from "@/state/vaultStore";
 import { PROVIDERS, useSync } from "@/state/syncStore";
 import { useLicense } from "@/state/licenseStore";
@@ -19,17 +18,11 @@ type Tab = "appearance" | "sync" | "workflows" | "pricing" | "about";
 
 export function Settings() {
   const [tab, setTab] = useState<Tab>("appearance");
-  const initial = readTheme();
-  const [theme, setTheme] = useState<ThemeName>(initial.theme);
-  const [accent, setAccent] = useState<AccentName>(initial.accent);
+  const { theme, accent, setTheme, setAccent } = useTheme();
   const [fontSize, setFontSize] = useState(17);
   const [lineHeight, setLineHeight] = useState(1.65);
 
   const workflows = useVault((s) => s.workflows);
-
-  function applyThemeNow(t: ThemeName, a: AccentName) {
-    setTheme(t); setAccent(a); applyTheme(t, a);
-  }
 
   return (
     <Overlay title="Settings" width={720}>
@@ -56,28 +49,39 @@ export function Settings() {
                     <button
                       key={t}
                       className={`st-chip${theme === t ? " active" : ""}`}
-                      onClick={() => applyThemeNow(t, accent)}
-                    >{t}</button>
+                      onClick={() => setTheme(t)}
+                    >{THEME_LABEL[t]}</button>
                   ))}
                 </div>
+                {theme === "aquarius" && (
+                  <p className="st-help">
+                    The operating system's own skin — void black, starlight
+                    blue. It's the default on AquariusOS; the writing page stays
+                    a calmer surface than the chrome around it.
+                  </p>
+                )}
               </div>
 
-              <div className="st-section">
-                <h3>Accent</h3>
-                <div className="st-row">
-                  {ACCENTS.map((a) => (
-                    <button
-                      key={a}
-                      className={`st-chip st-chip-accent${accent === a ? " active" : ""}`}
-                      data-accent={a}
-                      onClick={() => applyThemeNow(theme, a)}
-                    >
-                      <span className="st-chip-swatch" />
-                      {ACCENT_LABEL[a]}
-                    </button>
-                  ))}
+              {/* The accent is part of the OS identity under AquariusOS —
+                  starlight and nothing else — so there is no picker for it. */}
+              {!themeLocksAccent(theme) && (
+                <div className="st-section">
+                  <h3>Accent</h3>
+                  <div className="st-row">
+                    {ACCENTS.map((a) => (
+                      <button
+                        key={a}
+                        className={`st-chip st-chip-accent${accent === a ? " active" : ""}`}
+                        data-accent={a}
+                        onClick={() => setAccent(a)}
+                      >
+                        <span className="st-chip-swatch" />
+                        {ACCENT_LABEL[a]}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="st-section">
                 <h3>Reading</h3>
@@ -177,7 +181,7 @@ function PricingTab() {
             <div className="pr-price">Free forever</div>
             <ul className="pr-perks">
               <li>Markdown editor + WYSIWYG</li>
-              <li>Themes (Parchment / Midnight)</li>
+              <li>Themes (Parchment / Midnight / AquariusOS)</li>
               <li>Graph view + search</li>
               <li>Terminal pane (BYO CLI agent)</li>
               <li>Markdown + PDF export</li>

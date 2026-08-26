@@ -1,8 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "@/fonts/fonts.css";
 import "@/theme/tokens.css";
 import "./app.css";
 import App from "./App";
+import { bootTheme } from "@/state/themeStore";
+
+// Put the theme on <html> before the first render, so the app never flashes
+// Parchment on a machine whose default is AquariusOS.
+bootTheme();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
