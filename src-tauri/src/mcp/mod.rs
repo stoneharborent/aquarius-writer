@@ -33,7 +33,7 @@ pub use config::{save as save_config, validate_port, McpConfig};
 
 use crate::state::AppState;
 use rmcp::transport::streamable_http_server::{
-    session::local::LocalSessionManager, StreamableHttpService,
+    session::local::LocalSessionManager, StreamableHttpService, StreamableHttpServerConfig,
 };
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
@@ -116,13 +116,20 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
     let port = mcp.config.lock().unwrap().port;
 
     let handle = app.clone();
+    // rmcp's defaults, deliberately: sessions on, replies framed as
+    // `text/event-stream`, `Host` restricted to loopback names. The SDK also
+    // offers `json_response` (a plain `application/json` reply, which every
+    // tool here could use — nothing streams), but it only applies with
+    // `legacy_session_mode` off, and trading the SDK's best-tested path for a
+    // slightly tidier reply is not a bet worth making on a client we cannot
+    // test against here. The spec requires clients to accept both framings.
     let service = StreamableHttpService::new(
         // One handler per request. It is a thin thing — an `AppHandle` clone
         // and nothing else — so there is no per-request cost worth avoiding,
         // and no shared mutable state to get wrong.
         move || Ok(tools::AquariusMcp::new(handle.clone())),
         Arc::new(LocalSessionManager::default()),
-        Default::default(),
+        StreamableHttpServerConfig::default(),
     );
 
     // Loopback only. Binding here rather than inside the task means a port
