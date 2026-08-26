@@ -89,11 +89,14 @@ export function Graph() {
   // Force simulation
   useEffect(() => {
     if (!graph) return;
+    // Bind the non-null graph to a local so the narrowing survives into `step`,
+    // which TypeScript can't prove is only called while `graph` is set.
+    const g = graph;
     let raf = 0;
-    const idIdx = new Map(graph.nodes.map((n, i) => [n.id, i]));
+    const idIdx = new Map(g.nodes.map((n, i) => [n.id, i]));
 
     function step() {
-      const { nodes, edges } = graph;
+      const { nodes, edges } = g;
 
       // Repulsion
       for (let i = 0; i < nodes.length; i++) {
@@ -136,7 +139,7 @@ export function Graph() {
         n.x = Math.max(24, Math.min(W - 24, n.x));
         n.y = Math.max(24, Math.min(H - 24, n.y));
       }
-      setGraph({ ...graph });
+      setGraph({ ...g });
       raf = requestAnimationFrame(step);
     }
     raf = requestAnimationFrame(step);

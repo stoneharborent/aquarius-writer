@@ -1,6 +1,6 @@
 import { Overlay } from "@/components/overlays/Overlay";
-import { STUDIO_FEATURE_LABEL, useLicense } from "@/state/licenseStore";
-import { BookIcon, CheckIcon, ScreenplayIcon, SparkleIcon } from "@/icons";
+import { STUDIO_FEATURE_LABEL, useLicense, type StudioFeature } from "@/state/licenseStore";
+import { BookIcon, CheckIcon, SparkleIcon } from "@/icons";
 import "./Pricing.css";
 
 export function UnlockDialog() {
@@ -53,7 +53,7 @@ export function UnlockDialog() {
   );
 }
 
-function flavorFor(feat: ReturnType<typeof STUDIO_FEATURE_LABEL extends infer T ? T extends Record<infer K, string> ? K : never : never>): string {
+function flavorFor(feat: StudioFeature): string {
   switch (feat) {
     case "manuscript": return "See your whole book at once — order, status, synopses. The outline is where draft-shape happens before any sentence does.";
     case "corkboard": return "Index cards for every chapter. Rearrange the story by dragging cards around — no pinned-to-cardboard rotations, but everything else feels physical.";

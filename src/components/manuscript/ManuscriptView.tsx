@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { BookIcon } from "@/icons";
-import { useVault, type EditorView } from "@/state/vaultStore";
+import { useVault } from "@/state/vaultStore";
 import type { ChapterStatus, VaultNode } from "@/types/vault";
 import { Outline } from "./Outline";
 import { Corkboard } from "./Corkboard";

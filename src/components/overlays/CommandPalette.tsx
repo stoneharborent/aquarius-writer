@@ -15,7 +15,7 @@ import {
   SettingsIcon,
   SparkleIcon,
 } from "@/icons";
-import { ACCENTS, AccentName, applyTheme, THEMES, ThemeName, readTheme } from "@/theme/theme";
+import { ACCENTS, applyTheme, THEMES, readTheme } from "@/theme/theme";
 import "./CommandPalette.css";
 
 interface PaletteItem {

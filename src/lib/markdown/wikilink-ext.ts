@@ -17,7 +17,7 @@ const UNRESOLVED = Decoration.mark({ class: "cm-wikilink unresolved" });
 
 export function wikilinks(treeRef: { current: VaultNode | null }, onOpen: (path: string) => void) {
   const click = EditorView.domEventHandlers({
-    click(e, view) {
+    click(e) {
       const target = e.target as HTMLElement;
       if (!target.classList.contains("cm-wikilink")) return false;
       const text = target.textContent ?? "";
