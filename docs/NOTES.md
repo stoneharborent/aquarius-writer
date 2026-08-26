@@ -4,7 +4,7 @@
 byte-for-byte as delivered. It is never edited. When reality has moved on from
 what it says, the discrepancy is recorded here instead.
 
-Last reviewed: 2026-08-25 (Stage 3 of the Linux port — the AquariusOS skin).
+Last reviewed: 2026-08-25 (Stage 4 of the Linux port — identity + packaging).
 
 ---
 
@@ -146,16 +146,21 @@ this theme rather than left to a synthesised weight.
 `--font-display` is new and defaults to `var(--font-serif)`, so the six chrome
 headings that now use it render identically under Parchment and Midnight.
 
-### 2f. Radii and motion are declared but nothing reads them
+### 2f. Radii and motion — declared in Stage 3, first consumed in Stage 4
 
 `--radius-input/button/card/panel` (7/9/12/16px) and `--ease` +
-`--motion-fast/medium` (120/220ms, `cubic-bezier(.22,1,.36,1)`) are in the theme
-block with the correct tokens.md values, but **no component uses them**: all 94
-`border-radius` declarations and all 15 transitions in the component CSS are
-hardcoded, and parameterising them was out of scope for this stage. They are
-there so Stage 4's Linux window chrome has the right values to reach for. Anyone
-wiring them up must give Parchment and Midnight the same variables first, or those
-two themes will lose their radii.
+`--motion-fast/medium` (120/220ms, `cubic-bezier(.22,1,.36,1)`) were declared
+with the correct tokens.md values in Stage 3 and read by nothing.
+
+**Stage 4 wired the first consumer** — the Linux window controls — and did the
+thing this note asked for: the same names are now declared on bare `:root` with
+the values Parchment and Midnight were already drawing by hand (5/6/8/12px,
+same easing and durations), so overriding them under `[data-theme="aquarius"]`
+changes that theme alone. Nothing that existed before renders differently.
+
+Still true: the other 94 `border-radius` declarations and 15 transitions in the
+component CSS are literals. Parameterising them is a separate job, and now it
+has variables to parameterise *to*.
 
 ## 3. The on-disk model — built in Stage 2, with three deviations
 
@@ -221,15 +226,44 @@ If Stage 3+ adds any code path that writes into a vault **without** going throug
 `vault_write_file`, it must call `state.note_self_write(&path)` first or it will
 cause exactly that loop.
 
-## 4. Window chrome is macOS-shaped
+## 4. Window chrome — Linux now draws its own (Stage 4)
 
-`src-tauri/tauri.conf.json` sets `decorations: false` with `transparent: true`,
-`titleBarStyle: "Overlay"` and `hiddenTitle: true`. The last two are **macOS-only**
-options, and the renderer only draws macOS traffic lights.
+`src-tauri/tauri.conf.json` still sets `decorations: false` with
+`transparent: true`, `titleBarStyle: "Overlay"` and `hiddenTitle: true`. The
+last two are **macOS-only** options; on macOS the system floats its traffic
+lights over our title bar and the renderer draws nothing.
 
-On Linux, `decorations: false` means the window would have **no close/minimise/
-maximise buttons at all**. Stage 4 draws platform-correct controls. These settings
-were deliberately left untouched in Stage 1.
+On Linux that same config left the window with **no close/minimise/maximise
+buttons at all**. Stage 4 fixed it in the renderer:
+`components/window/WindowControls.tsx`, rendered by `VaultWindow` only when
+`detectPlatform() === "linux"`. macOS renders exactly what it did before —
+verified: `document.querySelectorAll(".wc-btn").length === 0` there.
+
+Four things about it are worth knowing, because three of them are things we
+deliberately did **not** write:
+
+- **Dragging** is Tauri's. The title bar carries
+  `data-tauri-drag-region="deep"` (upgraded from the bare attribute, which only
+  fires on a direct hit — so clicking the title text used to do nothing).
+  Tauri's injected handler treats `<button>` as a click and never a drag, so the
+  three controls are excluded with no work from us.
+- **Double-click to maximise** is Tauri's too, from the same handler — on Linux
+  it fires on mousedown, on macOS on mouseup so the gesture can be cancelled.
+  **Do not add a `dblclick` listener here**: it would toggle twice and land back
+  where it started.
+- **Edge resizing** is tao's. `platform_impl/linux/event_loop.rs` hit-tests a
+  5px border on `button-press` and calls `begin_resize_drag`, cursor included —
+  but only when the window is *undecorated* **and** `resizable`. That makes
+  `"resizable": true` in the config load-bearing on Linux rather than
+  decorative. Untested on real hardware (§10).
+- **Only the styling is ours.** Glyphs `text-2`, hover `surface-3`, close hover
+  `danger` with `on-accent` glyph, 9px radius, 120ms at the tokens easing — all
+  read from theme variables, so the controls follow Parchment and Midnight too
+  (`--chrome-hover` was added to all three; it cannot be `--bg-soft`, which is
+  what the title bar itself is painted with).
+
+Screenshot: `docs/screenshots/aquarius/05-linux-window-controls.png`, taken
+through the `?platform=linux` override described in §11.
 
 ## 5. App icons were missing entirely, and are now the Swift app's logo
 
@@ -251,14 +285,21 @@ shape.
 
 Two things to know:
 
-- The generator also emitted `icons/android/` and `icons/ios/`. This repo is the
-  desktop track (macOS + Linux); those folders are unused. They were left in
-  place rather than deleted, and `npx tauri icon <source>` regenerates everything
-  in one command if the source logo ever changes.
-- **Stage 4 owns final Linux identity** — app id `os.aquarius.writer`, the
-  `.desktop` entry, and icons generated from `os-image/branding/logo.svg`. If
-  Royce wants the OS-branded mark instead of the Writer mark on Linux, that
-  decision belongs to Stage 4, and these icons are what it replaces.
+- The generator also emitted `icons/android/` and `icons/ios/`, which this
+  desktop-only repo has no use for. **Stage 4 deleted both**, from disk and from
+  the index. `npx tauri icon <source>` regenerates everything in one command if
+  the source logo ever changes — including those two folders, which should be
+  deleted again.
+- **The Writer's mark stays, and that was Stage 4's call to make.** The stage
+  plan suggested generating icons from `os-image/branding/logo.svg` instead.
+  We didn't: Aquarius Writer is an app in the Aquarius *suite*, not the
+  operating system, and an app wearing the OS's own logo in the OS's own
+  taskbar reads as "system settings", not "the writing app". The OS mark belongs
+  to the OS. Easily reversed if Royce disagrees — one `npx tauri icon` run.
+- Stage 4 added `icons/64x64.png` and the 512×512 `icons/icon.png` to
+  `bundle.icon`. The Linux bundler installs each PNG into
+  `/usr/share/icons/hicolor/<size>/apps/` by reading its real dimensions, so
+  without those two the largest icon Linux would ever have had was 256px.
 
 ## 6. Transparent window without `macOSPrivateApi`
 
@@ -276,6 +317,12 @@ It was **deliberately not changed in Stage 1**, because enabling
 `macOSPrivateApi` has a real consequence: apps using it are rejected from the Mac
 App Store. That is a distribution decision for Royce, and the window-chrome work
 belongs to Stages 3–4 anyway.
+
+**Stage 4 left it alone too**, and now has a second reason to: our chrome paints
+an opaque background over the whole window, so there is nothing for transparency
+to reveal. Turning it on would change nothing visible and would cost the App
+Store. The warning stays; it is noise. On Linux `transparent: true` is simply
+inert.
 
 ## 7. Capabilities exist now, and are deliberately tiny
 
@@ -317,13 +364,11 @@ Two consequences for later stages:
 ## 9. What Stage 3 left for later
 
 - **Nothing is verified on Linux.** The whole skin was built and screenshotted on
-  macOS in Chrome. WebKitGTK is the renderer on Linux, and the two things most
-  likely to differ are `backdrop-filter: blur(20px)` on the sidebar and the
-  variable-font weight axis. Worth a look the first time the AppImage runs.
-- **The window chrome is still macOS-shaped** (§4, §6). Stage 4 owns it. When it
-  draws Linux window controls, `--radius-panel` (16px), `--line`, `--bg-soft` and
-  the shadow tokens are already correct for AquariusOS; the same controls need
-  Parchment/Midnight values chosen too.
+  macOS in Chrome. Still true after Stage 4 — see §10, which now carries the
+  full first-boot checklist. Stage 4 did guard the `backdrop-filter` half of
+  this (§10).
+- ~~**The window chrome is still macOS-shaped**~~ — done in Stage 4, see §4.
+  The Parchment/Midnight values the note asked for became `--chrome-hover`.
 - **The theme is not written back to the workflow.** Nothing in the app has ever
   saved `settings.theme` into `workflow.json` — it is read, never written. The
   writer's choice persists in `localStorage` instead. If per-workflow themes are
@@ -336,3 +381,118 @@ Two consequences for later stages:
   aquarius`. `playwright-core` is installed with `--no-save` on purpose — it is
   review tooling, not a dependency of the product — and it drives the copy of
   Chrome already on the machine instead of downloading a browser.
+
+## 10. The Linux unknowns — the first-boot checklist
+
+**Nothing in this repo has ever run on Linux.** Stage 4 gave the app a Linux
+identity, Linux window controls and a CI job that builds an AppImage, all from a
+Mac. Everything below is reasoned from source (tao, tauri, tauri-bundler) rather
+than observed, and this is the list to walk the first time the AppImage runs on
+the Xbox Ally / 5090 build.
+
+In rough order of "most likely to actually be wrong":
+
+1. **Edge resizing.** tao hit-tests a 5px border on the GTK window's
+   `button-press` event and starts a resize drag (§4). The uncertainty is
+   whether WebKitGTK swallows that press before the toplevel sees it — the
+   webview fills the whole window. **Check:** drag the window's bottom-right
+   corner. If it does not resize, the fix is renderer-side handles calling
+   `getCurrentWindow().startResizeDragging(direction)` — the API is already in
+   `@tauri-apps/api/window`, it is 8 thin strips of CSS and one handler, and it
+   was left out only because tao appears to make it unnecessary.
+
+2. **`backdrop-filter` on the sidebar.** WebKitGTK has shipped it behind a flag
+   in some builds. Stage 4 inverted the CSS so the *opaque* colour
+   (`--sidebar-solid`) is the default and the translucent-plus-blur version sits
+   inside an `@supports` guard (`components/sidebar/Sidebar.css`). **Check:** the
+   sidebar should be either frosted or flat void — never washed-out and
+   see-through with the editor page bleeding through. Both outcomes are correct;
+   only the third is a bug.
+
+3. **The asset protocol.** Images, PDFs and video resolve via `convertFileSrc`
+   (§3b). On macOS that produces `asset://localhost/…`; on Linux it is
+   `http://asset.localhost/…`, which is a different code path in wry. The
+   fallback is real and reachable — `vault_asset_ref` in `commands.rs` calls
+   `state.grant_asset_access()`, and on `Err` it returns `AssetRef::Data` with a
+   base64 data URL while printing "asset protocol refused … falling back to data
+   URLs"; the renderer's `resolveAssetUrl` branches on `ref.mode === "file"` and
+   uses `ref.url` otherwise. Re-read after Stage 4: that fallback is a genuine
+   two-way branch, not dead code. **Check:** open an image in a vault. If it is
+   blank, look for that line in the terminal — its presence means the fallback
+   fired and something else is wrong; its absence means the scope was granted and
+   wry is the problem.
+
+4. **`StartupWMClass`.** The desktop entry claims the window's WM_CLASS is the
+   binary name (`aquarius-writer`), which is what GTK derives it from. **Check:**
+   with the app running, the taskbar entry should show the app's name and icon,
+   not a generic window. If it shows a generic one, run `xprop WM_CLASS`, click
+   the window, and put whatever it prints into the template.
+
+5. **Variable-font weight axes.** Sora / Inter / JetBrains Mono are single
+   variable-font files per subset (§2e). **Check:** headings should look heavier
+   than body text. If everything is one weight, the axis is not being applied.
+
+6. **The Fedora side of AppImage.** The AppImage is built on Ubuntu 22.04 for
+   glibc headroom; AquariusOS is Fedora/Bazzite-based and much newer, so this
+   should be fine. The classic AppImage failure on Fedora is a missing FUSE —
+   if it refuses to start, `./Aquarius*.AppImage --appimage-extract-and-run`
+   proves whether that is it.
+
+7. **Nothing has ever handled a file argument.** The desktop entry declares
+   `MimeType=text/markdown;` and `Exec=… %U`, which is what makes the MimeType
+   line legal, but `main.rs` does not read `argv`. Opening a .md via "Open With"
+   launches the app on its last workflow instead of that file. Wire it up when
+   the file-opening story is designed (it interacts with workflows: a lone file
+   has no vault).
+
+## 11. Dev overrides: `?theme=` and now `?platform=`
+
+`?platform=linux` on the dev server forces `detectPlatform()`
+(`src/lib/platform.ts`), exactly as `?theme=` forces the theme (§2a). It is how
+the Linux window controls get reviewed from a Mac, and it is how
+`docs/screenshots/aquarius/05-linux-window-controls.png` was taken. Like
+`?theme=`, it holds for that tab only and is never written anywhere.
+
+It composes: `http://localhost:1420/?platform=linux` boots in the AquariusOS
+skin *because* it is pretending to be Linux, which is the real first-boot path,
+not a separate one.
+
+Note it is a different question from "am I inside Tauri" — `isTauriShell()` in
+the same file answers that, and stays false in the preview. That is the point:
+the controls draw and do nothing, which is what makes the screenshot possible.
+
+## 12. Packaging decisions Stage 4 made
+
+- **`bundle.targets` is now an explicit list** — `["app", "deb", "appimage"]` —
+  rather than `"all"`. Tauri filters the list down to whatever the host platform
+  can build, so a Mac run quietly produces the `.app` and ignores the two Linux
+  entries. That is not folklore: it was confirmed by running `npm run tauri:build`
+  on the Mac with this exact list.
+- **`dmg` is deliberately out of that list.** `bundle_dmg.sh` fails when the
+  project lives in iCloud Drive, which broke `npm run tauri:build` on the dev
+  machine for an artifact nobody can use yet (an unsigned dmg is no better than
+  an unsigned .app). Add the word back when signing is wired up.
+- **`rpm` is out too**, even though AquariusOS is Fedora-based. The OS ships apps
+  as Flatpaks or AppImages, not as rpms layered into the image; a Flatpak is its
+  own later task per the port plan.
+- **The `.desktop` file is a Handlebars template**, at
+  `src-tauri/linux/aquarius-writer.desktop`, wired at
+  `bundle.linux.deb.desktopTemplate`. That key reads Debian-only and isn't: the
+  AppImage bundler generates a deb data tree first and wraps it, so the AppImage
+  gets the same entry. Tauri exposes only `{{name}}`, `{{exec}}`, `{{icon}}` and
+  an optional `{{comment}}`; everything else — GenericName, Categories, MimeType,
+  StartupWMClass — is written literally, which is why that file has comments in
+  it.
+- **CI runs on `ubuntu-22.04` on purpose.** An AppImage only runs where glibc is
+  at least as new as the one it was built against, so the oldest supported runner
+  buys the most compatibility. If GitHub retires that label, `ubuntu-24.04` needs
+  no package changes (it also ships `webkit2gtk-4.1`); only the glibc floor
+  rises.
+- **`scripts/nosync-link.sh` now exits early on CI or non-macOS.** It is iCloud
+  housekeeping for one machine, and on a runner it would only turn
+  `node_modules` and `src-tauri/target` into symlinks that confuse the build
+  cache. This is what lets CI run plain `npm ci` with install scripts enabled,
+  which esbuild needs.
+- **No signing, notarisation, updater or Releases.** All four need Royce's Apple
+  account or a signing key. The TODO block at the end of
+  `.github/workflows/build.yml` says what each would take.

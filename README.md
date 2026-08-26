@@ -105,6 +105,19 @@ starts in a few seconds because the work is cached.
 
 Quit it by closing the window, or `Ctrl+C` in the terminal.
 
+### Way 3 — build a finished Mac app
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+npm run tauri:build
+```
+
+Leaves a real, double-clickable **`Aquarius Writer.app`** in
+`src-tauri/target/release/bundle/macos/`. It is unsigned, so macOS will grumble
+on any Mac but this one.
+
+This can only ever build the *Mac* app. For the Linux one, see below.
+
 ---
 
 ## Where the app is right now
@@ -121,8 +134,13 @@ Quit it by closing the window, or `Ctrl+C` in the terminal.
 - The **browser preview still runs on sample data** — it has no filesystem. That
   is the point of it: fast UI work with nothing real at risk.
 
-What is *not* done yet: the AquariusOS look (Stage 3), Linux window buttons and
-packaging (Stage 4), and Spark (Stage 5).
+- On **Linux** the app now draws its own window buttons — minimise, maximise,
+  close, in the top-right. It has to: the window is built without a system title
+  bar, and unlike macOS (where the system floats its traffic lights over ours)
+  nothing on Linux would draw them for us. On the Mac nothing changed at all.
+
+What is *not* done yet: Spark, the local AI (Stage 5). And nothing here has ever
+actually run on Linux — see "Building the Linux app" below.
 
 ### Opening a folder
 
@@ -166,6 +184,91 @@ scratch copy, never at real writing.** Both are development-only.
 
 ---
 
+## Building the Linux app
+
+### Why your Mac can't do it
+
+The Linux app is built against **WebKitGTK** and **GTK** — Linux system
+libraries that simply do not exist on macOS. There is no flag that makes a Mac
+produce a Linux app. A Linux machine has to do it.
+
+You don't own one. GitHub rents you one for free.
+
+### What CI will do the moment this repo is on GitHub
+
+There is a finished instruction file waiting at
+`.github/workflows/build.yml`. GitHub reads that file automatically. Every time
+you push to `main` — and any time you press a button yourself — it starts two
+computers:
+
+| Machine | Builds | You get |
+|---|---|---|
+| Ubuntu 22.04 | the Linux app | **`Aquarius Writer_0.0.1_amd64.AppImage`** |
+| macOS 14 | the Mac app | **`Aquarius Writer.app.zip`** |
+
+An **AppImage** is the whole app in one file. You don't install it. You download
+it onto the AquariusOS machine, mark it executable, and double-click it.
+
+Each run takes roughly 10–20 minutes the first time and less afterwards.
+Both files appear at the bottom of the run's page, under **Artifacts**, and are
+kept for 14 days.
+
+### What Royce has to do — the whole list
+
+The repo has no `origin`. That is the only thing standing between you and an
+AppImage. Six steps, once:
+
+1. **Make an empty repo on GitHub.** github.com → **New repository** → name it
+   `aquarius-writer`. **Private is completely fine** — there is no licence here
+   forcing it open, unlike Aquarius Cut. Do **not** tick "add a README",
+   "add .gitignore" or "choose a licence"; this repo already has all three and an
+   empty one avoids a merge on the first push.
+
+2. **Point this folder at it** and push. From inside this folder:
+
+   ```bash
+   git remote add origin git@github.com:<your-username>/aquarius-writer.git
+   git push -u origin main
+   ```
+
+   (If GitHub asks for a password and refuses it, that is normal — GitHub
+   stopped taking passwords years ago. Either set up an SSH key, or install the
+   `gh` command and run `gh auth login` once, which handles it for you.)
+
+3. **Watch it build.** Go to the repo on GitHub → the **Actions** tab. A run
+   called *Build Aquarius Writer* will already be going, started by your push.
+
+4. **Download the AppImage.** When the run finishes (green tick), scroll to the
+   bottom of the run's page → **Artifacts** → `aquarius-writer-linux-appimage`.
+   It downloads as a .zip; unzip it to get the `.AppImage` file.
+
+5. **Run it on the AquariusOS machine** (the Xbox Ally or the 5090 build):
+
+   ```bash
+   chmod +x "Aquarius Writer_0.0.1_amd64.AppImage"
+   ./"Aquarius Writer_0.0.1_amd64.AppImage"
+   ```
+
+6. **Tell me what broke.** This will be the first time a single line of this app
+   has ever run on Linux. `docs/NOTES.md` §10 is a short list of the exact
+   things worth looking at first.
+
+To build again later without changing any code: **Actions** tab → *Build
+Aquarius Writer* → **Run workflow**.
+
+### What CI deliberately does *not* do
+
+No code signing, no notarisation, no auto-updater, no GitHub Releases. Those
+need your Apple Developer account and a signing key, and they are distribution
+decisions, not build ones. The workflow stops at "here is the file" and the
+TODO comments at the end of it spell out what each would take.
+
+One consequence to expect: the **Mac** build is unsigned, so a Mac that isn't
+yours will refuse to open it until you right-click → Open. The Linux AppImage
+does not care.
+
+---
+
 ## The plan, in stages
 
 From `AquariusOS/docs/aquarius-writer-port-plan.md`:
@@ -175,8 +278,8 @@ From `AquariusOS/docs/aquarius-writer-port-plan.md`:
 | **1** | Land the repo here, install the toolchain, prove both dev modes boot on the Mac | ✅ **done** |
 | **2** | **The Rust vault backend.** Implement the 9 file operations for real: open a folder, walk the tree, read/write files with safe atomic saves, soft-delete to trash, watch for outside edits. Move version history / comments / trash off browser storage and onto disk in `.aquarius/`. | ✅ **done** |
 | **3** | **The AquariusOS skin.** A third theme matching the OS design tokens, with the Sora / Inter / JetBrains Mono fonts bundled. Default on Linux; Parchment stays default on macOS. | ✅ **done** |
-| **4** | **Linux identity + packaging.** Draw our own window buttons on Linux, app id `os.aquarius.writer`, desktop entry and icons, AppImage built by CI. | next |
-| **5** | **Spark on Linux.** Local model lifecycle (Ollama is Linux-native), provider routing, and the rule that every feature is drivable by Spark. | last |
+| **4** | **Linux identity + packaging.** Draw our own window buttons on Linux, app id `os.aquarius.writer`, desktop entry and icons, AppImage built by CI. | ✅ **done** (the AppImage waits on the GitHub repo — see below) |
+| **5** | **Spark on Linux.** Local model lifecycle (Ollama is Linux-native), provider routing, and the rule that every feature is drivable by Spark. | next |
 
 ---
 
@@ -185,6 +288,8 @@ From `AquariusOS/docs/aquarius-writer-port-plan.md`:
 ```
 src/                     the interface (React + TypeScript)
   components/            every screen and panel
+  components/window/     the app's own title bar + the Linux window buttons
+  lib/platform.ts        "which OS am I on" — asked by the theme and the chrome
   lib/vault/             ← the important seam, see below
   lib/dev/smoke.ts       development-only backend check (AQ_DEV_SMOKE)
   theme/                 Parchment, Midnight + AquariusOS themes (CSS variables)
@@ -197,11 +302,25 @@ src-tauri/               the desktop shell (Rust)
   src/fs_ops/            saving, trash + retention, the file watcher
   src/aux_store.rs       version history / comments / searches in .aquarius/
   capabilities/          what the app is permitted to do (kept deliberately tiny)
-  tauri.conf.json        window size, app id, build commands
+  icons/                 the app icon, every size, from the Writer's 4K master
+  linux/….desktop        the Linux application entry (menu name, icon, filetypes)
+  tauri.conf.json        window size, app id, bundle targets, build commands
+.github/workflows/       the GitHub build (see "Building the Linux app")
 docs/HANDOFF.md          the product design contract — the law
 docs/NOTES.md            where the code and the handoff disagree
+docs/screenshots/        review shots, one folder per theme
 scripts/nosync-link.sh   iCloud housekeeping (see below)
 ```
+
+**Regenerating the icons.** Every icon comes from one 4096×4096 master, the
+Swift app's own logo. If it ever changes, one command redoes the whole set:
+
+```bash
+npx tauri icon "/path/to/Branches/Apps/AquariusWriter/swift/Logo-Master-4K.png"
+```
+
+It is the Writer's own mark on purpose, not the AquariusOS logo — this is an app
+in the Aquarius suite, not the operating system itself.
 
 **The seam that matters:** `src/lib/vault/service.ts` defines nine methods.
 `browser-service.ts` implements them with fake data (the browser preview).
