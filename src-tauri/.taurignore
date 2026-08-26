@@ -1,0 +1,11 @@
+# Extra paths `tauri dev` must NOT watch for changes.
+#
+# Tauri already ignores `target/`, but this repo lives in iCloud Drive, so the
+# real Rust build folder is named `target.nosync` (iCloud skips anything ending
+# in .nosync) and `target` is only a shortcut to it. Tauri's watcher doesn't
+# recognise that name, sees every build artifact as a source change, and rebuilds
+# the app forever in a loop.
+#
+# See README.md ("One quirk: iCloud and the .nosync folders").
+target.nosync/
+gen/

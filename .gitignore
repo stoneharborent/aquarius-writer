@@ -1,11 +1,40 @@
+# --- JavaScript / Node ---
 node_modules
+node_modules.nosync
+npm-debug.log*
+yarn-error.log*
+.npm
+
+# --- Vite build output ---
 dist
 dist-ssr
-.DS_Store
 *.local
+.vite
+
+# --- TypeScript ---
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# --- Rust / Tauri ---
+src-tauri/target
+src-tauri/target.nosync
+src-tauri/gen
+src-tauri/WixTools
+**/*.rs.bk
+*.pdb
+
+# --- Editors ---
 .vscode/*
 !.vscode/extensions.json
+.idea
 
-# Tauri
-src-tauri/target
-src-tauri/gen
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# --- Environment ---
+.env
+.env.local
+.env.*.local

@@ -5,6 +5,8 @@
   "type": "module",
   "description": "Aquarius Writer — local-first desktop writing studio",
   "scripts": {
+    "nosync": "bash scripts/nosync-link.sh",
+    "postinstall": "bash scripts/nosync-link.sh",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
