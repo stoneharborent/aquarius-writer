@@ -584,11 +584,18 @@ session lifecycle, protocol-version negotiation across five known versions,
 `Host`-header validation against DNS rebinding, SSE framing, and re-owning all
 of it every time the spec moves. That is a lot of surface for a local tool.
 
-The cost is real and worth naming: **91 new crates** in the dependency tree
-(axum, hyper, tower, schemars, sse-stream and their friends), and the crate's
-MSRV forced `rust-version` in `Cargo.toml` from 1.77 to **1.88**. CI uses
-`dtolnay/rust-toolchain@stable`, so nothing there needed changing. A clean
-release build is roughly 20 seconds longer.
+The cost is smaller than expected and worth stating accurately, because the
+first draft of this note got it wrong. Building `rmcp` + `axum` in an empty
+crate pulls 91 packages, which is the number that gets quoted — but Tauri
+already brings hyper, tower, http, bytes, tokio, schemars and serde, so the
+real delta in `Cargo.lock` is **16 crates** (472 → 495 packages): `axum`,
+`axum-core`, `matchit`, `rmcp`, `rmcp-macros`, `sse-stream`, `async-trait`,
+`futures`, `httpdate`, `pastey`, `rand`, `rand_core`, `chacha20`,
+`tokio-macros`, `tokio-stream`, `tracing-attributes`.
+
+The one real cost is the MSRV: rmcp declares 1.88, so `rust-version` in
+`Cargo.toml` went from 1.77 to **1.88**. CI uses
+`dtolnay/rust-toolchain@stable`, so nothing there needed changing.
 
 **We left rmcp's transport defaults alone**, including SSE framing and session
 mode. The SDK also offers `json_response`, which would answer a tool call with
