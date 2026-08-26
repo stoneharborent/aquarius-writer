@@ -1,37 +1,24 @@
 // Versions, comments, trash, and workflow search — the web mirrors of the
-// desktop's SnapshotStore / CommentStore / TrashStore / FindStore, built on
-// top of the VaultService interface (no interface change: these persist in
-// localStorage per workflow, so they work in both the browser preview and the
-// Tauri shell until the Rust backend grows native equivalents).
+// desktop's SnapshotStore / CommentStore / TrashStore / FindStore.
+//
+// The rules (coalescing, retention counts, restore-snapshots-first) live here.
+// *Where the bytes land* lives in `aux-store.ts`: `.aquarius/` on disk in the
+// Tauri shell, localStorage in the browser preview. Same exported API either
+// way — nothing that calls into this file needs to know which is running.
 import { vault } from "@/lib/vault";
+import { auxBackend } from "./aux-store";
 import type { VaultNode } from "@/types/vault";
 
-function readLS<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-function writeLS(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch { /* storage full / disabled — features degrade to session-only */ }
+export type { VersionEntry, CommentEntry, TrashEntry } from "./aux-store";
+import type { CommentEntry, TrashEntry, VersionEntry } from "./aux-store";
+
+/** Load a workflow's version/comment/trash state. Called when one opens. */
+export function hydrateAux(wf: string): Promise<void> {
+  return auxBackend().hydrate(wf);
 }
 
 // ── versions ─────────────────────────────────────────────────────────────
 
-export interface VersionEntry {
-  id: string;
-  at: number;          // epoch ms
-  label: string;       // "Auto" or the snapshot name
-  named: boolean;
-  words: number;
-  body: string;
-}
-
-const VKEY = (wf: string, path: string) => `aq.versions.${wf}.${path}`;
 const AUTO_COALESCE_MS = 5 * 60_000;
 const MAX_AUTO = 25;
 
@@ -40,13 +27,13 @@ function countWords(s: string): number {
 }
 
 export function listVersions(wf: string, path: string): VersionEntry[] {
-  return readLS<VersionEntry[]>(VKEY(wf, path), []);
+  return auxBackend().listVersions(wf, path);
 }
 
 /** Record an autosave version. Coalesces: an unnamed version younger than
  * 5 minutes is replaced instead of stacking. Keeps the newest 25 autos. */
 export function recordAutoVersion(wf: string, path: string, body: string) {
-  const all = listVersions(wf, path);
+  const all = [...listVersions(wf, path)];
   const now = Date.now();
   const head = all[0];
   if (head && !head.named && now - head.at < AUTO_COALESCE_MS) {
@@ -61,20 +48,20 @@ export function recordAutoVersion(wf: string, path: string, body: string) {
   const autos = all.filter((v) => !v.named);
   if (autos.length > MAX_AUTO) {
     const drop = new Set(autos.slice(MAX_AUTO).map((v) => v.id));
-    writeLS(VKEY(wf, path), all.filter((v) => !drop.has(v.id)));
+    auxBackend().saveVersions(wf, path, all.filter((v) => !drop.has(v.id)));
   } else {
-    writeLS(VKEY(wf, path), all);
+    auxBackend().saveVersions(wf, path, all);
   }
 }
 
 export function takeSnapshot(wf: string, path: string, label: string, body: string) {
-  const all = listVersions(wf, path);
+  const all = [...listVersions(wf, path)];
   all.unshift({
     id: `s${Date.now().toString(36)}`,
     at: Date.now(), label: label || "Snapshot", named: true,
     words: countWords(body), body,
   });
-  writeLS(VKEY(wf, path), all);
+  auxBackend().saveVersions(wf, path, all);
 }
 
 /** Restore `versionId`; the current text is snapshotted first (desktop rule). */
@@ -90,68 +77,41 @@ export async function restoreVersion(
 
 // ── comments ─────────────────────────────────────────────────────────────
 
-export interface CommentEntry {
-  id: string;
-  at: number;
-  /** Quoted anchor text (best-effort re-anchored on render). */
-  anchor: string;
-  text: string;
-  resolved: boolean;
-}
-
-const CKEY = (wf: string, path: string) => `aq.comments.${wf}.${path}`;
-
 export function listComments(wf: string, path: string): CommentEntry[] {
-  return readLS<CommentEntry[]>(CKEY(wf, path), []);
+  return auxBackend().listComments(wf, path);
 }
 export function addComment(wf: string, path: string, anchor: string, text: string) {
-  const all = listComments(wf, path);
+  const all = [...listComments(wf, path)];
   all.unshift({ id: `c${Date.now().toString(36)}`, at: Date.now(), anchor, text, resolved: false });
-  writeLS(CKEY(wf, path), all);
+  auxBackend().saveComments(wf, path, all);
 }
 export function setCommentResolved(wf: string, path: string, id: string, resolved: boolean) {
-  writeLS(CKEY(wf, path), listComments(wf, path)
+  auxBackend().saveComments(wf, path, listComments(wf, path)
     .map((c) => (c.id === id ? { ...c, resolved } : c)));
 }
 export function deleteComment(wf: string, path: string, id: string) {
-  writeLS(CKEY(wf, path), listComments(wf, path).filter((c) => c.id !== id));
+  auxBackend().saveComments(wf, path, listComments(wf, path).filter((c) => c.id !== id));
 }
 
 // ── trash ────────────────────────────────────────────────────────────────
 
-export interface TrashEntry {
-  id: string;
-  path: string;
-  deletedAt: number;
-  body: string;
-}
-
-const TKEY = (wf: string) => `aq.trash.${wf}`;
-
 export function listTrash(wf: string): TrashEntry[] {
-  return readLS<TrashEntry[]>(TKEY(wf), []);
+  return auxBackend().listTrash(wf);
 }
 
-/** Soft-delete: capture content for restore, then delegate to the service. */
+/** Soft-delete: capture content for restore, then hand off to the backend. */
 export async function trashFile(wf: string, path: string): Promise<void> {
   let body = "";
   try { body = await vault().readFile(wf, path); } catch { /* binary/unreadable */ }
-  const all = listTrash(wf);
-  all.unshift({ id: `t${Date.now().toString(36)}`, path, deletedAt: Date.now(), body });
-  writeLS(TKEY(wf), all);
-  await vault().softDelete(wf, path);
+  await auxBackend().trashFile(wf, path, body);
 }
 
 export async function restoreTrash(wf: string, id: string): Promise<string | null> {
-  const entry = listTrash(wf).find((t) => t.id === id);
-  if (!entry) return null;
-  await vault().writeFile(wf, entry.path, entry.body);
-  writeLS(TKEY(wf), listTrash(wf).filter((t) => t.id !== id));
-  return entry.path;
+  return auxBackend().restoreTrash(wf, id);
 }
 
 export function purgeTrashEntry(wf: string, id: string) {
-  writeLS(TKEY(wf), listTrash(wf).filter((t) => t.id !== id));
+  auxBackend().purgeTrash(wf, id);
 }
 
 // ── workflow search ──────────────────────────────────────────────────────
@@ -161,6 +121,20 @@ export interface SearchHit {
   line: number;        // 0-based
   preview: string;
   count: number;       // matches in this file
+}
+
+const MAX_RECENT_SEARCHES = 20;
+
+/** Recent find queries for this workflow, newest first. */
+export function listRecentSearches(wf: string): string[] {
+  return auxBackend().listSearches(wf);
+}
+
+function rememberSearch(wf: string, query: string) {
+  const q = query.trim();
+  if (!q) return;
+  const next = [q, ...listRecentSearches(wf).filter((x) => x !== q)].slice(0, MAX_RECENT_SEARCHES);
+  auxBackend().saveSearches(wf, next);
 }
 
 function textFiles(node: VaultNode, out: string[] = []): string[] {
@@ -193,6 +167,7 @@ export async function searchWorkflow(
     }
     if (count > 0 && first) hits.push({ path, ...first, count });
   }
+  rememberSearch(wf, query);
   return hits.sort((a, b) => b.count - a.count);
 }
 

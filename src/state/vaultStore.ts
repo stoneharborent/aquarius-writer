@@ -5,6 +5,7 @@ import type {
   WorkflowSummary,
 } from "@/types/vault";
 import { vault } from "@/lib/vault";
+import { hydrateAux } from "@/lib/vault/aux";
 
 export type EditorView = "editor" | "outline" | "corkboard";
 
@@ -37,6 +38,9 @@ interface VaultState {
   fetchWorkflows: () => Promise<void>;
   openWorkflow: (id: string) => Promise<void>;
   closeWorkflow: () => void;
+  /** Re-read the open workflow's tree from disk, keeping the current
+   * selection and view. Called by the file watcher. */
+  refreshTree: () => Promise<void>;
   selectPath: (path: string | null) => void;
   /** Drop a node from the in-memory tree (after a soft-delete). */
   removeFromTree: (path: string) => void;
@@ -66,6 +70,24 @@ function writeLastWorkflow(id: string | null) {
     if (id) localStorage.setItem(LAST_WORKFLOW_KEY, id);
     else localStorage.removeItem(LAST_WORKFLOW_KEY);
   } catch { /* private mode / storage disabled — boot falls back to the index */ }
+}
+
+/// The live filesystem subscription for whichever workflow is open. Exactly
+/// one at a time: opening another workflow (or closing this one) disposes it.
+/// The app's own saves don't come back through here — the backend suppresses
+/// its own writes — so this only fires for edits made outside Aquarius.
+let unwatch: (() => void) | null = null;
+
+function stopWatching() {
+  unwatch?.();
+  unwatch = null;
+}
+
+function startWatching(id: string) {
+  stopWatching();
+  unwatch = vault().watch(id, () => {
+    void useVault.getState().refreshTree();
+  });
 }
 
 export const useVault = create<VaultState>((set, get) => ({
@@ -120,6 +142,13 @@ export const useVault = create<VaultState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const { workflow, tree } = await vault().loadWorkflow(id);
+      // Version history, comments and trash for this workflow. Awaited so the
+      // panels that read them synchronously have data on first render.
+      try {
+        await hydrateAux(workflow.id);
+      } catch (e) {
+        console.error("aux state failed to load:", e);
+      }
       set({
         current: workflow,
         tree,
@@ -130,14 +159,29 @@ export const useVault = create<VaultState>((set, get) => ({
         view: "editor",
       });
       writeLastWorkflow(workflow.id);
+      startWatching(workflow.id);
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
     }
   },
 
   closeWorkflow() {
+    stopWatching();
     writeLastWorkflow(null);
     set({ current: null, tree: null, selectedPath: null });
+  },
+
+  async refreshTree() {
+    const id = get().current?.id;
+    if (!id) return;
+    try {
+      const { workflow, tree } = await vault().loadWorkflow(id);
+      // Deliberately narrow: the selection, the view mode and the open editors
+      // all survive an external edit. Only the tree and the metadata change.
+      set({ current: workflow, tree });
+    } catch (e) {
+      console.error("tree refresh failed:", e);
+    }
   },
 
   selectPath(path) {
