@@ -109,22 +109,60 @@ Quit it by closing the window, or `Ctrl+C` in the terminal.
 
 ## Where the app is right now
 
-**The whole interface is built. The part that touches your real files is not.**
-
-Concretely:
+**The interface is built, and the desktop app now works on real folders.**
 
 - The full UI exists — sidebar and vault tree, the prose editor, the note editor,
   the screenplay (Fountain) editor, manuscript outline and corkboard, PDF and
   image viewers, the Spark panel, command palette, settings, pricing dialogs.
-- All of it currently runs on a **mock backend** (`src/lib/vault/browser-service.ts`)
-  that serves sample documents and remembers changes in browser storage.
-- The real file-on-disk backend is a **16-line Rust stub**. Every method in
-  `src/lib/vault/tauri-service.ts` deliberately throws
-  `"not implemented yet"`.
+- The **desktop app reads and writes actual files.** Point it at a folder and it
+  becomes a vault: it writes `.aquarius/workflow.json`, walks the folder into the
+  sidebar, saves your edits, keeps version history, moves deletions to a trash
+  folder for 30 days, and notices edits you make outside the app.
+- The **browser preview still runs on sample data** — it has no filesystem. That
+  is the point of it: fast UI work with nothing real at risk.
 
-So in the desktop app (Way 2), the **window opens and the app loads, but opening a
-real vault folder will throw an error.** That is expected, and it is exactly what
-Stage 2 builds. Until then, use the browser preview to see the app working.
+What is *not* done yet: the AquariusOS look (Stage 3), Linux window buttons and
+packaging (Stage 4), and Spark (Stage 5).
+
+### Opening a folder
+
+In the desktop app, "add a workflow" opens a normal macOS folder picker. Any
+folder works — a folder of markdown notes, a novel with a `Drafts/` folder, a
+folder of `.fountain` scripts. Aquarius reads what is there and never rearranges
+it. The only thing it adds is a hidden `.aquarius/` folder for its own
+bookkeeping:
+
+```
+Your Folder/
+  .aquarius/
+    workflow.json          what this vault is, and its chapter order
+    snapshots/…            version history, as plain readable markdown
+    comments.json          margin comments
+    trash/                 deleted files, kept 30 days, then swept
+  Drafts/Ch_01.md          ← your writing, untouched
+```
+
+Delete `.aquarius/` and you lose the history, not the writing.
+
+**A save never rewrites a file that didn't change.** If you open a note with no
+frontmatter, it will still have no frontmatter afterwards — right down to the
+file's timestamp being untouched.
+
+### Opening a folder without the picker (for development)
+
+The folder dialog needs a human to click it, which makes automated checks
+awkward. So the app can also be pointed at a folder from the command line:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+AQ_DEV_VAULT="/path/to/some/folder" npm run tauri:dev
+```
+
+It opens that folder on launch. Add `AQ_DEV_SMOKE=1` and it also runs a scripted
+pass over every backend operation (`src/lib/dev/smoke.ts`) and prints the results
+in the terminal — useful for proving the backend still works after a change.
+**That pass edits and deletes files in the folder it is given, so point it at a
+scratch copy, never at real writing.** Both are development-only.
 
 ---
 
@@ -134,9 +172,9 @@ From `AquariusOS/docs/aquarius-writer-port-plan.md`:
 
 | Stage | What it does | Status |
 |---|---|---|
-| **1** | Land the repo here, install the toolchain, prove both dev modes boot on the Mac | ✅ **done** — this commit |
-| **2** | **The Rust vault backend.** Implement the 9 file operations for real: open a folder, walk the tree, read/write files with safe atomic saves, soft-delete to trash, watch for outside edits. Move version history / comments / trash off browser storage and onto disk in `.aquarius/`. | next |
-| **3** | **The AquariusOS skin.** A third theme matching the OS design tokens, with the Sora / Inter / JetBrains Mono fonts bundled. Default on Linux; Parchment stays default on macOS. | next (runs alongside Stage 2) |
+| **1** | Land the repo here, install the toolchain, prove both dev modes boot on the Mac | ✅ **done** |
+| **2** | **The Rust vault backend.** Implement the 9 file operations for real: open a folder, walk the tree, read/write files with safe atomic saves, soft-delete to trash, watch for outside edits. Move version history / comments / trash off browser storage and onto disk in `.aquarius/`. | ✅ **done** |
+| **3** | **The AquariusOS skin.** A third theme matching the OS design tokens, with the Sora / Inter / JetBrains Mono fonts bundled. Default on Linux; Parchment stays default on macOS. | next |
 | **4** | **Linux identity + packaging.** Draw our own window buttons on Linux, app id `os.aquarius.writer`, desktop entry and icons, AppImage built by CI. | after 2 |
 | **5** | **Spark on Linux.** Local model lifecycle (Ollama is Linux-native), provider routing, and the rule that every feature is drivable by Spark. | last |
 
@@ -148,10 +186,16 @@ From `AquariusOS/docs/aquarius-writer-port-plan.md`:
 src/                     the interface (React + TypeScript)
   components/            every screen and panel
   lib/vault/             ← the important seam, see below
+  lib/dev/smoke.ts       development-only backend check (AQ_DEV_SMOKE)
   theme/                 Parchment + Midnight themes (CSS variables)
   state/                 app state (zustand stores)
 src-tauri/               the desktop shell (Rust)
-  src/lib.rs             the 16-line stub Stage 2 replaces
+  src/lib.rs             app setup + the list of commands the UI can call
+  src/commands.rs        every invoke() the interface makes, in one file
+  src/vault/             workflow registry, workflow.json, the folder walk
+  src/fs_ops/            saving, trash + retention, the file watcher
+  src/aux_store.rs       version history / comments / searches in .aquarius/
+  capabilities/          what the app is permitted to do (kept deliberately tiny)
   tauri.conf.json        window size, app id, build commands
 docs/HANDOFF.md          the product design contract — the law
 docs/NOTES.md            where the code and the handoff disagree
@@ -159,10 +203,22 @@ scripts/nosync-link.sh   iCloud housekeeping (see below)
 ```
 
 **The seam that matters:** `src/lib/vault/service.ts` defines nine methods.
-`browser-service.ts` implements them with fake data (works today).
-`tauri-service.ts` implements them by throwing (Stage 2 fills these in).
+`browser-service.ts` implements them with fake data (the browser preview).
+`tauri-service.ts` implements them by calling into Rust (the desktop app).
 `index.ts` picks whichever one fits where the app is running. Nothing else in the
-app knows or cares which is in use — that's the whole design.
+app knows or cares which is in use — that's the whole design. Version history,
+comments and trash follow the same pattern in `aux-store.ts`.
+
+**Testing the Rust side:**
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cd src-tauri && cargo test
+```
+
+Everything that could quietly lose a writer's work — the folder walk, saves,
+trash and its 30-day sweep, `workflow.json` — is covered there and runs in about
+a second, with no app window involved.
 
 ---
 

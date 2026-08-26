@@ -4,7 +4,7 @@
 byte-for-byte as delivered. It is never edited. When reality has moved on from
 what it says, the discrepancy is recorded here instead.
 
-Last reviewed: 2026-08-25 (Stage 1 of the Linux port).
+Last reviewed: 2026-08-25 (Stage 2 of the Linux port — the Rust vault backend).
 
 ---
 
@@ -44,19 +44,69 @@ The amendment is narrow:
 
 Accent hues (blue / purple / sepia / sage) are unaffected.
 
-## 3. The Tauri backend does not exist yet
+## 3. The on-disk model — built in Stage 2, with three deviations
 
-**HANDOFF.md §3** describes the on-disk folder and file model (`.aquarius/
-workflow.json`, `sessions/`, `snapshots/`, `trash/`).
+**HANDOFF.md §3** describes `.aquarius/` with `workflow.json`, `sessions/`,
+`snapshots/` and `trash/`. Stage 2 implemented it. Where the shipped layout
+differs from the sketch:
 
-None of that is implemented yet. `src-tauri/src/lib.rs` is a 16-line stub with an
-empty `invoke_handler`, and every method of `src/lib/vault/tauri-service.ts`
-throws `"not implemented yet"`. The app currently runs on
-`browser-service.ts` (sample data) with `aux.ts` keeping version history,
-comments, the trash index and search in **localStorage**.
+- **`snapshots/` carries an index.** The handoff shows bare files
+  (`snapshots/Ch_03/2026-05-18T11-42.md`). The version list also needs a label,
+  a "named vs auto" flag and a word count, which a filename can't hold, so each
+  document's snapshot folder has an `index.json` beside the body files. The
+  bodies are still plain markdown, readable without the app — that was the point
+  of the original shape and it is preserved.
+- **`sessions/` is not written yet.** Nothing writes per-day session logs, so the
+  Today panel still runs on the hardcoded data the handoff itself flags in §6.
+  The folder is unused rather than wrong; whoever builds the Today panel for
+  real owns it.
+- **`comments.json` and `searches.json` are additions.** The handoff has no
+  storage for margin comments or recent searches; before Stage 2 they lived in
+  `localStorage`. They are now files in `.aquarius/`.
 
-Stage 2 of the port implements §3 for real and moves the `aux.ts` state onto disk.
-The handoff's model is the target, not a description of today.
+`workflow.json` also round-trips unknown top-level keys, so a future version
+adding a field can't have it erased by an older build.
+
+## 3a. Aux state hydrates eagerly, and that has a ceiling
+
+`listVersions` / `listComments` / `listTrash` in `src/lib/vault/aux.ts` are
+**synchronous** — they are called during render. Disk reads are not. The seam is
+an in-memory cache filled once per workflow by `hydrateAux()` (awaited in
+`openWorkflow`), with every mutation writing through to disk immediately.
+
+The consequence: opening a workflow reads *all* of its version bodies. There is a
+48 MB ceiling in `aux_store.rs` (`HYDRATION_BUDGET_BYTES`); past it, versions
+still list but their bodies come back empty, which would show as an empty diff.
+Realistically that is thousands of snapshots and a long way off. Fixing it
+properly means making the three list functions async and updating their callers
+(`RightPane`, `VersionDiff`, `TrashSheet`) — a renderer change, deliberately not
+made in Stage 2.
+
+## 3b. `resolveAssetUrl` uses the asset protocol, not data URLs
+
+Images, PDFs and video resolve through Tauri's asset protocol
+(`convertFileSrc`), so a large file streams instead of being inlined. The scope
+can't be configured statically — the vault folder is whatever the writer picked
+— so it is granted at runtime (`asset_protocol_scope().allow_directory`) when a
+workflow is registered or loaded.
+
+If that grant ever fails, the same command falls back to a base64 data URL and
+says so in the terminal. Verified working on macOS 2026-08-25
+(`asset://localhost/…`). **Untested on Linux/WebKitGTK** — if images turn up
+blank there, that is the first thing to check, and the fallback is already in
+place if the scope behaves differently.
+
+## 3c. The watcher will not reload on the app's own saves
+
+Every path the app writes is stamped in a ledger (`fs_ops/watcher.rs`) and events
+for it are dropped for 1.5 s. Without that, a save would fire the watcher, which
+reloads the tree, which re-renders the editor — forever. Paths are canonicalised
+before comparison because macOS reports `/private/var/...` for a folder opened as
+`/var/...`.
+
+If Stage 3+ adds any code path that writes into a vault **without** going through
+`vault_write_file`, it must call `state.note_self_write(&path)` first or it will
+cause exactly that loop.
 
 ## 4. Window chrome is macOS-shaped
 
@@ -114,9 +164,39 @@ It was **deliberately not changed in Stage 1**, because enabling
 App Store. That is a distribution decision for Royce, and the window-chrome work
 belongs to Stages 3–4 anyway.
 
-## 7. No Tauri capabilities file
+## 7. Capabilities exist now, and are deliberately tiny
 
 Tauri 2 gates every plugin call behind a permission set in
-`src-tauri/capabilities/*.json`. This repo has **no `capabilities/` directory**,
-so the `fs`, `dialog` and `shell` plugins registered in `lib.rs` are currently
-granted nothing. Stage 2 has to create that file alongside the commands it adds.
+`src-tauri/capabilities/*.json`. Stage 2 created `capabilities/default.json`,
+which grants exactly two things: `core:default` and `dialog:allow-open`.
+
+There is **no filesystem permission of any kind** — not even a scoped one. The
+vault is reached only through this app's own `#[tauri::command]`s, which are not
+permission-gated (app commands never are) and do their own path checking in
+`vault::paths::resolve_in_root`. That means a bug in the renderer, or anything
+injected into it, cannot read or write an arbitrary file: there is no general
+`fs` call available to it at all.
+
+Two consequences for later stages:
+
+- `tauri-plugin-fs` and `tauri-plugin-shell` are still registered in `lib.rs` but
+  have **no permissions granted**, so their JS APIs will fail if called. Stage 5
+  (Spark, which may want to run a local model process) has to add a narrow
+  `shell` permission deliberately, rather than discovering it works by accident.
+- Adding a plugin API to the renderer means adding its permission here. If a
+  plugin call silently does nothing, this file is the first place to look.
+
+## 8. What Stage 2 left for later
+
+- **`sessions/` and the Today panel** — see §3 above. Nothing writes per-day
+  word-delta logs yet.
+- **Conflict detection.** `safety/ConflictDialog.tsx` exists in the UI, but
+  nothing raises it: a save currently wins over an external edit made while the
+  document was open (the editor's copy is written; the version trail holds the
+  previous text). Doing this properly means carrying the mtime read at open time
+  into `vault_write_file` and refusing the write when it moved.
+- **Renaming and creating files** are not in the `VaultService` interface at all
+  — nine methods, none of them create or rename. The UI has no affordance for it
+  either, so this is a product gap rather than a backend one.
+- **`macOSPrivateApi`** (§6) is still unset and transparency still inactive. It
+  now matters to Stage 3/4, which own the window chrome.
