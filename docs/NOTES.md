@@ -226,6 +226,22 @@ If Stage 3+ adds any code path that writes into a vault **without** going throug
 `vault_write_file`, it must call `state.note_self_write(&path)` first or it will
 cause exactly that loop.
 
+**An event on the vault folder itself is ignored.** FSEvents reports the watched
+folder's own creation and extended-attribute touches on the stream — including
+ones that happened shortly *before* the watch started — and the ledger can never
+match those, because it is keyed by the file paths the app writes. They were
+reloading the tree for a folder whose contents had not changed. Anything that
+really changes inside the vault also produces an event for the file or subfolder
+it touched, which is a path below root and still gets through, so nothing is
+lost. Found by CI: this is what made
+`writes_recorded_in_the_ledger_do_not_fire` flake on the macOS runner
+(reproducible locally 28 times out of 30 under CPU load, 0/30 after the fix).
+
+**Debugging the watcher.** `AQ_WATCH_DEBUG=1` prints every event the filters let
+through, with its kind and paths. That is how the above was diagnosed, and it is
+the first thing to reach for if the tree reloads at odd moments on Linux, where
+inotify's event shapes differ from FSEvents'.
+
 ## 4. Window chrome — Linux now draws its own (Stage 4)
 
 `src-tauri/tauri.conf.json` still sets `decorations: false` with

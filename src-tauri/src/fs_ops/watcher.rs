@@ -59,6 +59,15 @@ fn canonical(path: &Path) -> PathBuf {
 
 /// Should this path produce a "vault changed" notification?
 pub fn is_interesting(root: &Path, path: &Path, self_writes: &SelfWrites) -> bool {
+    // An event on the vault folder *itself* is never a content change we can
+    // act on, and FSEvents emits several: the folder's own creation and
+    // extended-attribute touches arrive on the stream even when they happened
+    // just before the watch started. Anything that really changed inside the
+    // vault also produces an event for the file or subfolder it changed, which
+    // is a path *below* root and still reaches us.
+    if path == root {
+        return false;
+    }
     if is_metadata(root, path) {
         return false;
     }
@@ -108,6 +117,9 @@ impl WorkflowWatch {
                                 .iter()
                                 .any(|p| is_interesting(&root, p, &self_writes))
                             {
+                                if std::env::var_os("AQ_WATCH_DEBUG").is_some() {
+                                    eprintln!("[dbg] interesting: {:?} {:?}", event.kind, event.paths);
+                                }
                                 pending = true;
                             }
                         }
@@ -149,6 +161,21 @@ mod tests {
     use crate::testutil::TempDir;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// Let a freshly started watcher deliver whatever the OS had queued for
+    /// the folder before we started watching it, then zero the counter.
+    ///
+    /// This is not padding. On macOS the FSEvents stream hands us the vault
+    /// folder's own creation and metadata events *after* the stream opens, so
+    /// a test that starts counting immediately is counting the fixture's setup
+    /// as well as its subject. On a loaded two-core CI runner that lands late
+    /// enough to be indistinguishable from the write under test.
+    const SETTLE: Duration = Duration::from_millis(750);
+
+    fn settle(hits: &Arc<AtomicUsize>) {
+        std::thread::sleep(SETTLE);
+        hits.store(0, Ordering::SeqCst);
+    }
+
     #[test]
     fn metadata_and_temporaries_are_not_interesting() {
         let root = Path::new("/vault");
@@ -157,6 +184,19 @@ mod tests {
         assert!(!is_interesting(root, Path::new("/vault/.aquarius/workflow.json"), &sw));
         assert!(!is_interesting(root, Path::new("/vault/Drafts/.aq-tmp-9f2a"), &sw));
         assert!(!is_interesting(root, Path::new("/vault/.DS_Store"), &sw));
+    }
+
+    #[test]
+    fn an_event_on_the_vault_folder_itself_is_not_a_change() {
+        // FSEvents reports the watched folder's own creation and xattr touches.
+        // Nothing inside the vault changed, so nothing should reload.
+        let root = Path::new("/vault");
+        let sw = SelfWrites::default();
+        assert!(!is_interesting(root, root, &sw));
+        assert!(
+            is_interesting(root, Path::new("/vault/Notes"), &sw),
+            "a folder created *inside* the vault is still a change"
+        );
     }
 
     #[test]
@@ -182,6 +222,7 @@ mod tests {
             seen.fetch_add(1, Ordering::SeqCst);
         })
         .unwrap();
+        settle(&hits);
 
         // A burst of edits, the way an external tool writes.
         for i in 0..5 {
@@ -210,6 +251,9 @@ mod tests {
             seen.fetch_add(1, Ordering::SeqCst);
         })
         .unwrap();
+        // Setup noise has to be out of the way before the write under test,
+        // or a late fixture event gets blamed on the ledger.
+        settle(&hits);
 
         let target = t.path().join("note.md");
         ledger.record(&target);
