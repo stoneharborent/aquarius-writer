@@ -22,6 +22,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# None of this applies away from Royce's Mac. On a CI runner (or any Linux
+# machine) there is no iCloud, nothing is syncing, and quietly turning
+# node_modules and src-tauri/target into symlinks would only confuse the build
+# cache. Bail out early instead.
+if [ -n "${CI:-}" ] || [ "$(uname -s)" != "Darwin" ]; then
+  echo "nosync: no iCloud here — nothing to do"
+  exit 0
+fi
+
 relink() {
   link="$1"
   real="$1.nosync"

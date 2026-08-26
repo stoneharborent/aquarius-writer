@@ -1,0 +1,207 @@
+---
+# ==============================================================================
+# Build Aquarius Writer
+# ==============================================================================
+# Plain English: this file tells GitHub to build the app for you, on GitHub's
+# computers, every time you push to `main` — and any time you press the button
+# yourself on the Actions tab ("Run workflow").
+#
+# It builds TWO things at once, on two different machines:
+#
+#   Linux  (ubuntu-22.04)  ->  Aquarius_Writer_..._amd64.AppImage
+#                              The AquariusOS build. An AppImage is one single
+#                              file: download it, mark it executable, run it.
+#                              Nothing to install.
+#
+#   macOS  (macos-14)      ->  Aquarius Writer.app  (zipped)
+#                              The Mac build, for testing on Royce's own
+#                              machine.
+#
+# When a run finishes, both land at the bottom of that run's page under
+# "Artifacts", as .zip downloads. They are kept for 14 days.
+#
+# WHY LINUX HAS TO BE BUILT HERE AND NOT ON THE MAC: a Tauri Linux build links
+# against WebKitGTK and GTK, which are Linux libraries. They do not exist on
+# macOS and do not cross-compile in any way we would trust. A Linux machine has
+# to do it, and this is the free Linux machine.
+#
+# NOT WIRED UP YET, on purpose:
+#   * Code signing / notarisation (macOS) and GPG signing (Linux).
+#   * The Tauri updater and its signing key.
+#   * Publishing to GitHub Releases.
+# Those are all distribution decisions that need Royce's Apple Developer
+# account and a signing key, so this workflow deliberately stops at "here is
+# the file". See the TODO comments at the end of each job.
+# ==============================================================================
+
+name: Build Aquarius Writer
+
+on:
+  push:
+    branches:
+      - main
+    # Documentation-only pushes don't need a 20-minute build.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+# Only one build per branch at a time. Pushing twice in a minute cancels the
+# first run instead of paying for both.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    strategy:
+      # One platform failing must not cancel the other. A broken Linux build
+      # should still leave you a Mac build to test with, and vice versa.
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu-22.04 rather than the newest Ubuntu on purpose. An AppImage
+          # can only run on systems whose glibc is at least as new as the one it
+          # was built against, so building on the OLDEST runner we support gives
+          # the widest compatibility. AquariusOS is Fedora-based and far newer,
+          # so this is headroom, not a requirement.
+          # If GitHub ever retires the ubuntu-22.04 label, move to ubuntu-24.04:
+          # the package list below is unchanged there (24.04 also ships
+          # webkit2gtk-4.1), only the glibc floor rises.
+          - os: ubuntu-22.04
+            label: Linux (AppImage)
+            bundles: appimage
+            artifact: aquarius-writer-linux-appimage
+            # Where tauri drops what it built.
+            artifact-path: src-tauri/target/release/bundle/appimage/*.AppImage
+
+          # macos-14 is Apple Silicon (arm64), which is what Royce's Mac is.
+          # An Intel Mac would need a second entry with macos-13.
+          # The path is the *.zip, not the *.app, because a .app is a folder —
+          # see the "Zip the Mac app" step below.
+          - os: macos-14
+            label: macOS (.app)
+            bundles: app
+            artifact: aquarius-writer-macos-app
+            artifact-path: src-tauri/target/release/bundle/macos/*.zip
+
+    steps:
+      # A note on `@v4`: the os-image repo pins every action to a full commit
+      # SHA, because Renovate keeps those pins fresh there. This repo has no
+      # Renovate yet, and SHA pins nobody updates rot into a security theatre.
+      # Major-version tags it is — revisit if Renovate is ever added here.
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      # ---- Linux system libraries -------------------------------------------
+      # Tauri v2's Linux prerequisites, from the official setup page
+      # (https://v2.tauri.app/start/prerequisites/), plus `patchelf`, which the
+      # AppImage bundler uses to rewrite the binary's library paths.
+      #
+      # The one that matters most is libwebkit2gtk-4.1-dev: WebKitGTK IS the
+      # browser engine the app renders in on Linux. Note "4.1" — Tauri v1 used
+      # 4.0, and pointing at the wrong one is the classic Tauri-on-Linux build
+      # failure.
+      - name: Install the Linux build libraries
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            patchelf
+
+      # ---- Toolchains -------------------------------------------------------
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      # Rust builds are slow from scratch and almost instant when cached. This
+      # caches ~/.cargo and src-tauri/target, keyed on the platform and the
+      # lockfile, so only real dependency changes pay full price.
+      - name: Cache the Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `npm ci` installs exactly what package-lock.json says — no surprise
+      # version bumps in a build. It needs the lockfile to be in step with
+      # package.json and will fail loudly if it is not.
+      #
+      # Install scripts are left ON, because esbuild (which Vite builds with)
+      # uses one. This repo's own `postinstall` runs too and immediately does
+      # nothing: it is iCloud housekeeping for Royce's Mac and exits early when
+      # it sees `CI`.
+      - name: Install the npm packages
+        run: npm ci
+
+      # ---- Checks -----------------------------------------------------------
+      # Run before the slow part, so a broken backend fails in two minutes
+      # rather than twenty.
+      - name: Run the Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+      # ---- The actual build --------------------------------------------------
+      # `tauri build` runs `npm run build` first (that is `beforeBuildCommand`
+      # in tauri.conf.json), compiles the Rust shell in release mode, then
+      # packages the result.
+      #
+      # `--bundles` narrows tauri.conf.json's target list to the one format this
+      # job wants: the Linux job would otherwise also build a .deb, and the Mac
+      # job a .dmg, doubling the time for artifacts nobody is testing yet.
+      - name: Build the app
+        run: npm run tauri:build -- --bundles ${{ matrix.bundles }}
+
+      # ---- Hand-off ---------------------------------------------------------
+      # A .app is a folder, and upload-artifact would silently flatten it and
+      # lose the executable bit. Zipping it first keeps it a working app.
+      - name: Zip the Mac app
+        if: matrix.os == 'macos-14'
+        working-directory: src-tauri/target/release/bundle/macos
+        run: ditto -c -k --sequesterRsrc --keepParent "Aquarius Writer.app" "Aquarius Writer.app.zip"
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      # TODO (distribution, needs Royce's decisions and secrets):
+      #   * macOS: signing + notarisation. Needs an Apple Developer ID
+      #     certificate and an app-specific password, stored as repository
+      #     secrets, then APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY /
+      #     APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID on the build step.
+      #     Unsigned, the .app shows Gatekeeper's "damaged / unidentified
+      #     developer" warning on any Mac but Royce's own.
+      #   * Note transparency is currently inactive on macOS because
+      #     `app.macOSPrivateApi` is off — enabling it bars the app from the Mac
+      #     App Store, so it stays off until Royce decides. See docs/NOTES.md §6.
+      #   * Linux: the AppImage is unsigned. Signing is optional there and
+      #     usually a detached GPG signature published alongside the file.
+      #   * Updater: `bundle.createUpdaterArtifacts` plus a TAURI_SIGNING_
+      #     PRIVATE_KEY secret, and a place to host the update manifest.
+      #   * Releases: attach these artifacts to a GitHub Release on a tag push.
