@@ -285,7 +285,7 @@ computers:
 
 | Machine | Builds | You get |
 |---|---|---|
-| Ubuntu 22.04 | the Linux app | **`Aquarius Writer_0.0.1_amd64.AppImage`** |
+| Ubuntu 22.04 | the Linux app | **`Aquarius Writer_0.1.0_amd64.AppImage`** |
 | macOS 14 | the Mac app | **`Aquarius Writer.app.zip`** |
 
 An **AppImage** is the whole app in one file. You don't install it. You download
@@ -327,8 +327,8 @@ AppImage. Six steps, once:
 5. **Run it on the AquariusOS machine** (the Xbox Ally or the 5090 build):
 
    ```bash
-   chmod +x "Aquarius Writer_0.0.1_amd64.AppImage"
-   ./"Aquarius Writer_0.0.1_amd64.AppImage"
+   chmod +x "Aquarius Writer_0.1.0_amd64.AppImage"
+   ./"Aquarius Writer_0.1.0_amd64.AppImage"
    ```
 
 6. **Tell me what broke.** This will be the first time a single line of this app
@@ -338,16 +338,69 @@ AppImage. Six steps, once:
 To build again later without changing any code: **Actions** tab → *Build
 Aquarius Writer* → **Run workflow**.
 
+## Publishing a release
+
+Everything above gets you a file that lives on a run's page for 14 days and
+that only you can download. A **release** is the permanent, public version of
+the same thing — and it is what AquariusOS actually installs from: the OS image
+build downloads the AppImage from a release URL and checks it against the
+release's `SHA256SUMS.txt` before baking it into the OS.
+
+Publishing one is a tag push. Three commands:
+
+```bash
+# 1. Make sure the version is right. These three files must all agree,
+#    and must match the tag you are about to push.
+#      package.json            -> "version": "0.1.0"
+#      src-tauri/tauri.conf.json -> "version": "0.1.0"
+#      src-tauri/Cargo.toml    -> version = "0.1.0"
+#
+# 2. Write the release notes: add a "## v0.1.0 — <date>" section to
+#    CHANGELOG.md. This becomes the release description word for word.
+#    No section, no release — the workflow stops rather than publishing
+#    something blank.
+
+git push origin main
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+That third command starts the same build as always, and then a second job takes
+over. It:
+
+1. **Checks the tag against the version in those three files** — before anything
+   slow runs, so a mismatched tag fails in half a minute rather than twenty.
+2. **Renames the files** to a flat, scriptable convention (tauri names the
+   AppImage with a space in it, which is awkward for anything automated):
+
+   | File | What it is |
+   |---|---|
+   | `AquariusWriter-0.1.0-x86_64.AppImage` | the Linux / AquariusOS build |
+   | `AquariusWriter-0.1.0-arm64.zip` | the Mac build, Apple Silicon |
+   | `SHA256SUMS.txt` | the fingerprints, to prove a download is intact |
+
+3. **Publishes them as a public GitHub Release** on that tag, with your
+   changelog section as the description.
+
+It is written to be hard to get half-wrong. The release is created as a private
+draft, the files are uploaded into it, and only then is it flipped public — so
+nobody can ever catch it mid-upload. And it refuses to touch a release that
+already exists: to genuinely redo one, delete it on GitHub first.
+
+To check a download on the other end, put `SHA256SUMS.txt` next to the file and
+run `sha256sum -c SHA256SUMS.txt`. `OK` means it is exactly what was built.
+
 ### What CI deliberately does *not* do
 
-No code signing, no notarisation, no auto-updater, no GitHub Releases. Those
-need your Apple Developer account and a signing key, and they are distribution
-decisions, not build ones. The workflow stops at "here is the file" and the
-TODO comments at the end of it spell out what each would take.
+No code signing, no notarisation, no auto-updater. Those need your Apple
+Developer account and a signing key, and they are distribution decisions, not
+build ones. The TODO comments at the end of the build job spell out what each
+would take.
 
-One consequence to expect: the **Mac** build is unsigned, so a Mac that isn't
-yours will refuse to open it until you right-click → Open. The Linux AppImage
-does not care.
+Two consequences to expect: the **Mac** build is unsigned, so a Mac that isn't
+yours will refuse to open it until you right-click → Open (the Linux AppImage
+does not care), and there is no update check — a new version means downloading
+a new release by hand.
 
 ---
 

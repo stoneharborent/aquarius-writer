@@ -6,6 +6,10 @@
 # computers, every time you push to `main` — and any time you press the button
 # yourself on the Actions tab ("Run workflow").
 #
+# It does one more thing: when you push a *version tag* (`v0.1.0` and friends),
+# it takes the two files it just built, renames them, checksums them, and
+# publishes them as a public GitHub Release. See the "release" job at the bottom.
+#
 # It builds TWO things at once, on two different machines:
 #
 #   Linux  (ubuntu-22.04)  ->  Aquarius_Writer_..._amd64.AppImage
@@ -28,10 +32,10 @@
 # NOT WIRED UP YET, on purpose:
 #   * Code signing / notarisation (macOS) and GPG signing (Linux).
 #   * The Tauri updater and its signing key.
-#   * Publishing to GitHub Releases.
-# Those are all distribution decisions that need Royce's Apple Developer
-# account and a signing key, so this workflow deliberately stops at "here is
-# the file". See the TODO comments at the end of each job.
+# Those are distribution decisions that need Royce's Apple Developer account
+# and a signing key. The files a release publishes are therefore unsigned:
+# macOS will need a right-click → Open on any Mac but Royce's, and Linux does
+# not care. See the TODO comments at the end of the build job.
 # ==============================================================================
 
 name: Build Aquarius Writer
@@ -41,9 +45,18 @@ on:
     branches:
       - main
     # Documentation-only pushes don't need a 20-minute build.
+    #
+    # This does NOT block releases. GitHub's rule is "path filters are not
+    # evaluated for pushes of tags" — a `v*` tag always builds, even when the
+    # only thing that changed since the last one was CHANGELOG.md. Which is
+    # exactly what you want, because writing the changelog is usually the last
+    # commit before you tag.
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
+    # Version tags. Pushing one builds as usual and then publishes a release.
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 # Only one build per branch at a time. Pushing twice in a minute cancels the
@@ -99,6 +112,40 @@ jobs:
       # Major-version tags it is — revisit if Renovate is ever added here.
       - name: Check out the repo
         uses: actions/checkout@v4
+
+      # ---- Tag sanity check (only on a version tag) -------------------------
+      # The repo declares its version in three files that have to agree, and the
+      # tag you push is a fourth. Tagging `v0.2.0` while package.json still says
+      # 0.1.0 would publish a release full of files named 0.1.0 — confusing, and
+      # a nuisance to unpick once it is public.
+      #
+      # So: check it here, before anything slow happens, and fail in thirty
+      # seconds instead of twenty minutes. If this fails, fix the version in the
+      # three files, commit, delete the tag, and tag again.
+      - name: Check the tag matches the version in the repo
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          # ${GITHUB_REF_NAME} is "v0.1.0"; strip the v to get "0.1.0".
+          tag_version="${GITHUB_REF_NAME#v}"
+
+          # node is on every runner, so this reads the JSON properly rather than
+          # grepping it and hoping.
+          pkg_version="$(node -p "require('./package.json').version")"
+          tauri_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          cargo_version="$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)"
+
+          echo "tag:              ${tag_version}"
+          echo "package.json:     ${pkg_version}"
+          echo "tauri.conf.json:  ${tauri_version}"
+          echo "Cargo.toml:       ${cargo_version}"
+
+          for declared in "${pkg_version}" "${tauri_version}" "${cargo_version}"; do
+            if [ "${declared}" != "${tag_version}" ]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match every declared version. See the four numbers above."
+              exit 1
+            fi
+          done
 
       # ---- Linux system libraries -------------------------------------------
       # Tauri v2's Linux prerequisites, from the official setup page
@@ -203,5 +250,213 @@ jobs:
       #   * Linux: the AppImage is unsigned. Signing is optional there and
       #     usually a detached GPG signature published alongside the file.
       #   * Updater: `bundle.createUpdaterArtifacts` plus a TAURI_SIGNING_
-      #     PRIVATE_KEY secret, and a place to host the update manifest.
-      #   * Releases: attach these artifacts to a GitHub Release on a tag push.
+      #     PRIVATE_KEY secret, and a place to host the update manifest. Until
+      #     that exists, a new version means downloading a new release by hand.
+
+  # ============================================================================
+  # Publish the release
+  # ============================================================================
+  # Plain English: the job above builds the app and leaves the files on the run's
+  # page, where they expire after 14 days and only you can reach them. This job
+  # takes those same files and puts them somewhere permanent and public — a
+  # GitHub Release on the tag you pushed.
+  #
+  # It only ever runs for a tag starting with `v`. Ordinary pushes to `main`
+  # skip it entirely, so nothing you do day to day can publish by accident.
+  #
+  # WHY THIS EXISTS: AquariusOS bakes Aquarius Writer into the OS image. The OS
+  # build downloads the AppImage from a release URL and checks it against
+  # SHA256SUMS.txt before trusting it. That needs two things this job
+  # guarantees — a *predictable filename* and a *checksum file* — which is why
+  # the files get renamed here rather than being published as tauri named them.
+  release:
+    name: Publish the release
+    needs: build
+    # `needs: build` waits for BOTH matrix legs. If the Mac build fails, no
+    # release is published at all — a release missing half its files is worse
+    # than no release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    # Nothing is compiled here, only downloaded and renamed, so this job has no
+    # glibc concerns and can just use whatever Ubuntu is current.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # The build job only needs to read the repo. This one has to write a
+    # release, so it asks for that permission here rather than widening the
+    # whole workflow.
+    permissions:
+      contents: write
+
+    steps:
+      # Needed for CHANGELOG.md, which becomes the release description.
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      # No `name:` means "download every artifact this run produced". Each one
+      # lands in its own subfolder named after the artifact.
+      - name: Fetch the files the build job made
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # ---- Rename ------------------------------------------------------------
+      # tauri names the AppImage after the product, spaces and all:
+      # "Aquarius Writer_0.1.0_amd64.AppImage". That is a nuisance for anything
+      # scripted — every command that touches it has to quote it — and the OS
+      # image build is scripted. So published files get one flat convention,
+      # the same one Aquarius Editor uses:
+      #
+      #   AquariusWriter-<version>-x86_64.AppImage   (Linux, the AquariusOS one)
+      #   AquariusWriter-<version>-arm64.zip         (macOS, Apple Silicon)
+      #
+      # Renaming an AppImage is safe: it is one self-contained file and nothing
+      # inside it depends on what it is called.
+      - name: Give the files their published names
+        run: |
+          set -euo pipefail
+          # An unmatched glob should vanish rather than be passed through as a
+          # literal string — that turns "the bundler renamed something" into a
+          # clean failure below instead of a file-not-found later.
+          shopt -s nullglob
+
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release-files
+
+          appimage=(artifacts/aquarius-writer-linux-appimage/*.AppImage)
+          mac_zip=(artifacts/aquarius-writer-macos-app/*.zip)
+
+          if [ "${#appimage[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one .AppImage, found ${#appimage[@]}."
+            exit 1
+          fi
+          if [ "${#mac_zip[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one Mac .zip, found ${#mac_zip[@]}."
+            exit 1
+          fi
+
+          mv "${appimage[0]}" "release-files/AquariusWriter-${version}-x86_64.AppImage"
+          mv "${mac_zip[0]}"  "release-files/AquariusWriter-${version}-arm64.zip"
+
+          # An AppImage has to be executable to run. Uploading and downloading
+          # strips that bit anyway — GitHub does not carry file permissions
+          # through a release asset — so whoever downloads it still has to run
+          # `chmod +x`. Setting it here costs nothing and keeps the file correct
+          # for as long as it is on the runner.
+          chmod +x release-files/*.AppImage
+
+          ls -l release-files
+
+      # ---- Checksums ---------------------------------------------------------
+      # SHA256SUMS.txt is how a download is proved to be the file this build
+      # made and not something that got corrupted or swapped on the way.
+      # AquariusOS's image build checks the AppImage against this before baking
+      # it in, so this file is not decoration — the OS build fails without it.
+      #
+      # The `./*` glob expands BEFORE the redirect creates SHA256SUMS.txt, which
+      # is why the file does not list itself. Anyone can verify a download by
+      # putting it next to this file and running `sha256sum -c SHA256SUMS.txt`.
+      - name: Write SHA256SUMS.txt
+        working-directory: release-files
+        run: |
+          set -euo pipefail
+          sha256sum ./* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # ---- The description ---------------------------------------------------
+      # The release description is not written here — it is lifted out of
+      # CHANGELOG.md, from the section whose heading starts "## v0.1.0 ". Keeping
+      # it in the repo means the notes are reviewed in the same pull request as
+      # the code, and the release cannot quietly disagree with the changelog.
+      #
+      # No section for this tag is a hard failure. Publishing a release with an
+      # empty description is not something to discover afterwards.
+      - name: Take the release notes out of CHANGELOG.md
+        run: |
+          set -euo pipefail
+
+          # Match the heading by its exact prefix INCLUDING the trailing space,
+          # so that tagging v0.1.0 cannot accidentally match a "## v0.1.01"
+          # heading. Print everything after it until the next "## " heading.
+          awk -v want="## ${GITHUB_REF_NAME} " '
+            index($0, want) == 1 { inside = 1; next }
+            inside && /^## / { exit }
+            inside { print }
+          ' CHANGELOG.md > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no '## ${GITHUB_REF_NAME} ' section. Add one and tag again."
+            exit 1
+          fi
+
+          # Then a short standard footer, the same on every release: which file
+          # a person actually wants, and how to check it downloaded intact.
+          version="${GITHUB_REF_NAME#v}"
+          cat >> release-notes.md <<EOF
+
+          ---
+
+          ### Which file do I want?
+
+          | You are on | Download |
+          |---|---|
+          | **AquariusOS, or any Linux PC/handheld** | \`AquariusWriter-${version}-x86_64.AppImage\` |
+          | **A Mac with Apple Silicon** | \`AquariusWriter-${version}-arm64.zip\` |
+
+          The AppImage is the whole app in one file — there is nothing to install:
+
+          \`\`\`bash
+          chmod +x AquariusWriter-${version}-x86_64.AppImage
+          ./AquariusWriter-${version}-x86_64.AppImage
+          \`\`\`
+
+          ### Checking your download
+
+          Put \`SHA256SUMS.txt\` in the same folder as the file you downloaded, then:
+
+          \`\`\`bash
+          sha256sum -c SHA256SUMS.txt
+          \`\`\`
+
+          \`OK\` means the file is exactly what this build produced. Anything else
+          means download it again.
+          EOF
+
+          echo "----- release description -----"
+          cat release-notes.md
+
+      # ---- Publish -----------------------------------------------------------
+      # Done with the `gh` command line tool, which is preinstalled on every
+      # runner, rather than a third-party action — one less thing to keep pinned.
+      #
+      # The order matters. The release is created as a DRAFT, the files are
+      # uploaded into it, and only then is it made public. A draft is invisible
+      # to everyone but you, so nobody can ever catch this release half-uploaded
+      # and download a file that is not there yet. What ends up published is a
+      # complete, public, non-draft release.
+      - name: Publish it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Re-running a tag that already published would otherwise replace the
+          # files under a release people may already be using. Refuse instead.
+          # To genuinely redo one: delete the release on GitHub, then re-run.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "::error::Release ${GITHUB_REF_NAME} already exists. Delete it on GitHub first, or tag a new version."
+            exit 1
+          fi
+
+          # --verify-tag refuses to invent a tag that does not exist. It does
+          # here, since this run was started by pushing it.
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            --draft
+
+          gh release upload "${GITHUB_REF_NAME}" release-files/* --clobber
+
+          gh release edit "${GITHUB_REF_NAME}" --draft=false
+
+          echo "Published: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}"

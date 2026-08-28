@@ -26,6 +26,14 @@ src-tauri/WixTools
 **/*.rs.bk
 *.pdb
 
+# --- Release staging ---
+# The release job in .github/workflows/build.yml builds these in the workspace
+# on its way to publishing. CI always starts from a clean checkout so it never
+# commits them — this is here for when you run those steps by hand locally.
+artifacts/
+release-files/
+release-notes.md
+
 # --- Editors ---
 .vscode/*
 !.vscode/extensions.json
