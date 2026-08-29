@@ -4,6 +4,7 @@ pub mod frontmatter;
 pub mod ops;
 pub mod paths;
 pub mod registry;
+pub mod scaffold;
 pub mod search;
 pub mod tree;
 pub mod workflow;

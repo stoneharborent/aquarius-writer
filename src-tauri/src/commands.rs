@@ -14,7 +14,7 @@ use crate::aux_store::{self, AuxSnapshot, CommentEntry, VersionEntry};
 use crate::fs_ops::{self, trash, watcher::WorkflowWatch};
 use crate::model::{AssetRef, LoadedWorkflow, WorkflowSummary};
 use crate::state::AppState;
-use crate::vault::{self, paths, registry, tree, workflow};
+use crate::vault::{self, paths, registry, scaffold, tree, workflow};
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -67,47 +67,140 @@ pub fn vault_list_workflows(state: State<'_, AppState>) -> R<Vec<WorkflowSummary
     Ok(out)
 }
 
-#[tauri::command]
-pub async fn vault_add_workflow_from_folder(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> R<Option<WorkflowSummary>> {
+/// Put the native folder picker on screen and wait for an answer.
+///
+/// Both doors onto the picker go through here so they log identically. The
+/// logging is not decoration: on Linux this dialog is `rfd`'s GTK3 file
+/// chooser, running inside an extracted AppImage against whatever GTK the host
+/// provides, and the first Linux boot of v0.1.0 had no way to tell "the writer
+/// pressed Cancel" apart from "the dialog never appeared" (docs/NOTES.md §10.8).
+/// Now the log says which.
+async fn pick_folder(app: &AppHandle, title: &str) -> R<Option<PathBuf>> {
     let (tx, mut rx) = tauri::async_runtime::channel(1);
-    app.dialog().file().set_title("Choose a folder of writing").pick_folder(move |picked| {
+    eprintln!("[dialog] opening the folder picker — {title}");
+    app.dialog().file().set_title(title).pick_folder(move |picked| {
         // `try_send`, not `blocking_send`: the picker's callback may land on
         // the UI thread, and exactly one message is ever sent into a channel
         // with room for one.
         let _ = tx.try_send(picked);
     });
     let picked = rx.recv().await.flatten();
-    let Some(file_path) = picked else { return Ok(None) };
+    let Some(file_path) = picked else {
+        eprintln!("[dialog] folder picker closed without a choice");
+        return Ok(None);
+    };
     let root = file_path.into_path().map_err(io)?;
+    eprintln!("[dialog] folder picker chose {}", root.display());
+    Ok(Some(root))
+}
+
+#[tauri::command]
+pub async fn vault_add_workflow_from_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> R<Option<WorkflowSummary>> {
+    let Some(root) = pick_folder(&app, "Choose a folder of writing").await? else {
+        return Ok(None);
+    };
     register(&app, &state, root).map(Some)
+}
+
+/// Ask the writer for a folder and answer with its absolute path.
+///
+/// "Create new" needs the *parent* folder, not a workflow, so it cannot use
+/// `vault_add_workflow_from_folder` — that registers whatever it is given.
+#[tauri::command]
+pub async fn vault_pick_folder(app: AppHandle, title: String) -> R<Option<String>> {
+    Ok(pick_folder(&app, &title).await?.map(|p| p.to_string_lossy().to_string()))
 }
 
 /// Open a vault by absolute path, without the picker.
 ///
-/// This is the headless door: it powers `AQ_DEV_VAULT` and is callable from
-/// devtools (`__TAURI_INTERNALS__.invoke('vault_add_workflow_by_path', …)`)
-/// so the whole backend can be exercised without a human clicking through a
-/// native dialog. Debug builds only — a release build refuses, because in
-/// release the picker is the only way a folder should get registered.
+/// Two callers: `AQ_DEV_VAULT` / devtools, which is what it was written for,
+/// and — since v0.1.1 — the welcome screen's "type a folder path instead"
+/// escape hatch.
+///
+/// That escape hatch is why the debug-only guard is gone. It was there because
+/// "in release the picker is the only way a folder should get registered", and
+/// the first Linux boot showed the flaw in that reasoning: if the native picker
+/// does not work on some desktop, an app whose only door is the picker is a
+/// brick. A path the writer typed into this app's own welcome screen is the
+/// same consent a path they clicked in a dialog is, so it gets the same
+/// treatment — and every registration is logged either way.
 #[tauri::command]
 pub fn vault_add_workflow_by_path(
     app: AppHandle,
     state: State<'_, AppState>,
     path: String,
 ) -> R<WorkflowSummary> {
-    if !cfg!(debug_assertions) && std::env::var_os("AQ_DEV_VAULT").is_none() {
-        return Err("vault_add_workflow_by_path is a development-only entry point".into());
+    let raw = path.trim();
+    if raw.is_empty() {
+        return Err("type the full path to a folder".into());
     }
-    register(&app, &state, PathBuf::from(path))
+    // A leading `~` is what anyone types; nothing expands it for us here.
+    let expanded = match raw.strip_prefix("~/") {
+        Some(rest) => match std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+            Some(home) => PathBuf::from(home).join(rest),
+            None => PathBuf::from(raw),
+        },
+        None => PathBuf::from(raw),
+    };
+    register(&app, &state, expanded)
+}
+
+// ── creating a workflow ──────────────────────────────────────────────────
+
+/// Make a new workflow folder inside a folder the writer picks, then open it.
+///
+/// `parent` is where to put it; `None` puts the folder picker on screen first.
+#[tauri::command]
+pub async fn vault_create_workflow(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    kind: String,
+    parent: Option<String>,
+) -> R<Option<WorkflowSummary>> {
+    // Validate before the dialog: a bad name should be a message under the
+    // text field, not something the writer discovers after choosing a folder.
+    let name = scaffold::validate_name(&name)?;
+    let parent = match parent {
+        Some(p) => PathBuf::from(p),
+        None => match pick_folder(&app, "Choose where to keep the new workflow").await? {
+            Some(p) => p,
+            None => return Ok(None),
+        },
+    };
+    let root = scaffold::create_workflow(&parent, &name, &kind)?;
+    eprintln!("[vault] created workflow \"{name}\" ({kind}) at {}", root.display());
+    register(&app, &state, root).map(Some)
+}
+
+/// Write the sample workflow somewhere sensible and open it.
+///
+/// Idempotent: pressing "Try the sample" twice reopens the one that is already
+/// there rather than failing or making a second copy.
+#[tauri::command]
+pub fn vault_create_sample_workflow(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> R<WorkflowSummary> {
+    let base = app
+        .path()
+        .document_dir()
+        .or_else(|_| app.path().home_dir())
+        .map_err(|e| format!("could not work out where to put the sample: {e}"))?;
+    let parent = base.join("Aquarius");
+    let root = scaffold::create_sample(&parent)?;
+    eprintln!("[vault] sample workflow ready at {}", root.display());
+    register(&app, &state, root)
 }
 
 pub fn register(app: &AppHandle, state: &AppState, root: PathBuf) -> R<WorkflowSummary> {
     if !root.is_dir() {
         return Err(format!("not a folder: {}", root.display()));
     }
+    eprintln!("[vault] registering {}", root.display());
     let (summary, _) = vault::summarize(&root, true).map_err(io)?;
     {
         let mut reg = state.registry.lock().unwrap();
@@ -389,6 +482,28 @@ pub fn mcp_set_port(
     Ok(crate::mcp::status(&app, error))
 }
 
+// ── the log bridge ───────────────────────────────────────────────────────
+
+/// Print a line the renderer sent us to stderr.
+///
+/// The WebView's console goes nowhere a shell can see it, so before v0.1.1 a
+/// button that failed inside the renderer produced a completely clean log — the
+/// exact symptom of the first Linux boot, where three welcome-screen buttons
+/// did nothing and the launcher's stderr showed only harmless GTK chatter.
+/// `src/lib/logging.ts` now forwards uncaught errors and rejected promises
+/// here, and mirrors `console.error` too when `AQ_WRITER_DEBUG=1` is set.
+///
+/// Release builds included — a log that only exists in development is a log
+/// that is never there when it is needed.
+#[tauri::command]
+pub fn app_log(level: String, message: String) {
+    let level = match level.as_str() {
+        "error" | "warn" | "info" => level,
+        _ => "info".to_string(),
+    };
+    eprintln!("[webview:{level}] {message}");
+}
+
 // ── development entry points ─────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -398,14 +513,36 @@ pub struct DevContext {
     pub workflow_id: Option<String>,
     /// `AQ_DEV_SMOKE=1` — run the renderer's backend smoke pass on boot.
     pub smoke: bool,
+    /// `AQ_DEV_SMOKE=welcome` — run the welcome-screen flows instead. Needs no
+    /// `AQ_DEV_VAULT`: creating a workflow is the thing being checked.
+    pub smoke_welcome: bool,
+    /// `AQ_WRITER_DEBUG=1` — mirror the WebView console to stderr as well as
+    /// the errors that are forwarded unconditionally.
+    pub debug: bool,
 }
 
 #[tauri::command]
 pub fn dev_context(state: State<'_, AppState>) -> R<DevContext> {
+    let smoke = std::env::var("AQ_DEV_SMOKE").unwrap_or_default();
     Ok(DevContext {
         workflow_id: state.dev_workflow_id.lock().unwrap().clone(),
-        smoke: std::env::var("AQ_DEV_SMOKE").map(|v| v == "1").unwrap_or(false),
+        smoke: smoke == "1",
+        smoke_welcome: smoke == "welcome",
+        debug: std::env::var("AQ_WRITER_DEBUG").map(|v| v == "1").unwrap_or(false),
     })
+}
+
+/// An empty folder under the OS temp directory, for the welcome-screen smoke
+/// pass to create workflows in. Debug builds only — nothing in a shipped app
+/// has any business making scratch folders.
+#[tauri::command]
+pub fn dev_scratch_dir() -> R<String> {
+    if !cfg!(debug_assertions) {
+        return Err("dev_scratch_dir is a development-only entry point".into());
+    }
+    let dir = std::env::temp_dir().join(format!("aquarius-smoke-{}", registry::now_ms()));
+    std::fs::create_dir_all(&dir).map_err(io)?;
+    Ok(dir.to_string_lossy().to_string())
 }
 
 #[derive(serde::Serialize)]

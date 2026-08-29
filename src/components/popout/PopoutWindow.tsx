@@ -15,14 +15,17 @@ interface PopoutWindowProps {
 }
 
 export function PopoutWindow({ path }: PopoutWindowProps) {
-  const { current, openWorkflow } = useVault();
+  const { current, bootstrap } = useVault();
   const { docs, open, edit } = useEditor();
 
-  // Popout windows boot fresh — bootstrap the sample workflow so they share
-  // the same in-memory vault. In Tauri, both windows would read from disk.
+  // A popout window boots with an empty store, so it has to find the workflow
+  // for itself. `bootstrap` is the same path the main window takes: the last
+  // workflow, else the index. It used to ask for "lantern" by name, which only
+  // exists in the browser mock — in the real shell that failed silently and the
+  // popout stayed empty forever.
   useEffect(() => {
-    if (!current) void openWorkflow("lantern");
-  }, [current, openWorkflow]);
+    if (!current) void bootstrap();
+  }, [current, bootstrap]);
 
   useEffect(() => {
     if (current) void open(current.id, path);

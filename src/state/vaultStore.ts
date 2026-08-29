@@ -2,12 +2,20 @@ import { create } from "zustand";
 import type {
   VaultNode,
   Workflow,
+  WorkflowKind,
   WorkflowSummary,
 } from "@/types/vault";
 import { vault } from "@/lib/vault";
 import { hydrateAux } from "@/lib/vault/aux";
+import { notices } from "@/state/noticeStore";
+import { logToShell } from "@/lib/logging";
 
 export type EditorView = "editor" | "outline" | "corkboard";
+
+/// Which welcome-screen action is in flight. "picking" is the one that can sit
+/// there a long time: it means a native folder dialog is open somewhere, and on
+/// Linux "somewhere" has been known to mean *behind the window*.
+export type PendingAction = "picking" | "creating" | "sample" | "opening";
 
 interface VaultState {
   // workflow index
@@ -33,11 +41,25 @@ interface VaultState {
   /// failed to load) — so it never flashes while the launch workflow loads.
   booted: boolean;
 
+  /// What the welcome screen is waiting on, so a click always visibly does
+  /// something. Null when nothing is pending.
+  pending: PendingAction | null;
+
   // actions
   bootstrap: () => Promise<void>;
   fetchWorkflows: () => Promise<void>;
-  openWorkflow: (id: string) => Promise<void>;
+  /** `quiet` suppresses the failure toast — boot uses it, clicks do not. */
+  openWorkflow: (id: string, opts?: { quiet?: boolean }) => Promise<void>;
   closeWorkflow: () => void;
+  /// Pick a folder and open it as a workflow. False when nothing opened —
+  /// either the writer dismissed the picker or it failed (and said so).
+  addWorkflowFromFolder: () => Promise<boolean>;
+  /// Open a folder the writer typed the path of.
+  addWorkflowByPath: (path: string) => Promise<boolean>;
+  /// Make a new workflow folder and open it.
+  createWorkflow: (name: string, kind: WorkflowKind) => Promise<boolean>;
+  /// Write the sample workflow to disk and open it.
+  openSampleWorkflow: () => Promise<boolean>;
   /** Re-read the open workflow's tree from disk, keeping the current
    * selection and view. Called by the file watcher. */
   refreshTree: () => Promise<void>;
@@ -94,6 +116,7 @@ export const useVault = create<VaultState>((set, get) => ({
   workflows: [],
   workflowsLoading: false,
   booted: false,
+  pending: null,
   current: null,
   tree: null,
   loading: false,
@@ -119,7 +142,7 @@ export const useVault = create<VaultState>((set, get) => ({
         ...list.filter((w) => !w.active && w.id !== last),
       ];
       for (const w of candidates) {
-        await get().openWorkflow(w.id);
+        await get().openWorkflow(w.id, { quiet: true });
         // Opened: drop any error left by an earlier candidate that failed.
         if (get().current) { set({ error: null }); return; }
       }
@@ -135,10 +158,86 @@ export const useVault = create<VaultState>((set, get) => ({
       set({ workflows, workflowsLoading: false });
     } catch (e) {
       set({ workflowsLoading: false, error: (e as Error).message });
+      notices.fail("Could not read the list of workflows", e);
     }
   },
 
-  async openWorkflow(id) {
+  /// Open the native folder picker and take whatever it gives us.
+  async addWorkflowFromFolder() {
+    if (get().pending) return false;
+    set({ pending: "picking" });
+    try {
+      const summary = await vault().addWorkflowFromFolder();
+      // Null is a dismissed dialog, which is not a failure and gets no toast.
+      if (!summary) return false;
+      await get().fetchWorkflows();
+      await get().openWorkflow(summary.id);
+      return get().current?.id === summary.id;
+    } catch (e) {
+      notices.fail("Could not open that folder", e);
+      return false;
+    } finally {
+      set({ pending: null });
+    }
+  },
+
+  async addWorkflowByPath(path) {
+    if (get().pending) return false;
+    set({ pending: "opening" });
+    try {
+      const summary = await vault().addWorkflowByPath(path);
+      await get().fetchWorkflows();
+      await get().openWorkflow(summary.id);
+      return get().current?.id === summary.id;
+    } catch (e) {
+      notices.fail("Could not open that path", e);
+      return false;
+    } finally {
+      set({ pending: null });
+    }
+  },
+
+  async createWorkflow(name, kind) {
+    if (get().pending) return false;
+    set({ pending: "creating" });
+    try {
+      const summary = await vault().createWorkflow(name, kind);
+      if (!summary) return false;
+      await get().fetchWorkflows();
+      await get().openWorkflow(summary.id);
+      return get().current?.id === summary.id;
+    } catch (e) {
+      notices.fail("Could not create the workflow", e);
+      return false;
+    } finally {
+      set({ pending: null });
+    }
+  },
+
+  /// "Try the sample" — writes a real folder of Markdown to disk and opens it.
+  /// Before v0.1.1 this asked the backend for a workflow called "lantern",
+  /// which only ever existed in the browser mock, so the click failed with a
+  /// message nothing rendered.
+  async openSampleWorkflow() {
+    if (get().pending) return false;
+    set({ pending: "sample" });
+    try {
+      const summary = await vault().createSampleWorkflow();
+      await get().fetchWorkflows();
+      await get().openWorkflow(summary.id);
+      const opened = get().current?.id === summary.id;
+      if (opened) notices.say("Sample workflow ready", summary.path);
+      return opened;
+    } catch (e) {
+      notices.fail("Could not set up the sample workflow", e);
+      return false;
+    } finally {
+      set({ pending: null });
+    }
+  },
+
+  async openWorkflow(id, opts) {
+    const quiet = opts?.quiet === true;
     set({ loading: true, error: null });
     try {
       const { workflow, tree } = await vault().loadWorkflow(id);
@@ -162,6 +261,11 @@ export const useVault = create<VaultState>((set, get) => ({
       startWatching(workflow.id);
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
+      // Boot tries every remembered workflow in turn and the ones that fail are
+      // ordinary — a vault on an unplugged drive, a folder that got moved. Only
+      // a workflow the writer just asked for is worth interrupting them about.
+      if (quiet) logToShell("error", `could not open workflow ${id}:`, e);
+      else notices.fail("Could not open that workflow", e);
     }
   },
 

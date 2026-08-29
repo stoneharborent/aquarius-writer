@@ -35,6 +35,23 @@ export function createTauriVaultService(): VaultService {
       return invoke<WorkflowSummary | null>("vault_add_workflow_from_folder");
     },
 
+    async addWorkflowByPath(path): Promise<WorkflowSummary> {
+      return invoke<WorkflowSummary>("vault_add_workflow_by_path", { path });
+    },
+
+    async createWorkflow(name, kind): Promise<WorkflowSummary | null> {
+      // `parent: null` means "put the folder picker on screen first".
+      return invoke<WorkflowSummary | null>("vault_create_workflow", {
+        name,
+        kind,
+        parent: null,
+      });
+    },
+
+    async createSampleWorkflow(): Promise<WorkflowSummary> {
+      return invoke<WorkflowSummary>("vault_create_sample_workflow");
+    },
+
     async readFile(workflowId, relPath) {
       return invoke<string>("vault_read_file", { workflowId, relPath });
     },

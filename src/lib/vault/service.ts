@@ -1,4 +1,4 @@
-import type { VaultNode, Workflow, WorkflowSummary } from "@/types/vault";
+import type { VaultNode, Workflow, WorkflowKind, WorkflowSummary } from "@/types/vault";
 
 /** Vault service contract — implemented twice: browser-mock and tauri-fs. */
 export interface VaultService {
@@ -6,8 +6,22 @@ export interface VaultService {
   listWorkflows(): Promise<WorkflowSummary[]>;
   /** Load a workflow's metadata + file tree. */
   loadWorkflow(id: string): Promise<{ workflow: Workflow; tree: VaultNode }>;
-  /** Open a folder picker, register it as a workflow. */
+  /** Open a folder picker, register it as a workflow. Null when dismissed. */
   addWorkflowFromFolder(): Promise<WorkflowSummary | null>;
+  /**
+   * Register a workflow from a path the writer typed.
+   *
+   * The escape hatch for a desktop where the native picker misbehaves — see
+   * `vault_add_workflow_by_path` in `src-tauri/src/commands.rs`.
+   */
+  addWorkflowByPath(path: string): Promise<WorkflowSummary>;
+  /**
+   * Make a new workflow folder and register it. Opens a folder picker for the
+   * parent location; null when the writer dismisses it.
+   */
+  createWorkflow(name: string, kind: WorkflowKind): Promise<WorkflowSummary | null>;
+  /** Write the sample workflow to disk (or reopen it) and register it. */
+  createSampleWorkflow(): Promise<WorkflowSummary>;
   /** Read a markdown / fountain / text file. */
   readFile(workflowId: string, relPath: string): Promise<string>;
   /** Resolve a binary asset (image, PDF, etc) to a renderable URL. */

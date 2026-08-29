@@ -4,7 +4,7 @@
 byte-for-byte as delivered. It is never edited. When reality has moved on from
 what it says, the discrepancy is recorded here instead.
 
-Last reviewed: 2026-08-25 (Stage 5 — the MCP server, and two features removed).
+Last reviewed: 2026-08-28 (v0.1.1 — the first-Linux-boot fix round, §14).
 
 ---
 
@@ -371,9 +371,11 @@ Two consequences for later stages:
   document was open (the editor's copy is written; the version trail holds the
   previous text). Doing this properly means carrying the mtime read at open time
   into `vault_write_file` and refusing the write when it moved.
-- **Renaming and creating files** are not in the `VaultService` interface at all
-  — nine methods, none of them create or rename. The UI has no affordance for it
-  either, so this is a product gap rather than a backend one.
+- **Renaming and creating *files*** are not in the `VaultService` interface at
+  all — nine methods, none of them create or rename. The UI has no affordance for
+  it either, so this is a product gap rather than a backend one. Still true after
+  v0.1.1: that release added creating a **workflow**, which is a different thing
+  (§14b), and left creating a file inside one exactly where it was.
 - **`macOSPrivateApi`** (§6) is still unset and transparency still inactive. It
   now matters to Stage 3/4, which own the window chrome.
 
@@ -460,6 +462,30 @@ In rough order of "most likely to actually be wrong":
    launches the app on its last workflow instead of that file. Wire it up when
    the file-opening story is designed (it interacts with workflows: a lone file
    has no vault).
+
+8. **The native folder chooser.** *Added after the first boot, and now the top
+   of this list in practice — it is the one thing v0.1.1 could not verify from a
+   Mac.* `tauri-plugin-dialog` 2.7 uses `rfd` 0.16, and `Cargo.lock` shows
+   `gtk-sys` with **no `ashpd`** — so on Linux this is rfd's **GTK3** file
+   chooser, not the XDG desktop portal. Inside an extracted AppImage with a
+   bundled GTK (the launcher log already shows host GTK modules failing to load
+   into it) that path has more ways to go wrong than the portal would.
+   **Check:** press "Open existing". Three outcomes, and the log now tells them
+   apart, because `pick_folder` in `commands.rs` prints `[dialog] opening the
+   folder picker` before and one of two lines after:
+   - a chooser appears → the interesting case is over, it works;
+   - the "opening" line appears and nothing else, ever → the dialog never got on
+     screen, or it is behind the window (try alt-tab / the window list first);
+   - no `[dialog]` line at all → the command was never reached, which is a
+     renderer bug and should now come with a toast and a `[webview:error]` line.
+   **If it is broken:** the welcome screen's "Open a folder by typing its path
+   instead" is a real, complete way in — it goes through the same `register()`.
+   The proper fix is to get rfd onto the portal: adding `rfd` as a direct
+   dependency with `features = ["xdg-portal"]` unifies the feature onto
+   `tauri-plugin-dialog`'s copy, and rfd prefers the portal over GTK3 when both
+   are enabled. That was deliberately **not** done blind from a Mac — it is a
+   dependency change nobody here can test, and the typed-path fallback makes the
+   app usable in the meantime.
 
 ## 11. Dev overrides: `?theme=` and now `?platform=`
 
@@ -732,3 +758,103 @@ UI-only operation. Everything a client can destroy, it can also restore.
   The bind is `Ipv4Addr::LOCALHOST` and the transport is portable, so there is
   nothing platform-specific to go wrong — but that sentence has been written
   about four stages now.
+
+## 14. v0.1.1 — the first Linux boot, and what it actually found
+
+The AppImage ran on AquariusOS (KDE Plasma 6.7, Wayland → XWayland, RTX 4090) on
+2026-08-28. It launched, drew its window, and could not open, create or try
+anything. The launcher's stderr was clean: an `appmenu-gtk-module` load failure
+and an `atk-bridge` warning, both cosmetic, and **nothing at all** at the moment
+a button was pressed.
+
+The clean log was the most useful part of the report, because it ruled out a
+crash and pointed at the renderer. It was right to.
+
+### 14a. All three were app bugs, and none of them were Linux's fault
+
+Reproduced on macOS in the same session. Every one of them would have failed
+identically on the Mac — nobody had ever seen it because `AQ_DEV_VAULT` and a
+populated registry meant the welcome screen never came up in development.
+
+| Card | What it did in v0.1.0 |
+|------|-----------------------|
+| Open existing | **No `onClick` at all.** The card took an `onClick` prop and was rendered without one. `vault_add_workflow_from_folder` — picker, registration, asset scope — has worked since Stage 2 and nothing has ever called it. |
+| Create new | **No `onClick`, and nothing to call.** There was no create path anywhere: not in `VaultService`, not in `commands.rs`, not in `ops.rs`. |
+| Try the sample | `openWorkflow("lantern")`. `lantern` is the id of the **browser mock's** fixture (`src/lib/vault/browser-service.ts`); the real backend answers `unknown workflow: lantern`, `vaultStore` caught it into `error`, and **nothing rendered `error`.** A grep for it found one hit in the whole UI, and that was the MCP panel's own field. |
+
+`git log --follow` on `SelectWorkflow.tsx` shows one commit — the original
+import. These were never wired, never regressed.
+
+The same `"lantern"` mistake was in `PopoutWindow.tsx`, where a popped-out
+document in the real shell would have stayed empty forever. It calls
+`bootstrap()` now, like the main window.
+
+### 14b. Creating a workflow is not creating a file
+
+`vault::scaffold` makes a **folder**: subfolders by kind, one starter document,
+and `.aquarius/workflow.json`. §8's gap — no create or rename for files *inside*
+a workflow — is untouched and still open.
+
+Two details worth knowing:
+
+- **The kind is written, not inferred.** `workflow::infer` can only answer
+  novel / screenplay / notes from the shape of a folder, so a brand-new
+  worldbuilding workflow would come back as "notes". The scaffold infers (to
+  pick up the manuscript folder and chapter order) and then overwrites `title`
+  and `kind` with what the writer chose.
+- **The name is validated before the dialog opens**, and strictly: it is joined
+  onto a folder the writer picked, so a `/` or a `..` in it would put the
+  workflow somewhere they did not choose. A bad name is a message under the text
+  field, not a discovery made after choosing a location.
+
+The sample is idempotent — pressing it twice reopens the same folder, and files
+are only ever added, never replaced, so work done inside the sample survives.
+
+### 14c. The silence was the real bug
+
+Three buttons doing nothing is a morning's work. Three buttons doing nothing
+*with a clean log* is a bug report that cannot be acted on remotely, which is
+what this actually cost. So v0.1.1 fixes the silence as its own feature:
+
+- **`noticeStore` + `components/notices/`** — the app's one failure surface.
+  Anything that fails in response to a click shows the backend's own words.
+  `notices.fail()` also prints to stderr, so the toast expiring does not lose it.
+- **`lib/logging.ts`** — `window.onerror` and `unhandledrejection` are forwarded
+  to `app_log`, a plain `#[tauri::command]` that `eprintln!`s. **Release builds
+  included**, deliberately: a log that only exists in development is a log that
+  is never there when it is needed. `AQ_WRITER_DEBUG=1` additionally mirrors
+  `console.error` / `console.warn`.
+- **`[dialog]` and `[vault]` lines** around every picker and every registration,
+  so the next report of "the button did nothing" arrives with evidence (§10.8).
+- **`pending` state on the welcome screen** — a card that is waiting says so.
+  The failure mode being guarded against here is a native dialog that opened
+  behind the window, which is indistinguishable from a dead button unless the
+  app admits it is waiting.
+
+One deliberate quiet spot: `bootstrap` opens candidates in turn and expects some
+to fail (a vault on an unplugged drive). Those go to the log, not to a toast.
+Only a workflow the writer just asked for interrupts them.
+
+### 14d. `vault_add_workflow_by_path` is no longer debug-only
+
+It was guarded on `debug_assertions` because "in release the picker is the only
+way a folder should get registered". The first Linux boot showed the flaw: an
+app whose only door is a native dialog is a brick on any desktop where that
+dialog misbehaves. The welcome screen now offers a typed path as a fallback, and
+that command is what it calls.
+
+The trade-off, stated plainly: a compromised renderer can now register a folder
+without a dialog, and registering a folder is what grants read/write to it. The
+renderer already has no general `fs` permission (§7) and every registration is
+logged. The alternative was worse.
+
+### 14e. What v0.1.1 verified, and where
+
+On macOS, in the real Tauri shell: `AQ_DEV_SMOKE=welcome npm run tauri:dev` runs
+`src/lib/dev/welcome-smoke.ts`, which drives the sample, all four create kinds,
+the name guards and the typed-path door against real folders on disk, and prints
+`ok` / `FAIL` per check. Both themes' rendering of the new panel and the toast
+were checked in the browser preview.
+
+What it cannot reach is the native folder chooser itself — that needs a human
+and a display server. §10.8 is the bench instruction for it.

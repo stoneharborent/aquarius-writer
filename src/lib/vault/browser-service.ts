@@ -2,6 +2,7 @@ import type { VaultService } from "./service";
 import type {
   VaultNode,
   Workflow,
+  WorkflowKind,
   WorkflowSummary,
 } from "@/types/vault";
 
@@ -257,6 +258,11 @@ function buildPlaceholderPdf(): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
+/** A picker row for a workflow the preview cannot actually make on disk. */
+function stubSummary(name: string, path: string, kind: WorkflowKind): WorkflowSummary {
+  return { id: `wf-${Date.now()}`, name, path, kind, items: 0, color: "blue", updated: "now" };
+}
+
 export function createBrowserVaultService(): VaultService {
   return {
     async listWorkflows() {
@@ -270,15 +276,17 @@ export function createBrowserVaultService(): VaultService {
     },
     async addWorkflowFromFolder() {
       // Browser preview can't open a real folder picker. Echo a stub.
-      return {
-        id: `wf-${Date.now()}`,
-        name: "Untitled workflow",
-        path: "~/Workflows/Untitled",
-        kind: "notes",
-        items: 0,
-        color: "blue",
-        updated: "now",
-      };
+      return stubSummary("Untitled workflow", "~/Workflows/Untitled", "notes");
+    },
+    async addWorkflowByPath(path) {
+      return stubSummary(path.split("/").filter(Boolean).pop() ?? "Untitled", path, "notes");
+    },
+    async createWorkflow(name, kind) {
+      return stubSummary(name, `~/Workflows/${name}`, kind);
+    },
+    async createSampleWorkflow() {
+      // The preview *is* the sample — hand back the row that opens it.
+      return WORKFLOWS_INDEX[0];
     },
     async readFile(_workflowId, relPath) {
       return FILE_CONTENTS[relPath] ?? "";
