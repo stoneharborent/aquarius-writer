@@ -6,6 +6,33 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## v0.1.2 — 2026-08-29
+
+The window moves now.
+
+### You can drag the window again
+
+- **Dragging the title bar moves the window.** On the AquariusOS bench the
+  window was stuck wherever it opened: press the title bar, pull, and nothing
+  happened. Aquarius draws its own title bar rather than letting the desktop
+  draw one, and the part of the app that turns a pull on that bar into a moved
+  window had never been switched on. It is on.
+- **The three window buttons work.** Minimise, maximise and close — the small
+  controls at the top right on Linux — were refused in exactly the same way and
+  by exactly the same cause. Nobody had reported them yet; they would have been
+  the next thing to go wrong.
+- **Double-clicking the title bar still maximises**, as it always did. That one
+  happened to be allowed, which is the clue that found the rest: the same bar
+  answered a double click and ignored a drag.
+- **macOS gets the fix too.** The window there could not be dragged either, for
+  the same reason — it was simply never the thing being tested. Note for the
+  Mac: that build still has no close or minimise button of its own. ⌘Q and ⌘M
+  work, and giving it real buttons is a change to how the Mac app looks, so it
+  is a decision rather than a hotfix. It is written up in `docs/NOTES.md` §15c.
+
+Nothing else changed. No file, editor, vault or MCP behaviour is touched by this
+release — it is four lines of window permission and the notes that explain them.
+
 ## v0.1.1 — 2026-08-28
 
 The first-Linux-boot fix round. v0.1.0 started up cleanly on AquariusOS and then

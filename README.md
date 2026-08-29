@@ -142,18 +142,21 @@ This can only ever build the *Mac* app. For the Linux one, see below.
 - The **browser preview still runs on sample data** — it has no filesystem. That
   is the point of it: fast UI work with nothing real at risk.
 
-- On **Linux** the app now draws its own window buttons — minimise, maximise,
-  close, in the top-right. It has to: the window is built without a system title
-  bar, and unlike macOS (where the system floats its traffic lights over ours)
-  nothing on Linux would draw them for us. On the Mac nothing changed at all.
+- On **Linux** the app draws its own window buttons — minimise, maximise, close,
+  in the top-right. It has to: the window is built without a system title bar,
+  so nothing else would draw them. (An earlier version of this line said macOS
+  floats its own traffic lights over ours. It does not — the Mac window has no
+  buttons of its own either. `docs/NOTES.md` §15c.)
 
 - The **MCP server** is in and switched off until you want it (Settings → MCP).
   On, an AI app on this machine can drive the vault.
 
-It **has** now run on Linux — once, on AquariusOS, on 2026-08-28. It launched
+It **has** now run on Linux, on AquariusOS. The first boot (2026-08-28) launched
 cleanly and none of the welcome screen's three buttons worked, which is what
-v0.1.1 fixes. `docs/NOTES.md` §14 is the write-up and §10 is the rest of the
-checklist, most of which still wants walking on a real bench.
+v0.1.1 fixes — `docs/NOTES.md` §14. The second (2026-08-29) opened workflows
+fine but the window could not be dragged anywhere, which is what v0.1.2 fixes —
+`docs/NOTES.md` §15. §10 is the rest of the checklist, most of which still
+wants walking on a real bench.
 
 ### Starting a workflow
 
@@ -326,7 +329,7 @@ computers:
 
 | Machine | Builds | You get |
 |---|---|---|
-| Ubuntu 22.04 | the Linux app | **`Aquarius Writer_0.1.1_amd64.AppImage`** |
+| Ubuntu 22.04 | the Linux app | **`Aquarius Writer_0.1.2_amd64.AppImage`** |
 | macOS 14 | the Mac app | **`Aquarius Writer.app.zip`** |
 
 An **AppImage** is the whole app in one file. You don't install it. You download
@@ -368,8 +371,8 @@ AppImage. Six steps, once:
 5. **Run it on the AquariusOS machine** (the Xbox Ally or the 5090 build):
 
    ```bash
-   chmod +x "Aquarius Writer_0.1.1_amd64.AppImage"
-   ./"Aquarius Writer_0.1.1_amd64.AppImage"
+   chmod +x "Aquarius Writer_0.1.2_amd64.AppImage"
+   ./"Aquarius Writer_0.1.2_amd64.AppImage"
    ```
 
 6. **Tell me what broke.** This will be the first time a single line of this app
@@ -392,23 +395,23 @@ Publishing one is a tag push. Three commands:
 ```bash
 # 1. Make sure the version is right. These three files must all agree,
 #    and must match the tag you are about to push.
-#      package.json            -> "version": "0.1.1"
-#      src-tauri/tauri.conf.json -> "version": "0.1.1"
-#      src-tauri/Cargo.toml    -> version = "0.1.1"
+#      package.json            -> "version": "0.1.2"
+#      src-tauri/tauri.conf.json -> "version": "0.1.2"
+#      src-tauri/Cargo.toml    -> version = "0.1.2"
 #
 #    Four more places carry it and CI does not check any of them, so they
 #    are the ones to miss: the footer in src/App.tsx, the About panel in
 #    src/components/overlays/Settings.tsx, and the two lockfiles
 #    (package-lock.json, src-tauri/Cargo.lock).
 #
-# 2. Write the release notes: add a "## v0.1.1 — <date>" section to
+# 2. Write the release notes: add a "## v0.1.2 — <date>" section to
 #    CHANGELOG.md. This becomes the release description word for word.
 #    No section, no release — the workflow stops rather than publishing
 #    something blank.
 
 git push origin main
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 That third command starts the same build as always, and then a second job takes
@@ -421,8 +424,8 @@ over. It:
 
    | File | What it is |
    |---|---|
-   | `AquariusWriter-0.1.1-x86_64.AppImage` | the Linux / AquariusOS build |
-   | `AquariusWriter-0.1.1-arm64.zip` | the Mac build, Apple Silicon |
+   | `AquariusWriter-0.1.2-x86_64.AppImage` | the Linux / AquariusOS build |
+   | `AquariusWriter-0.1.2-arm64.zip` | the Mac build, Apple Silicon |
    | `SHA256SUMS.txt` | the fingerprints, to prove a download is intact |
 
 3. **Publishes them as a public GitHub Release** on that tag, with your

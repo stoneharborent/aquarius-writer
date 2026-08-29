@@ -4,7 +4,7 @@
 byte-for-byte as delivered. It is never edited. When reality has moved on from
 what it says, the discrepancy is recorded here instead.
 
-Last reviewed: 2026-08-28 (v0.1.1 — the first-Linux-boot fix round, §14).
+Last reviewed: 2026-08-29 (v0.1.2 — the window-move fix, §15; §4 corrected).
 
 ---
 
@@ -248,6 +248,15 @@ inotify's event shapes differ from FSEvents'.
 `transparent: true`, `titleBarStyle: "Overlay"` and `hiddenTitle: true`. The
 last two are **macOS-only** options; on macOS the system floats its traffic
 lights over our title bar and the renderer draws nothing.
+
+> **Correction, v0.1.2 (2026-08-29): that last sentence was wrong**, and §15
+> is the write-up. There are no traffic lights on macOS either. `decorations:
+> false` makes tao build the window with `NSWindowStyleMask::Borderless`, which
+> has no `Titled` bit and therefore no buttons — `titleBarStyle` only decides
+> how a title bar that *exists* is painted. Verified in the running shell:
+> `plugin:window|is_decorated` answers `false` on macOS. So macOS has our title
+> bar and nothing else, and — until v0.1.2 — no way to drag the window either.
+> Everything below about *Linux* still holds.
 
 On Linux that same config left the window with **no close/minimise/maximise
 buttons at all**. Stage 4 fixed it in the renderer:
@@ -858,3 +867,106 @@ were checked in the browser preview.
 
 What it cannot reach is the native folder chooser itself — that needs a human
 and a display server. §10.8 is the bench instruction for it.
+
+## 15. v0.1.2 — the window could not be moved, and why
+
+Royce, on the AquariusOS bench (KDE, XWayland, NVIDIA): *"the app window itself
+cannot be moved."* It was not a Wayland problem, a WebKitGTK problem or a
+markup problem. It was §7 coming true: **a plugin call was silently doing
+nothing, and `capabilities/default.json` was the first place to look.**
+
+### 15a. The mechanism
+
+Dragging an undecorated Tauri window is a round trip. Tauri injects a
+`mousedown` listener (`tauri/src/window/scripts/drag.js`), decides from the
+event's composed path whether the click landed in a drag region, and if it did
+calls `plugin:window|start_dragging` — a **plugin command**, and therefore
+subject to the Tauri 2 permission system like any other.
+
+`capabilities/default.json` granted `core:default`. That set is generous with
+*getters* and stingy with anything that changes the window. Tauri's own
+`build.rs` carries the table, one boolean per command — `true` means "in the
+default set":
+
+```
+("is_maximized",             true )
+("internal_toggle_maximize", true )   ← double-click to maximise
+("start_dragging",           false)   ← dragging the title bar
+("minimize",                 false)   ← our minimise button
+("toggle_maximize",          false)   ← our maximise button
+("close",                    false)   ← our close button
+```
+
+So the title-bar markup was right all along, and the diagnosis has a signature
+that matches the report exactly: **double-click to maximise worked, dragging did
+not** — because the double-click path uses `internal_toggle_maximize`, which is
+in the default set, and the drag path uses `start_dragging`, which is not.
+
+The same line also explains three buttons nobody had reported yet: the Linux
+minimise / maximise / close controls added in Stage 4 were calling
+`plugin:window|minimize`, `|toggle_maximize` and `|close`, and all three were
+being refused. They looked like buttons and did nothing.
+
+The refusal is not silent to a *log* — the IPC layer answers with, verbatim:
+
+```
+window.set_title not allowed. Permissions associated with this command:
+core:window:allow-set-title
+```
+
+— but nothing in the renderer was listening for it, because `drag.js` fires the
+invoke and never inspects the promise.
+
+### 15b. The fix
+
+Four permissions, added to `capabilities/default.json`:
+
+```
+core:window:allow-start-dragging     the drag region
+core:window:allow-minimize           the minimise button
+core:window:allow-toggle-maximize    the maximise button
+core:window:allow-close              the close button
+```
+
+That is the whole change. No renderer code moved: the `data-tauri-drag-region
+="deep"` on `.vw-titlebar` was already correct, `<button>` children were already
+excluded by Tauri's own handler, and edge resizing was never involved (it is
+tao's Rust-side hit test — §4).
+
+Deliberately **not** granted: `start_resize_dragging` (tao does resizing itself),
+`set_title`, `maximize`/`unmaximize` and everything else the app never calls.
+The capability stays as narrow as §7 promised.
+
+### 15c. macOS was broken the same way, and has a bigger gap
+
+The probe that proved this ran on macOS, not Linux, because the bug was never
+Linux-specific: `is_decorated` answers `false` on macOS too (§4's correction).
+macOS drags through the same `start_dragging` call and was refused by the same
+permission, so v0.1.2 fixes dragging on both.
+
+What v0.1.2 does **not** fix, and is worth Royce knowing: with no `Titled` style
+mask there are no traffic lights on macOS, and `WindowControls` renders on Linux
+only — so the macOS build has no close, minimise or maximise button at all. ⌘Q
+and ⌘M still work, so it is awkward rather than fatal. The two honest options
+are to render `WindowControls` on macOS as well, or to turn decorations back on
+there; both change how the Mac app looks and neither belongs in a hotfix.
+
+### 15d. Popouts are still permission-blocked
+
+`popoutStore.ts` opens a detached document window with `new WebviewWindow(...)`,
+which is `plugin:webview|create_webview_window` — also `false` in the default
+set, and also not granted. So ⌃⌘O in the real shell fails the same way the
+title bar did. It is left alone here because a popped-out window would then
+need its own capability entry (`capabilities/default.json` lists
+`"windows": ["main"]`, and the popout labels are `aquarius-*`), and because a
+window-move hotfix is not the place to bring a whole feature back. Filed, not
+forgotten.
+
+### 15e. How to check this class of bug in future
+
+Anything that reaches for a `plugin:` command from the renderer — window, webview,
+dialog, shell, fs — is off unless `capabilities/default.json` names it. The
+cheapest test is the one used here: a temporary `invoke("plugin:…")` in the DEV
+block of `src/main.tsx`, reporting through `dev_log` so the answer lands in the
+terminal running `tauri dev`. A permitted command answers `OK`; a refused one
+answers with the permission it wants, by name.

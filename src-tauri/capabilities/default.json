@@ -1,10 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Aquarius Writer's main window. Deliberately narrow: the vault is reached through this app's own commands (which need no permission and do their own path checks), so the only plugin permission granted is the folder picker.",
+  "description": "Aquarius Writer's main window. Deliberately narrow: the vault is reached through this app's own commands (which need no permission and do their own path checks), so the only plugin permissions granted are the folder picker and the four window-chrome actions our own title bar performs.",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close"
   ]
 }
