@@ -496,6 +496,7 @@ src-tauri/               the desktop shell (Rust)
 .github/workflows/       the GitHub build (see "Building the Linux app")
 docs/HANDOFF.md          the product design contract — the law
 docs/NOTES.md            where the code and the handoff disagree
+docs/PARITY.md           what this app still lacks next to the Swift original
 docs/screenshots/        review shots, one folder per theme
 scripts/nosync-link.sh   iCloud housekeeping (see below)
 ```
