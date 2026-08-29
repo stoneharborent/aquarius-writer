@@ -150,16 +150,19 @@ This can only ever build the *Mac* app. For the Linux one, see below.
 - The **MCP server** is in and switched off until you want it (Settings → MCP).
   On, an AI app on this machine can drive the vault.
 
-What is *not* done yet: nothing here has ever actually run on Linux — see
-"Building the Linux app" below.
+It **has** now run on Linux — once, on AquariusOS, on 2026-08-28. It launched
+cleanly and none of the welcome screen's three buttons worked, which is what
+v0.1.1 fixes. `docs/NOTES.md` §14 is the write-up and §10 is the rest of the
+checklist, most of which still wants walking on a real bench.
 
-### Opening a folder
+### Starting a workflow
 
-In the desktop app, "add a workflow" opens a normal macOS folder picker. Any
-folder works — a folder of markdown notes, a novel with a `Drafts/` folder, a
-folder of `.fountain` scripts. Aquarius reads what is there and never rearranges
-it. The only thing it adds is a hidden `.aquarius/` folder for its own
-bookkeeping:
+The welcome screen has three ways in.
+
+**Open existing** opens a normal folder chooser. Any folder works — a folder of
+markdown notes, a novel with a `Drafts/` folder, a folder of `.fountain`
+scripts. Aquarius reads what is there and never rearranges it. The only thing it
+adds is a hidden `.aquarius/` folder for its own bookkeeping:
 
 ```
 Your Folder/
@@ -172,6 +175,23 @@ Your Folder/
 ```
 
 Delete `.aquarius/` and you lose the history, not the writing.
+
+**Create new** asks for a name and a shape — Novel, Screenplay, Worldbuilding or
+Notes — then asks where to keep it, and makes the folder for you with the right
+subfolders and one file to start writing in. Nothing is written to your disk
+until you have chosen the location.
+
+**Try the sample** writes a small finished-looking workflow to
+`~/Documents/Aquarius/Lantern, Lantern` and opens it. It is ordinary files —
+read them, edit them, or delete the folder when you are done. Pressing it again
+just reopens the one you already have, and never overwrites anything you wrote
+in it.
+
+**If the folder chooser does not appear**, there is a link under the recent list
+that lets you type a folder's path instead. It does exactly the same thing. It
+is there because on some Linux desktops a native dialog can open behind the
+window or not at all, and an app whose only way in is a dialog is unusable when
+that happens.
 
 **A save never rewrites a file that didn't change.** If you open a note with no
 frontmatter, it will still have no frontmatter afterwards — right down to the
@@ -192,6 +212,27 @@ pass over every backend operation (`src/lib/dev/smoke.ts`) and prints the result
 in the terminal — useful for proving the backend still works after a change.
 **That pass edits and deletes files in the folder it is given, so point it at a
 scratch copy, never at real writing.** Both are development-only.
+
+`AQ_DEV_SMOKE=welcome` runs a different pass, and needs no `AQ_DEV_VAULT`: it
+drives the welcome screen's own actions — the sample, all four "Create new"
+shapes, the name guards, and opening a folder by path — against real folders,
+and prints `ok` / `FAIL` per check (`src/lib/dev/welcome-smoke.ts`). It creates
+folders under the OS temp directory and writes the sample to
+`~/Documents/Aquarius/`.
+
+### Seeing what the app is doing
+
+The app's own window has a console that a terminal cannot see, which once made a
+completely broken welcome screen produce a completely clean log. It no longer
+does: anything that throws inside the interface is printed to standard error as
+`[webview:error] …`, in shipped builds as well as development ones, and every
+failure a button hits also appears on screen.
+
+For more, set `AQ_WRITER_DEBUG=1` before launching. That mirrors the whole
+interface console — `console.error` and `console.warn` — to the terminal too.
+Two other prefixes are worth knowing when something will not open: `[dialog]`
+lines bracket every folder chooser, and `[vault]` lines record every folder that
+gets registered or created.
 
 ---
 
@@ -285,7 +326,7 @@ computers:
 
 | Machine | Builds | You get |
 |---|---|---|
-| Ubuntu 22.04 | the Linux app | **`Aquarius Writer_0.1.0_amd64.AppImage`** |
+| Ubuntu 22.04 | the Linux app | **`Aquarius Writer_0.1.1_amd64.AppImage`** |
 | macOS 14 | the Mac app | **`Aquarius Writer.app.zip`** |
 
 An **AppImage** is the whole app in one file. You don't install it. You download
@@ -327,8 +368,8 @@ AppImage. Six steps, once:
 5. **Run it on the AquariusOS machine** (the Xbox Ally or the 5090 build):
 
    ```bash
-   chmod +x "Aquarius Writer_0.1.0_amd64.AppImage"
-   ./"Aquarius Writer_0.1.0_amd64.AppImage"
+   chmod +x "Aquarius Writer_0.1.1_amd64.AppImage"
+   ./"Aquarius Writer_0.1.1_amd64.AppImage"
    ```
 
 6. **Tell me what broke.** This will be the first time a single line of this app
@@ -351,18 +392,23 @@ Publishing one is a tag push. Three commands:
 ```bash
 # 1. Make sure the version is right. These three files must all agree,
 #    and must match the tag you are about to push.
-#      package.json            -> "version": "0.1.0"
-#      src-tauri/tauri.conf.json -> "version": "0.1.0"
-#      src-tauri/Cargo.toml    -> version = "0.1.0"
+#      package.json            -> "version": "0.1.1"
+#      src-tauri/tauri.conf.json -> "version": "0.1.1"
+#      src-tauri/Cargo.toml    -> version = "0.1.1"
 #
-# 2. Write the release notes: add a "## v0.1.0 — <date>" section to
+#    Four more places carry it and CI does not check any of them, so they
+#    are the ones to miss: the footer in src/App.tsx, the About panel in
+#    src/components/overlays/Settings.tsx, and the two lockfiles
+#    (package-lock.json, src-tauri/Cargo.lock).
+#
+# 2. Write the release notes: add a "## v0.1.1 — <date>" section to
 #    CHANGELOG.md. This becomes the release description word for word.
 #    No section, no release — the workflow stops rather than publishing
 #    something blank.
 
 git push origin main
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 That third command starts the same build as always, and then a second job takes
@@ -375,8 +421,8 @@ over. It:
 
    | File | What it is |
    |---|---|
-   | `AquariusWriter-0.1.0-x86_64.AppImage` | the Linux / AquariusOS build |
-   | `AquariusWriter-0.1.0-arm64.zip` | the Mac build, Apple Silicon |
+   | `AquariusWriter-0.1.1-x86_64.AppImage` | the Linux / AquariusOS build |
+   | `AquariusWriter-0.1.1-arm64.zip` | the Mac build, Apple Silicon |
    | `SHA256SUMS.txt` | the fingerprints, to prove a download is intact |
 
 3. **Publishes them as a public GitHub Release** on that tag, with your
@@ -426,7 +472,9 @@ src/                     the interface (React + TypeScript)
   components/window/     the app's own title bar + the Linux window buttons
   lib/platform.ts        "which OS am I on" — asked by the theme and the chrome
   lib/vault/             ← the important seam, see below
-  lib/dev/smoke.ts       development-only backend check (AQ_DEV_SMOKE)
+  lib/dev/               development-only checks (AQ_DEV_SMOKE)
+  lib/logging.ts         forwards renderer errors to the terminal
+  components/notices/    the on-screen failure surface
   theme/                 Parchment, Midnight + AquariusOS themes (CSS variables)
   fonts/                 the OS typefaces, bundled (Sora / Inter / JetBrains Mono)
   state/                 app state (zustand stores)

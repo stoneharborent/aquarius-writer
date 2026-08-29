@@ -100,7 +100,7 @@ export default function App() {
       subtitle={current?.title}
       footerLeft={
         <>
-          <span>v0.1.0</span>
+          <span>v0.1.1</span>
           {current && (
             <button className="vw-link" onClick={closeWorkflow}>
               ← workflows

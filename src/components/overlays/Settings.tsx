@@ -140,7 +140,7 @@ export function Settings() {
           {tab === "about" && (
             <div className="st-section st-about">
               <h3>Aquarius Writer</h3>
-              <div className="st-about-version">v0.1.0 · build phase 9</div>
+              <div className="st-about-version">v0.1.1 · build phase 9</div>
               <p>
                 Local-first writing studio. Free, no tiers, no telemetry. Files
                 live on disk.
