@@ -399,10 +399,14 @@ Publishing one is a tag push. Three commands:
 #      src-tauri/tauri.conf.json -> "version": "0.1.2"
 #      src-tauri/Cargo.toml    -> version = "0.1.2"
 #
-#    Four more places carry it and CI does not check any of them, so they
-#    are the ones to miss: the footer in src/App.tsx, the About panel in
-#    src/components/overlays/Settings.tsx, and the two lockfiles
-#    (package-lock.json, src-tauri/Cargo.lock).
+#    Two more places carry it and CI does not check either, so they are
+#    the ones to miss: the lockfiles, package-lock.json and
+#    src-tauri/Cargo.lock. (`npm install` and `cargo build` update them
+#    for you once package.json and Cargo.toml are right.)
+#
+#    The two places in the app itself — the footer and the About panel —
+#    used to need editing too and no longer do: since v0.2.0 they read the
+#    number out of package.json at build time.
 #
 # 2. Write the release notes: add a "## v0.1.2 — <date>" section to
 #    CHANGELOG.md. This becomes the release description word for word.
@@ -441,15 +445,28 @@ run `sha256sum -c SHA256SUMS.txt`. `OK` means it is exactly what was built.
 
 ### What CI deliberately does *not* do
 
-No code signing, no notarisation, no auto-updater. Those need your Apple
-Developer account and a signing key, and they are distribution decisions, not
-build ones. The TODO comments at the end of the build job spell out what each
-would take.
+No code signing and no notarisation. Those need your Apple Developer account
+and a signing key, and they are distribution decisions, not build ones. The TODO
+comments at the end of the build job spell out what each would take. There is
+also no *Tauri* updater — no signing key, no update manifest — and there does
+not need to be; see below.
 
-Two consequences to expect: the **Mac** build is unsigned, so a Mac that isn't
+Two consequences to expect. The **Mac** build is unsigned, so a Mac that isn't
 yours will refuse to open it until you right-click → Open (the Linux AppImage
-does not care), and there is no update check — a new version means downloading
-a new release by hand.
+does not care). And **updating depends on how the app was installed**:
+
+| How you got it | How it updates |
+|---|---|
+| It came with **AquariusOS** | It updates itself. Settings → About → Updates. It looks once at startup, tells you when there is a newer version, and installs it when you press the button. |
+| You downloaded the **AppImage** yourself, or you are on a **Mac** | By hand — download the newest release and replace the file. The Updates section is not shown. |
+
+The AquariusOS half is not the Tauri updater. On that OS the app lives inside a
+read-only system image and cannot overwrite itself, so instead it downloads a
+newer copy into `~/.local/share/aquarius/aquarius-writer/` and the OS launcher
+starts whichever copy is newer. It checks every download against the release's
+`SHA256SUMS.txt` — the same file the OS image build already trusts — and never
+touches the copy baked into the image, so a failed update leaves you on the
+version you already had. `docs/NOTES.md` §16 explains the whole thing.
 
 ---
 

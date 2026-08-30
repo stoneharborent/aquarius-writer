@@ -15,6 +15,7 @@ import {
 } from "@/theme/theme";
 import { useTheme } from "@/state/themeStore";
 import { useVault } from "@/state/vaultStore";
+import { useUpdates } from "@/state/updateStore";
 import { useOverlay } from "@/state/overlayStore";
 import { usePopout } from "@/state/popoutStore";
 import { CommandIcon, GraphIcon, SettingsIcon, SparkleIcon } from "@/icons";
@@ -27,6 +28,7 @@ export default function App() {
   const { current, closeWorkflow, setView, selectedPath, bootstrap, booted } = useVault();
   const overlay = useOverlay();
   const popout = usePopout();
+  const startUpdates = useUpdates((s) => s.start);
   const popoutPath = getPopoutPath();
 
   const shortcuts = useMemo<Shortcut[]>(() => [
@@ -83,6 +85,12 @@ export default function App() {
     void bootstrap();
   }, [bootstrap]);
 
+  // One quiet look for a newer version, on AquariusOS only. It says nothing
+  // unless it finds something, and nothing at all if it cannot reach GitHub.
+  useEffect(() => {
+    void startUpdates();
+  }, [startUpdates]);
+
   // Adopt the workflow's own theme / accent on open — unless the writer has
   // picked a theme themselves, in which case their choice stands.
   useEffect(() => {
@@ -100,7 +108,7 @@ export default function App() {
       subtitle={current?.title}
       footerLeft={
         <>
-          <span>v0.1.2</span>
+          <span>v{__APP_VERSION__}</span>
           {current && (
             <button className="vw-link" onClick={closeWorkflow}>
               ← workflows

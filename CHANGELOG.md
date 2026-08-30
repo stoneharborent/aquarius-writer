@@ -6,6 +6,56 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## v0.2.0 — 2026-08-29
+
+Aquarius Writer can update itself on AquariusOS.
+
+### Updates, in Settings → About
+
+- **There is an Updates section now.** Open Settings (⌘, or the gear at the
+  bottom right), go to **About**, and it tells you whether you have the newest
+  version. If you don't, one button downloads it and one button restarts into
+  it. That is the whole feature.
+- **It looks for a new version once, quietly, when the app starts.** It never
+  downloads anything on its own and it never restarts you — a download is one
+  deliberate press, and the new version waits until *you* pick a good moment to
+  restart. If the machine is offline the check says nothing at all rather than
+  greeting you with a complaint. **Check for updates** is always there when you
+  want to ask.
+- **A download is proved genuine before it is used.** Every release publishes a
+  checksum file — a fingerprint of each file in it — and the app compares the
+  download against it. A file that doesn't match is deleted and never run.
+- **A failed update leaves you exactly where you were.** The copy of Aquarius
+  Writer that came with AquariusOS is never touched. Everything happens in a
+  scratch folder off to one side, and the switch to the new version is the very
+  last step. Lose your connection halfway through and you simply carry on with
+  the version you already have; press the button again whenever you like.
+- **Old downloads are cleaned up.** Only the version you are running and the one
+  you just installed are kept, so this cannot slowly fill a handheld's disk.
+
+### Only on AquariusOS
+
+- **On a Mac, or on a Linux PC where you ran the AppImage yourself, none of this
+  appears** — the Updates section is simply not drawn. Those copies are updated
+  the way you installed them: download the newest release and replace the file.
+  Nothing about them changed in this release.
+
+### An honest note about upgrading to this version
+
+**A copy of Aquarius Writer older than v0.2.0 cannot update itself**, because
+the feature you are reading about did not exist in it yet. There is nothing to
+press. Those installs get v0.2.0 the way they got v0.1.2 — through an AquariusOS
+system update, which brings a fresh copy of the app with it. **That is a
+one-time thing:** once v0.2.0 is what is running, every version after it can be
+installed from inside the app.
+
+### Smaller things
+
+- **The version number shown in the app is now the real one.** The status bar
+  and the About panel each had "v0.1.2" typed into them by hand, which is the
+  sort of thing that quietly goes stale. Both now read the number the app was
+  actually built with.
+
 ## v0.1.2 — 2026-08-29
 
 The window moves now.

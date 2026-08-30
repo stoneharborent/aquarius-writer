@@ -315,3 +315,42 @@
 }
 
 .st-input-narrow { flex: none; width: 110px; }
+
+/* ── Updates (About tab, AquariusOS only) ──
+   One line of text, a progress bar while a download is on the wire, and at most
+   two buttons. It reuses the MCP tab's dot for "something is happening", so the
+   two panels that report on activity rather than a preference look the same. */
+
+.st-update-row {
+  gap: 8px;
+  margin-bottom: 10px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+/* The dot here has no label beside it inside the span, so it must not try to
+   reserve room for one. */
+.st-update-row .st-dot { gap: 0; }
+
+/* .st-warn is normally a paragraph of its own; inline in this row it only
+   lends its colour. */
+.st-update-row .st-warn { margin: 0; font-size: inherit; }
+
+.st-progress {
+  height: 6px;
+  margin-bottom: 12px;
+  border: 0.5px solid var(--line);
+  border-radius: 3px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.st-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  /* Smooth between the whole percentages the backend sends, so the bar glides
+     rather than ticking a hundred times. */
+  transition: width 140ms linear;
+}

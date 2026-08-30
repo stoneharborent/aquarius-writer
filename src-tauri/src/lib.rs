@@ -5,6 +5,11 @@
 //! store, all written against `std` and portable crates so the same code
 //! serves macOS today and AquariusOS/Linux next.
 //!
+//! On AquariusOS there is one more job: the app is baked into a read-only OS
+//! image and cannot overwrite itself, so `updater/` downloads newer copies into
+//! a folder in the user's home directory and the OS launcher starts whichever
+//! is newer. Everywhere else that module stays asleep.
+//!
 //! Since Stage 5 there is a **second door onto the same service**: an opt-in
 //! MCP server (`mcp/`) that lets an external AI app — Claude Code, Claude
 //! Desktop — drive the vault. Both doors call the same `vault::ops`; neither
@@ -17,6 +22,7 @@ mod mcp;
 mod model;
 mod state;
 mod testutil;
+mod updater;
 mod vault;
 
 use state::AppState;
@@ -35,6 +41,9 @@ pub fn run() {
             let registry = vault::registry::load(&config_dir);
             app.manage(AppState::new(config_dir, registry));
             app.manage(mcp::McpState::default());
+            // Reads the AquariusOS launcher's environment once. Off that OS it
+            // finds nothing and the whole updater stays asleep.
+            app.manage(updater::UpdaterState::from_process());
             open_dev_vault(app.handle());
             // After the dev vault, so a smoke run has something registered by
             // the time a client can connect.
@@ -79,6 +88,10 @@ pub fn run() {
             commands::mcp_status,
             commands::mcp_set_enabled,
             commands::mcp_set_port,
+            commands::updater_status,
+            commands::updater_check,
+            commands::updater_install,
+            commands::updater_restart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aquarius Writer");

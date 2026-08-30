@@ -12,6 +12,7 @@ import {
 import { useTheme } from "@/state/themeStore";
 import { useVault } from "@/state/vaultStore";
 import { PROVIDERS, useSync } from "@/state/syncStore";
+import { useUpdates } from "@/state/updateStore";
 import "./Settings.css";
 
 type Tab = "appearance" | "sync" | "workflows" | "mcp" | "about";
@@ -138,21 +139,127 @@ export function Settings() {
           )}
 
           {tab === "about" && (
-            <div className="st-section st-about">
-              <h3>Aquarius Writer</h3>
-              <div className="st-about-version">v0.1.2 · build phase 9</div>
-              <p>
-                Local-first writing studio. Free, no tiers, no telemetry. Files
-                live on disk.
-              </p>
-              <p className="st-help">
-                Stack: Tauri 2 · React 18 · TypeScript · CodeMirror 6 · pdf.js · Pandoc.
-              </p>
-            </div>
+            <>
+              <div className="st-section st-about">
+                <h3>Aquarius Writer</h3>
+                <div className="st-about-version">v{__APP_VERSION__}</div>
+                <p>
+                  Local-first writing studio. Free, no tiers, no telemetry. Files
+                  live on disk.
+                </p>
+                <p className="st-help">
+                  Stack: Tauri 2 · React 18 · TypeScript · CodeMirror 6 · pdf.js · Pandoc.
+                </p>
+              </div>
+              <UpdatesSection />
+            </>
           )}
         </div>
       </div>
     </Overlay>
+  );
+}
+
+/**
+ * The Updates section of the About tab — AquariusOS only.
+ *
+ * On AquariusOS this app is part of the operating system, which is read-only,
+ * so it cannot replace itself. It downloads a newer copy into a folder in the
+ * home directory instead, and the OS starts whichever copy is newer. All of
+ * that happens in Rust; this is one row of text and one button, whose wording
+ * follows whatever phase the backend reports.
+ *
+ * Everywhere else — the Mac build, the browser preview, a Linux machine where
+ * the app was started by hand — `osManaged` is false and this renders nothing.
+ * Those copies are updated the way they were installed.
+ */
+function UpdatesSection() {
+  const status = useUpdates((s) => s.status);
+  const check = useUpdates((s) => s.check);
+  const install = useUpdates((s) => s.install);
+  const restart = useUpdates((s) => s.restart);
+
+  if (!status?.osManaged) return null;
+
+  const { phase, latestVersion, percent, message, failedOperation } = status;
+  const busy = phase === "checking" || phase === "downloading" || phase === "installing";
+  // Once a version is installed and waiting, asking GitHub again could only
+  // replace the restart button with a download button for what is already
+  // downloaded. The backend refuses it; the button says so.
+  const canCheck = !busy && phase !== "ready";
+
+  // One sentence per phase, in the order they happen.
+  const line = (() => {
+    switch (phase) {
+      case "checking":
+        return "Looking for a newer version…";
+      case "current":
+        return "You have the newest version.";
+      case "available":
+        return `Version ${latestVersion} is available.`;
+      case "downloading":
+        return `Downloading version ${latestVersion}… ${percent ?? 0}%`;
+      case "installing":
+        return "Installing — this takes a moment. Don't close the app.";
+      case "ready":
+        return `Version ${latestVersion} is installed. Restart to start using it.`;
+      case "error":
+        return message ?? "That didn't work.";
+      default:
+        return "Aquarius Writer came with AquariusOS and can update itself.";
+    }
+  })();
+
+  return (
+    <div className="st-section">
+      <h3>Updates</h3>
+      <div className="st-row st-update-row">
+        <span className={`st-dot${busy ? " live" : ""}`} />
+        <span className={phase === "error" ? "st-warn" : undefined}>{line}</span>
+      </div>
+
+      {phase === "downloading" && (
+        <div
+          className="st-progress"
+          role="progressbar"
+          aria-valuenow={percent ?? 0}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <span style={{ width: `${percent ?? 0}%` }} />
+        </div>
+      )}
+
+      <div className="st-row">
+        {phase === "available" && (
+          <button className="st-chip active" onClick={() => void install()}>
+            Download and install
+          </button>
+        )}
+        {phase === "ready" && (
+          <button className="st-chip active" onClick={() => void restart()}>
+            Restart to update
+          </button>
+        )}
+        {/* A failed download is retried by downloading again. A failed *check*
+            is retried by the Check button below, which is always there — so
+            this only appears for the one it fits. */}
+        {phase === "error" && failedOperation === "install" && (
+          <button className="st-chip active" onClick={() => void install()}>
+            Try again
+          </button>
+        )}
+        <button className="st-chip" disabled={!canCheck} onClick={() => void check()}>
+          Check for updates
+        </button>
+      </div>
+
+      <p className="st-help">
+        The download is checked against the release's checksum before anything is
+        installed, and the copy built into AquariusOS is never touched — so if an
+        update fails, you carry on with the version you already have.
+      </p>
+    </div>
   );
 }
 

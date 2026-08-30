@@ -1,6 +1,6 @@
 [package]
 name = "aquarius-writer"
-version = "0.1.2"
+version = "0.2.0"
 description = "Aquarius Writer — local-first desktop writing studio"
 edition = "2021"
 # Raised from 1.77 in Stage 5: rmcp (the official Rust MCP SDK) declares 1.88.
@@ -33,6 +33,21 @@ rmcp = { version = "3", features = ["server", "transport-streamable-http-server"
 schemars = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio = { version = "1", features = ["rt", "net", "sync"] }
+
+# The AquariusOS self-updater (src/updater/). Three small, well-known crates:
+#
+#   ureq   a blocking HTTP client with rustls built in. No OpenSSL on the build
+#          machine, no async runtime, and a plain `Read` for the download — which
+#          is what makes a progress bar three lines of code.
+#   sha2   to check a download against the release's SHA256SUMS.txt. This is the
+#          gate that decides whether we are willing to run the file, so it is
+#          not optional.
+#   semver to compare version numbers correctly (0.10.0 comes after 0.9.0).
+#
+# All three are inert off AquariusOS — see src/updater/mod.rs.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+sha2 = "0.10"
+semver = "1"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

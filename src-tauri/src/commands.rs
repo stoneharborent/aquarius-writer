@@ -482,6 +482,38 @@ pub fn mcp_set_port(
     Ok(crate::mcp::status(&app, error))
 }
 
+// ── updates (AquariusOS only) ────────────────────────────────────────────
+//
+// These four are the whole update surface. They do almost nothing themselves —
+// `crate::updater` holds the state and does the work — but they are the only
+// way the Settings panel can reach it. Off an AquariusOS install every one of
+// them is a no-op that answers "unsupported", so the panel hides itself and
+// nothing here ever runs.
+
+#[tauri::command]
+pub fn updater_status(app: AppHandle) -> crate::updater::UpdateState {
+    crate::updater::status(&app)
+}
+
+/// `silent` is set by the one automatic check at startup, so a machine that is
+/// offline says nothing rather than opening with a complaint.
+#[tauri::command]
+pub async fn updater_check(app: AppHandle, silent: bool) -> R<crate::updater::UpdateState> {
+    Ok(crate::updater::check(app, silent).await)
+}
+
+#[tauri::command]
+pub async fn updater_install(app: AppHandle) -> R<crate::updater::UpdateState> {
+    Ok(crate::updater::install(app).await)
+}
+
+/// Quits and starts again through the OS launcher, which then picks the copy
+/// that was just downloaded. This one does not return on success.
+#[tauri::command]
+pub fn updater_restart(app: AppHandle) -> R<()> {
+    crate::updater::restart(&app)
+}
+
 // ── the log bridge ───────────────────────────────────────────────────────
 
 /// Print a line the renderer sent us to stderr.

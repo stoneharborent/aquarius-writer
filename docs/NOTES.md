@@ -4,7 +4,7 @@
 byte-for-byte as delivered. It is never edited. When reality has moved on from
 what it says, the discrepancy is recorded here instead.
 
-Last reviewed: 2026-08-29 (v0.1.2 — the window-move fix, §15; §4 corrected).
+Last reviewed: 2026-08-29 (v0.2.0 — the AquariusOS self-updater, §16).
 
 ---
 
@@ -547,6 +547,10 @@ the controls draw and do nothing, which is what makes the screenshot possible.
 - **No signing, notarisation, updater or Releases.** All four need Royce's Apple
   account or a signing key. The TODO block at the end of
   `.github/workflows/build.yml` says what each would take.
+  **Two of the four have since happened.** Releases were added on 2026-08-28
+  (the `release` job in that same workflow), and v0.2.0 added an updater — but
+  *not* the Tauri updater this bullet meant, and not one that needs a signing
+  key. See §16. Signing and notarisation are still outstanding.
 
 ## 13. Stage 5's two removals, and what replaced them
 
@@ -970,3 +974,130 @@ cheapest test is the one used here: a temporary `invoke("plugin:…")` in the DE
 block of `src/main.tsx`, reporting through `dev_log` so the answer lands in the
 terminal running `tauri dev`. A permitted command answers `OK`; a refused one
 answers with the permission it wants, by name.
+
+---
+
+## 16. v0.2.0 — the app can update itself on AquariusOS
+
+Aquarius Writer is the operating system's stock writing app. That is a nice
+thing to be and one awkward thing to be: the OS image is **read-only**, so the
+app cannot overwrite itself the way a normal desktop app does. Before this
+version, a new Aquarius Writer meant a whole new AquariusOS image.
+
+Aquarius Editor solved this first, in TypeScript
+(`../aquarius-editor/desktop/overlay-update.ts`). v0.2.0 is the same idea in
+Rust, with the same agreement with the operating system, so both apps behave
+identically and the OS only has to know one trick.
+
+### 16a. How it works, in plain language
+
+The app downloads a newer copy of *itself* into a folder in the home directory,
+and the OS launcher starts whichever copy is newer.
+
+```text
+~/.local/share/aquarius/aquarius-writer/     ← "the overlay"
+  ├── versions/
+  │   └── 0.3.0/        a complete unpacked copy of the app, AppRun on top
+  ├── tmp/              scratch space, emptied after every attempt
+  └── current -> versions/0.3.0    (a RELATIVE symlink)
+```
+
+`/usr/bin/aquarius-writer` — the launcher — reads `current`, compares its
+version with the one baked into the image, and starts the newer of the two. The
+image copy is never touched, which is what makes the whole thing safe: the worst
+case is that the OS-supplied version starts instead.
+
+The order of operations matters and is not negotiable:
+
+1. download the release's AppImage into `tmp/install-<random>/`
+2. fetch that release's `SHA256SUMS.txt` and check the download against it —
+   **hard failure** on a mismatch, or on the file not being listed at all
+3. mark it runnable and let it unpack itself (`--appimage-extract`, which needs
+   no FUSE)
+4. fix the unpacked copy's permissions and one packaging line (§16c)
+5. `rename()` the unpacked folder into `versions/<version>`
+6. repoint `current` **atomically** — a new symlink under a temporary name,
+   renamed on top of the old one, so a launcher reading it at that instant sees
+   the old target or the new one and never a gap
+7. delete every older version
+8. delete the scratch folder, whatever happened
+
+Steps 1–4 happen entirely inside the overlay's scratch folder. Nothing outside
+it is touched until step 5, and `current` is not moved until step 6. A failure
+anywhere leaves the machine running exactly what it was running.
+
+### 16b. What the code is, and where
+
+| File | What it does |
+|---|---|
+| `src-tauri/src/updater/overlay.rs` | All of the above, in plain `std`. No Tauri, no network — which is why `cargo test` can exercise the whole install against temp directories, including every way it can fail. |
+| `src-tauri/src/updater/net.rs` | The bits that touch the outside world: `ureq` for HTTP, `sha2` for the checksum, a child process for the unpack. |
+| `src-tauri/src/updater/mod.rs` | The state machine (idle → checking → available → downloading → installing → ready) and the `updater://state` event the panel redraws on. |
+| `src/state/updateStore.ts` | Mirrors that state. Decides nothing itself. |
+| `src/components/overlays/Settings.tsx` | The Updates section of the About tab. |
+
+Three crates were added to `src-tauri/Cargo.toml`: `ureq` (HTTP, with rustls
+built in — no OpenSSL needed on any build machine), `sha2`, and `semver`. No new
+Tauri capability was needed: the four commands are the app's own, and
+`core:default` already allows the renderer to listen for events.
+
+### 16c. Two things done to a downloaded copy that the OS build also does
+
+`os-image/build_files/creator-apps.sh` does not ship the baked copy exactly as
+the AppImage unpacks. It fixes two things, and a copy downloaded here would miss
+both — so `overlay.rs` does the same two:
+
+- **Permissions.** What comes out of `--appimage-extract` is whatever the
+  packaging tool left behind, and it has been wrong: Writer v0.1.0's AppImage
+  carried `AppRun.wrapped` as `0770`, and the Editor's extractor once produced
+  *every* directory as `0700`. The launcher checks a downloaded copy before
+  trusting it and quietly starts the baked one instead when something is
+  unreadable — safe, but the update would appear to install and then never run.
+  So the same rule is applied: directories `0755`, runnable files `0755`,
+  everything else `0644`, and `AppRun`, `AppRun.wrapped` and
+  `usr/bin/aquarius-writer` runnable whatever they arrived as.
+- **`GDK_BACKEND`.** The linuxdeploy GTK plugin generates a start-up snippet
+  containing `export GDK_BACKEND=x11`, sourced *after* anything the launcher
+  sets — so the launcher's documented `AQUARIUS_GDK_BACKEND` escape hatch would
+  silently do nothing on a downloaded copy. It is rewritten to
+  `export GDK_BACKEND="${GDK_BACKEND:-x11}"`, which is upstream's own fix
+  (tauri-apps/tauri#15786). Behaviour is unchanged with nothing set; the knob is
+  merely reachable. A missing file or missing line is not an error — packaging
+  changes, and an update must not fail because there was nothing to patch.
+
+### 16d. Deliberate limits
+
+- **Nothing is automatic except the check.** One quiet check at launch, whose
+  failures are silent. Downloading is one deliberate press — it is a large file
+  and the connection may be someone's phone — and nothing ever restarts on its
+  own.
+- **This is not the Tauri updater.** No signing key, no update manifest, no
+  `bundle.createUpdaterArtifacts`. The release feed is GitHub's own API and the
+  release's `SHA256SUMS.txt`, which the OS image build already trusts for the
+  same files. If Tauri's updater is ever adopted for the Mac build, this stays
+  as it is: it solves a problem Tauri's updater cannot, on a read-only OS.
+- **Off AquariusOS the whole module is asleep.** The switch is
+  `AQUARIUS_OS_MANAGED_INSTALL=1`, and only the OS launcher sets it. On macOS
+  it is ignored even if exported by hand. The Settings section is not drawn.
+- **Installs older than v0.2.0 cannot self-update**, because this did not exist
+  in them. They reach v0.2.0 through an AquariusOS image update, once; from then
+  on the app updates itself.
+- **This half cannot change alone.** The overlay layout, the bare-semver folder
+  name, the atomic swap and `/usr/bin/aquarius-writer` as the restart path are
+  an agreement with `os-image/system_files/usr/libexec/aquarius-app-overlay`.
+  Change one side and the update silently stops taking effect.
+
+### 16e. What has not been tested on real hardware
+
+Everything above is covered by `cargo test` against temporary directories, and
+the checksum, permission and `GDK_BACKEND` steps are exercised with a fake
+extractor that reproduces the exact breakages seen in the field. What no test
+here can cover, because Royce's Mac is Apple Silicon:
+
+- a real `--appimage-extract` of a real x86_64 AppImage,
+- the launcher actually preferring the overlay copy on next start,
+- and the restart itself, which spawns `/usr/bin/aquarius-writer` and exits.
+
+Those three want one pass on the x86 bench: install an update, confirm the
+version in Settings → About changes after the restart, and confirm
+`versions/` holds only the new copy afterwards.
