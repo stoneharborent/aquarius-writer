@@ -327,7 +327,9 @@ fn seed_for(kind: &str, title: &str) -> String {
         "fountain" => format!(
             "Title: {title}\nCredit: Written by\nAuthor: \nDraft date: \n\nFADE IN:\n\nINT. SOMEWHERE — DAY\n\n"
         ),
-        _ => format!("---\ntitle: {title}\nstatus: outline\n---\n\n# {title}\n\n"),
+        // Frontmatter only — the editor already shows `title`, so a body
+        // heading would print the name twice (bench find, 2026-08-31).
+        _ => format!("---\ntitle: {title}\nstatus: outline\n---\n\n"),
     }
 }
 
@@ -936,7 +938,7 @@ mod tests {
         assert!(!made.renamed);
         assert_eq!(
             std::fs::read_to_string(t.path().join("Drafts/Chapter Five.md")).unwrap(),
-            "---\ntitle: Chapter Five\nstatus: outline\n---\n\n# Chapter Five\n\n"
+            "---\ntitle: Chapter Five\nstatus: outline\n---\n\n"
         );
         assert!(writes.is_own(&t.path().join("Drafts/Chapter Five.md")));
     }

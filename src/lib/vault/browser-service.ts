@@ -342,7 +342,7 @@ function displayName(fileName: string, kind: NodeKind): string {
 function seedFor(kind: NewFileKind, title: string): string {
   return kind === "fountain"
     ? `Title: ${title}\nCredit: Written by\nAuthor: \nDraft date: \n\nFADE IN:\n\nINT. SOMEWHERE — DAY\n\n`
-    : `---\ntitle: ${title}\nstatus: outline\n---\n\n# ${title}\n\n`;
+    : `---\ntitle: ${title}\nstatus: outline\n---\n\n`;
 }
 
 /** Detach a node (and its subtree) from wherever it currently sits. */
