@@ -1,267 +1,176 @@
 # Parity — the Tauri app vs the Swift app
 
-*Written 2026-08-29, against the code in this repo at v0.1.2.*
+*Written 2026-08-29 against v0.1.2 with the Swift side unreadable; rewritten
+2026-08-30 against v0.2.0 after a full read of the Swift source. Wave 0 is
+done. The complete Swift inventory — features, palette hex values, layout
+measurements, shortcut map — lives in [`SWIFT-AUDIT.md`](SWIFT-AUDIT.md);
+this file is the gap list and the plan.*
 
 ## Read this first
 
 There are two Aquarius Writers. The **Swift app**
-(`Branches/Apps/AquariusWriter/swift/`) is the original, macOS-only, and it has
-kept being worked on. **This app** — Tauri + React — was copied out of a
-sibling folder on 2026-08-25 and has been getting a Rust backend, a Linux skin,
-Linux packaging and an MCP server ever since. It has not been getting the Swift
-app's newer *features*, because nobody has been carrying them across.
+(`Branches/Apps/AquariusWriter/swift/`) is the original, macOS-only, and it
+has kept being worked on. **This app** — Tauri + React — was copied out of a
+sibling folder on 2026-08-25 and has been getting a Rust backend, a Linux
+skin, Linux packaging and an MCP server ever since. It has not been getting
+the Swift app's newer *features or design*, because nobody was carrying them
+across.
 
 Royce, on the Linux bench: *"the layout of the app is old… I cannot switch
-workflows. There are no favorites, etc."* That is the gap this document
-measures, so that the next round of work has a list instead of a feeling.
-
-**This document is for two readers.** The prose is for Royce; the file paths in
-the Notes column are for whoever implements the fixes.
+workflows. There are no favorites, etc."* Both sides are now verified, so
+this document is a real list, not a feeling.
 
 ---
 
-## ⚠️ How this was sourced — and the one thing missing from it
+## Royce's three named gaps, answered (now with the Swift side verified)
 
-Everything said about **this repo** was read out of the actual code and is
-marked *verified*. Nothing in the port column is guessed.
+### 1. "The layout of the app is old" — **confirmed, and now we know exactly how**
 
-**The Swift app's source could not be read in this session.** Every attempt —
-`ls`, `find`, `head`, the Read tool, `git`, Spotlight — returned
-`Operation not permitted` on
-`Branches/Apps/AquariusWriter/`. The one file that opened was that folder's own
-`CLAUDE.md`. This is a sandbox restriction on the session, not a broken folder:
-`stat` works, so the directory is there and healthy.
+The port is the May 2026 HANDOFF §8 layout minus the Spark column. The Swift
+app moved on. The differences, verified:
 
-So the Swift column below is built from four weaker sources, and every row says
-which one it used:
-
-| Tag | Source | What it proves |
+| | Swift app | This port |
 |---|---|---|
-| **[contract]** | `docs/HANDOFF.md` in this repo — the design contract *both* builds were written from (May 2026) | What the feature was specified to do. Says nothing about what Swift did *after* May 2026. |
-| **[named]** | This repo's own code cites a specific Swift file it was mirroring (e.g. `// web mirror of WorkflowSwitcher.swift`) | The Swift feature exists and someone read it. Its current behaviour is unverified. |
-| **[file]** | A Swift file of that name was confirmed on disk by `test -e` probing (metadata calls are permitted; reads are not) | The file exists. Nothing more. |
-| **[unknown]** | No evidence either way | Say so; do not guess. |
+| Top of window | 30pt title strip + a **top bar**: Files toggle, **⌘K search capsule**, centered editor toolbar, right-pane buttons | 38px title bar only; toolbar lives lower |
+| Bottom of window | **No status bar** — nothing down there | 26px status bar with version, "← workflows", icon buttons, theme dropdowns |
+| Columns | Sidebar **248pt, resizable 190–560, width persisted** · editor min 320 · right pane **360pt, resizable, persisted** | Fixed `240px 1fr 320px`, nothing resizes |
+| Collapsing | Everything collapses to a **28pt gutter with a rotated label** (sidebar, rails, right pane, even the editor) | Right pane collapses; no gutters |
+| Sidebar top | **Quick views: Starred · Today · Manuscript**, then a "WORKFLOW" eyebrow with A−/A+ tree zoom and an **add menu** | Search + tree only |
+| Prose surface | **US-Letter page canvas** — fixed-width sheet, 1" margins, drop shadow | Full-width text column |
+| Theme | **Ice** (light `#EAF1F8`) + ocean **Midnight** (`#0B1220`), 4 Aqua accents | **Parchment** + warm-neutral Midnight — the palette Swift *retired* (Ice's pref key is literally still `"parchment"`) + the AquariusOS skin |
 
-**What this means in practice:** the *port* side of this audit is complete and
-trustworthy. The *Swift* side is a strong skeleton with no flesh on it. Three
-kinds of question cannot be answered until someone reads the Swift source:
+The layout catch-up is no longer "unknown, size L" — it's a spec. See
+SWIFT-AUDIT §1.3–1.6.
 
-1. **What the Swift app's layout actually looks like now** — the single thing
-   Royce named first.
-2. **How favorites work there** (where they live, what can be favorited).
-3. **Anything the Swift app added after May 2026 that this document does not
-   know exists.** Absence from this table is not evidence of absence.
+### 2. "There are no favorites" — **correct; the Swift design is now known**
 
-**To finish the audit:** re-run it from a session whose working directory is
-`Branches/Apps/AquariusWriter` (or run `claude` from inside that folder). The
-targets, in order: `swift/AquariusWriter/Views/Sidebar/`,
-`swift/AquariusWriter/Views/Main/MainWindow.swift`,
-`swift/AquariusWriter/State/`, and `swift/project.yml` (an XcodeGen manifest —
-it lists every source file in one readable place, which is the fastest way to
-get the real inventory).
+Swift: star/unstar on any tree row (context menu + star glyph), a **Starred
+quick view** at the top of the sidebar, and MCP/Spark `toggle_star`. Build
+that: new store, persistence in `.aquarius/` beside `comments.json`, sidebar
+section, and the MCP tool in the same change.
 
-### What probing did confirm exists on the Swift side
+### 3. "I cannot switch workflows" — **the port's switcher exists but is both unfindable and in the wrong place**
 
-Directories: `swift/AquariusWriter/{Views,State,Lib,Models,Services,Theme}`,
-`Views/{Editor,Sidebar,Main,Overlays,Manuscript,Viewers,Window,Workflow,Spark,Rails,Shared,Terminal}`,
-plus `swift/AquariusWriterTests`, `swift/docs`, `swift/project.yml`.
-
-Files: `Views/Sidebar/WorkflowSwitcher.swift`, `Views/Main/MainWindow.swift`,
-`Views/Overlays/{CommandPalette,SettingsSheet,CompileSheet,FindReplaceSheet,RecentlyDeletedSheet,VersionDiffSheet,ScreenplayPreviewSheet,CheatSheet}.swift`,
-`Views/Editor/{EditorToolbar,EditorFooterStats,ProseEditor,NoteEditor,ScreenplayEditor,ReferencePane}.swift`,
-`Views/Rails/{ChapterRail,ScenesRail}.swift`,
-`Views/Viewers/{HtmlViewer,VideoViewer,PdfViewer,ImageViewer}.swift`,
-`Views/Terminal/TerminalPane.swift`, `Views/Spark/SparkPane.swift`,
-`State/{FormatBus,SparkStore,SparkActionRunner,VaultStore,EditorStore}.swift`,
-`Lib/{Fountain,ScreenplayPageFormat,SparkAction,FrontMatter}.swift`,
-`Lib/TextStyling/`.
-
-A `Views/Workflow/` directory exists but none of the names guessed for it hit.
-No file named for favourites, pinning or starring was found anywhere — but
-that is a failed guess, **not** a finding: the probe can only confirm names it
-thinks of, and Royce says the feature is there.
-
----
-
-## Royce's three named gaps, answered
-
-### 1. "I cannot switch workflows"
-
-**The switcher is there.** It is the workflow's name at the top of the sidebar,
-with a small caret next to it — click it and you get a menu of every connected
-workflow plus **← All workflows**, which takes you back to the welcome screen.
-There is a second way out in the bottom-left of the window: **← workflows**.
-Both were checked in the code and both are wired up correctly
-(`src/components/sidebar/Sidebar.tsx:58-96`, `src/App.tsx:104-108`).
-
-So this is very probably **not a missing feature — it is an invisible one**,
-and possibly an empty one. Two things make it look dead:
-
-- **It does not look like a button.** It is the sidebar title in bold, with a
-  10-pixel caret. Nothing about it says "press me". The Swift app is where
-  Royce's expectation of what a switcher looks like comes from, and that
-  expectation cannot be met until someone can see the Swift version.
-- **It has nothing to offer.** The menu lists the workflows Aquarius already
-  knows about. On the Linux bench that is probably just the sample — one entry,
-  already ticked. A menu with one item in it reads as a broken menu.
-
-Nothing in the CSS explains a Linux-only failure: the menu is a plain absolute
-box with no `backdrop-filter` and its parent is correctly positioned. **If
-Royce clicks the workflow name and genuinely nothing appears**, that *is* a new
-Linux bug and it needs a bench report, because it cannot be reproduced here.
-
-### 2. "There are no favorites"
-
-**Correct, and there never have been.** Searching this repo for
-favourite / star / pin / bookmark in any spelling returns nothing outside a
-CSS colour variable called `--starred`, which is the *"drafting" chapter status
-colour* and unrelated. There is no store, no persistence, no sidebar section,
-no MCP tool.
-
-It is also absent from `docs/HANDOFF.md` — the May 2026 design contract has no
-favourites anywhere in its feature list or component map. So this is a **Swift
-feature added after the port's design was frozen**, which is exactly the shape
-of problem Royce described. It has to be built here from scratch, and it should
-be built to match whatever the Swift app does — which needs the Swift read.
-
-### 3. "The layout of the app is old"
-
-**Honest answer: this cannot be diagnosed without the Swift source, and it is
-the most important row in the table.**
-
-What can be said is what this app's layout *is*, so the comparison is quick
-once someone can see both. Top to bottom, the window is:
-
-- a **38px title bar** — centred workflow name, and on Linux three window
-  buttons at the right;
-- a **three-column body** — sidebar (tree + a Today/Graph/Find/Trash rail at
-  its foot), the editor, and a right pane with **Comments** and **Versions**
-  tabs that can be collapsed;
-- a **26px status bar** — version number, "← workflows", and icon buttons for
-  palette / graph / today / settings plus theme and accent dropdowns.
-
-That is, to the pixel, the layout `docs/HANDOFF.md` §8 specifies — with one
-column removed: the Spark AI panel, deliberately cut in Stage 5. **If the Swift
-app has moved on from that shape, this app has not moved with it, and nobody
-here knows in which direction.** Candidate answers a Swift read would settle:
-a different sidebar organisation (sections, favourites, tags?), a mode or tab
-bar, a different inspector, document tabs, a library/home screen.
+Swift puts the switcher as a **chip in the sidebar footer** opening a
+popover: connected workflows, "Add workflow…", "Manage workflows…". The
+port's switcher is the sidebar *title* with a 10px caret — invisible as a
+control — plus a "← workflows" text link in a status bar Swift doesn't even
+have. Move it to a footer chip that looks like a button, with the add/manage
+rows.
 
 ---
 
 ## The feature table
 
-Ordered by user impact — what a writer notices first, at the top.
+Ordered by user impact. Sizes: **S** ≈ under a day · **M** ≈ two to four
+days · **L** ≈ a week or more. Swift side is **verified from source**
+throughout (SWIFT-AUDIT.md has file names).
 
-Sizes: **S** ≈ under a day · **M** ≈ two to four days · **L** ≈ a week or more.
+### Absent or wrong in the port
 
-| # | Feature | Swift side (source) | Port status | Size | Notes for the implementer |
+| # | Feature | Swift app | Port | Size | Notes |
 |---|---|---|---|---|---|
-| 1 | **Overall shell layout / navigation model** | Unknown — this is the whole question **[unknown]** | **different** (assumed) | **L** | Port layout is HANDOFF §8 minus the Spark column. Read `Views/Main/MainWindow.swift` + `Views/Sidebar/` before designing anything. Port files: `src/components/window/VaultWindow.tsx`, `src/components/main/MainWindow.tsx`, `src/components/sidebar/Sidebar.tsx`. |
-| 2 | **Favorites / pinning** | Exists per Royce; no design record **[unknown]** | **absent** | **M** | Nothing to extend — new store, new persistence, new sidebar section, plus an MCP tool (repo doctrine: if a human can do it, an MCP client can). Persist in `.aquarius/` beside `comments.json` (`src-tauri/src/aux_store.rs`), not `localStorage`. |
-| 3 | **Workflow switching** | `Views/Sidebar/WorkflowSwitcher.swift` **[named]** | **present, but unfindable** | **S** | Give it a real control surface — a bordered button, a hover state, an explicit "Switch workflow…" row. `src/components/sidebar/Sidebar.tsx:58`. Also make an empty list say so instead of showing one dead row. |
-| 4 | **Create a new file inside a workflow** | Not in the contract; unverified in Swift **[unknown]** | **absent from the UI** | **M** | The backend already does it — MCP exposes `create_document` (`src-tauri/src/mcp/tools.rs`) — but `VaultService` has no `createFile` and the sidebar has no `+`. An AI client can make a file in your vault and you cannot. |
-| 5 | **Rename / move a file** | Unverified **[unknown]** | **absent everywhere** | **M** | Not in `VaultService` (`src/lib/vault/service.ts`), not in MCP, no UI. Needs the Rust op, the interface method, the MCP tool and the sidebar affordance. |
-| 6 | **Compile / Export** (EPUB, PDF, Word, Markdown, Fountain, FDX) | `Views/Overlays/CompileSheet.swift` **[file]**; contract §5 **[contract]** | **absent — the dialog is a mock** | **L** | `src/components/overlays/Compile.tsx` renders the format cards and the path field, and the **Compile button has no click handler at all**. There is no Pandoc, bundled or shelled. Currently the app cannot produce a manuscript. |
-| 7 | **Today panel** — daily goal, streak, per-document word deltas | `Views/Overlays/` — no matching file found **[unknown]**; contract §5 **[contract]** | **partial — hardcoded** | **M** | `src/components/overlays/Today.tsx` opens with a literal `const TODAY = {…}` of made-up numbers. `.aquarius/sessions/*.json` is specified and never written. `goals` exists in the type and only the browser mock fills it. NOTES §3, §8. |
-| 8 | **Conflict detection** (external edit while a document is open) | `Views/` — unverified **[unknown]**; contract §5 "Data safety" **[contract]** | **partial — dialog exists, nothing raises it** | **M** | `src/components/safety/ConflictDialog.tsx` is complete and unreachable. A save currently overwrites an external edit; the old text survives only in the version trail. Fix: carry the open-time mtime into `vault_write_file` and refuse a moved write. NOTES §8. |
-| 9 | **Chapter drag-to-reorder persists** | Contract §5 (screenplay + manuscript drag) **[contract]** | **partial — UI drag is in-memory only** | **S** | `reorderChapters` in `src/state/vaultStore.ts:356` mutates the store and never writes. The MCP tool `reorder_chapters` *does* persist. Same asymmetry as row 4. NOTES §13h. |
-| 10 | **Pop out a document into its own window** (⌃⌘O) | Contract §9.4 **[contract]** | **absent in the real app** | **S** | Works in the browser preview. In the desktop shell `new WebviewWindow(...)` needs `core:webview:allow-create-webview-window`, which is not granted; popout labels also fall outside `"windows": ["main"]` in `src-tauri/capabilities/default.json`. Found while fixing the window drag — NOTES §15d. |
-| 11 | **Window buttons on macOS** | n/a | **absent** | **S** | The Mac window is undecorated (`is_decorated` → false) and `WindowControls` renders on Linux only, so there is no close/minimise/maximise button on macOS. ⌘Q/⌘M work. NOTES §15c. |
-| 12 | **Per-workflow theme is remembered** | Contract §3 (`workflow.json.settings.theme`) **[contract]** | **partial — read, never written** | **S** | Nothing has ever written `settings.theme` back; the choice lives in `localStorage`. Every `workflow.json` on disk says `parchment`. NOTES §9. |
-| 13 | **Terminal pane** (run your own CLI agent inside the app) | `Views/Terminal/TerminalPane.swift` **[file]**; contract §5 **[contract]** | **absent** | **M** | Deliberately deferred, not dropped — the port plan keeps it as the bring-your-own-agent story that pairs with the MCP server. NOTES §13j. |
-| 14 | **Spark — the built-in AI panel** | `Views/Spark/SparkPane.swift`, `State/SparkStore.swift`, `State/SparkActionRunner.swift`, `Lib/SparkAction.swift` **[file]** | **absent by decision — not a gap** | — | Royce cut the embedded agent on 2026-08-25; this app exposes an MCP server instead so Claude Code or Claude Desktop drives the vault. The Swift app still has Spark. **Do not port it back without asking.** NOTES §13b. |
-| 15 | **Pricing tiers / unlock dialog** | Unverified — may still exist in Swift **[unknown]** | **absent by decision — not a gap** | — | Removed 2026-08-25: the app is free. If the Swift app still gates features, that is a Swift cleanup, not a port task. NOTES §13a. |
-| 16 | Prose / note / screenplay editors (CodeMirror 6) | `Views/Editor/{ProseEditor,NoteEditor,ScreenplayEditor}.swift` **[file]** | **present** | — | Three configs on one host, as specified. Fountain via `fountain-js` (the Swift build uses a Swift library — NOTES §1). |
-| 17 | Editor toolbar; word / character / read-time footer | `Views/Editor/{EditorToolbar,EditorFooterStats}.swift` **[named]** | **present** | — | The port cites both by name as parity targets. |
-| 18 | Chapter rail; scenes rail; screenplay title page | `Views/Rails/{ChapterRail,ScenesRail}.swift` **[file]** | **present** | — | |
-| 19 | Manuscript outline + corkboard + drafts row | Contract §5 **[contract]** | **present** | — | Real data from frontmatter. Drafts are switchable; the *order* does not persist (row 9). |
-| 20 | Split pane / reference mode (read-only second document) | `Views/Editor/ReferencePane.swift` **[named]** | **present** | — | `src/state/splitStore.ts` cites it. |
-| 21 | Version history, snapshots, diff, restore | `Views/Overlays/VersionDiffSheet.swift` **[named]** | **present** | — | Real files under `.aquarius/`. Caveat: a write over MCP does not snapshot first. NOTES §13j. |
-| 22 | Margin comments (anchored to a selection) | Contract "planned features" **[contract]** | **present** | — | An addition to the on-disk contract: `.aquarius/comments.json`. NOTES §3. |
-| 23 | Recently Deleted (soft delete, 30-day retention) | `Views/Overlays/RecentlyDeletedSheet.swift` **[named]** | **present** | — | |
-| 24 | Workflow-wide Find & Replace (⇧⌘F) | `Views/Overlays/FindReplaceSheet.swift` **[named]** | **present** | — | Really searches and really replaces. |
-| 25 | Graph view (chapters ↔ characters ↔ worldbuilding) | Contract §5 **[contract]** | **present** | — | Force-directed over real `[[wikilinks]]`, as §6 asks. |
-| 26 | Command palette (⌘P), cheat sheet (⌘?), Settings (⌘,) | `Views/Overlays/{CommandPalette,CheatSheet,SettingsSheet}.swift` **[file]** | **present** | — | |
-| 27 | Image / PDF / HTML / video viewers | `Views/Viewers/*.swift` **[named]** | **present** | — | Read-only by design. Asset protocol untested on WebKitGTK — NOTES §3b. |
-| 28 | Screenplay print-layout preview | `Views/Overlays/ScreenplayPreviewSheet.swift` **[named]** | **present** | — | Page maths mirrored from `Lib/ScreenplayPageFormat.swift`. |
-| 29 | File watcher — external edits appear live | Contract §3 **[contract]** | **present** | — | `notify` crate, debounced, ignores the app's own writes. |
-| 30 | Themes: Parchment, Midnight, **AquariusOS** | Two themes in the contract **[contract]** | **present, and ahead** | — | The OS skin is this repo's own addition. The Swift app does not have it and does not need it. |
-| 31 | MCP server (15 tools, localhost, opt-in) | Not in Swift **[unknown]** | **present, and ahead** | — | This app's answer to "no embedded AI". `src-tauri/src/mcp/`. |
-| 32 | Linux: window controls, AppImage, `.desktop`, CI | Not applicable to Swift | **present, and ahead** | — | The entire reason this build exists. |
+| 1 | **Shell layout** (top bar, ⌘K capsule, resizable + collapsible panes, no status bar) | verified | old HANDOFF shape | **L** | Spec in SWIFT-AUDIT §1.3. Port files: `VaultWindow.tsx`, `MainWindow.tsx`, `Sidebar.tsx`. |
+| 2 | **Ice / Midnight themes + Aqua accents** | verified (full hex tables in SWIFT-AUDIT §1.1) | ships the retired Parchment palette; accent keys still `sepia`/`sage` | **M** | Straight token swap in `src/theme/tokens.css` + accent renames. Keep the AquariusOS skin as-is. |
+| 3 | **Prose page canvas** (US-Letter sheet, 1" margins, shadow) | verified | plain text column | **M** | The single biggest "looks like a writing app" cue. |
+| 4 | **Favorites / Starred** + quick views (Starred · Today · Manuscript) | verified | absent | **M** | Store + `.aquarius/` persistence + sidebar section + MCP tool. |
+| 5 | **Create file / folder from the UI** | verified — add menu with MD/Screenplay picker | absent (MCP only) | **M** | An AI client can make a file in your vault and you cannot. |
+| 6 | **Rename / move / drag files in the tree** | verified — plus drag-in/out of the file manager | absent everywhere | **M** | Needs Rust op + `VaultService` + MCP tool + sidebar affordance. |
+| 7 | **Compile / Export** | **fully real**: Pandoc + xelatex; EPUB, PDF, DOCX, MD, Fountain; profiles; include options | **mock — Compile button has no click handler**, no Pandoc anywhere | **L** | On Linux pandoc is a package dependency — easier than macOS. FDX is a stub in Swift too; skip it. |
+| 8 | **Manuscript management** (mark folder as manuscript, ManuscriptHome grid, status filter chips, front-matter section) | verified | outline/corkboard exist but no marking UI, no home, no filters | **M** | `manuscriptFolders`/`draftFolders` in `workflow.json` is the shared contract. |
+| 9 | **Conflict dialog reachable** | verified — Keep Mine / Take Theirs / Save As Copy | dialog built, `raise()` never called | **M** | Carry open-time mtime into `vault_write_file`; refuse a moved write. |
+| 10 | **Chapter reorder persists** | verified (rail Move up/down writes) | UI drag is in-memory; the MCP tool persists | **S** | `vaultStore.ts:356`. |
+| 11 | **Editable split editor** | verified — two live documents, independent undo/save | split is read-only reference only | **M** | Keep the read-only reference pane too (Swift has both). |
+| 12 | **Screenplay depth**: paged canvas with real page breaks, Title Page editor tab, scene drag-reorder, dual dialogue, revision marks, smart-type | verified | element buttons, scenes rail, page estimate, preview overlay | **L** | Industry page geometry is in SWIFT-AUDIT §2.1 in points. |
+| 13 | **Wiki-link autocomplete** | verified | plain `[[` typing | **S** | |
+| 14 | **Per-document editor zoom** ⌘+/−/0, persisted per path | verified | global body-size slider only | **S** | |
+| 15 | **Welcome screen: recents list + drag-a-folder-to-open + AppMark glow** | verified | three cards only | **S** | |
+| 16 | **Popouts in the real shell** (⌃⌘O) | verified (ghost-slot design) | works in browser preview; blocked by missing Tauri capability | **S** | `core:webview:allow-create-webview-window` + window scope. NOTES §15d. |
+| 17 | **MCP tool catch-up** | **33 tools + a browser Web UI** — v1 of this doc wrongly assumed Swift had no MCP | 15 tools | **M** | Missing: rename, move, star, manuscript/draft toggles, scene tools, set_synopsis, insert/replace-lines, diff_version, take_snapshot, export. Web UI optional. |
+| 18 | **Terminal pane** | verified — multi-session tabs, agent config, drag-file-for-path | deliberately deferred | **M** | Still deferred; Swift sets the bar for when it lands. |
+| 19 | **Semantic search toggle in Find** | verified (on-device embeddings) | keyword only | research | Needs a Linux embedding story first — not a copy-paste. |
+| 20 | macOS window buttons | n/a (native) | absent on macOS | **S** | Decision: draw ours or re-enable decorations there. |
+| 21 | Per-workflow theme write-back | **Swift's theme is global**, not per-workflow | `settings.theme` read, never written | **S** | May be chasing a behavior Swift doesn't have — decide, then either wire it or drop the field. |
+| 22 | Empty-state illustrations ("never a shrug") | verified — drawn `ZeroIllustration` set | plain text | **S** | |
 
-**Counts.** 32 features audited. **6 absent** (rows 2, 5, 6, 10, 11, 13 — plus
-rows 14 and 15, which are absent *by decision* and are not counted as gaps).
-**5 partial** (rows 3, 7, 8, 9, 12). **1 different / unknown** (row 1).
-**20 present**, three of which the port is ahead on.
+### At parity (or intentionally different)
 
-Read that with the caveat at the top: the denominator is the features *this
-document knows about*. Anything the Swift app grew after May 2026 — favourites
-is the proof that such things exist — is not in the count.
+| Feature | Verdict |
+|---|---|
+| Prose / note / screenplay editors, three configs on one host | **parity** (CodeMirror vs NSTextView; Fountain via `fountain-js` vs Swift's in-house parser) |
+| Toolbar, footer stats, ⌘1–⌘7 element keys | **parity** |
+| Versions: auto + named snapshots, diff, restore | **parity** (Swift adds a "Current Version" header button — nice-to-have; MCP writes still don't snapshot first, NOTES §13j) |
+| Margin comments | **parity** (storage differs: port one `comments.json`, Swift per-file — cosmetic) |
+| Find & Replace (⇧⌘F) | **parity** |
+| Graph, palette, cheat sheet, settings | **parity** |
+| Viewers (image/PDF/HTML/video) | **parity**, Swift richer (PDF outline rail, EXIF inspector, HTML "Edit Source") — low priority |
+| File watcher | **parity** |
+| **Today panel** | **parity in fakeness** — Swift's is *also* hardcoded sample data, labeled as such. Not "the port is behind"; both need `.aquarius/sessions/` built. Whoever builds it first sets the contract. |
+| Trash | parity, one behavior difference: Swift never auto-purges (user confirms "Empty trash"); the port sweeps silently at 30 days. Swift's is the safer behavior. |
+| Corkboard "Add card", rail filter buttons | disabled placeholders **in Swift too** — don't chase them |
+| Sync tab | philosophy-only **in both** — matches |
+| **Spark** (embedded AI) | **absent by decision** (2026-08-25). The MCP server is the replacement. **Do not port it back without asking.** |
+| **Pricing / unlock dialog** | **absent by decision.** Swift still has $50 Studio tiers; that's a Swift cleanup question, not a port task. |
+| AquariusOS theme, Linux packaging, self-updater | **port ahead** — the reason this build exists |
+
+**Counts.** 22 open rows: 2 large-and-structural (shell layout, screenplay
+depth), 1 large (Compile), 10 medium, 8 small, 1 research. Spark and pricing
+stay closed. The v1 claim that the port was "ahead" on MCP was wrong — Swift
+has 33 tools and a Web UI.
 
 ---
 
-## Proposed wave plan
+## Wave plan (revised)
 
-### Wave 0 — unblock the audit (half a day, do this first)
+### ~~Wave 0 — read the Swift app~~ ✅ done 2026-08-30 → `SWIFT-AUDIT.md`
 
-Read the Swift app. Everything below is planned partly in the dark until
-someone does. From a session rooted at `Branches/Apps/AquariusWriter`:
-`swift/project.yml` for the file inventory, then `Views/Sidebar/`,
-`Views/Main/MainWindow.swift`, `Views/Workflow/`, `State/`. Come back and
-rewrite rows 1 and 2 of the table with real behaviour, and add whatever rows
-are missing. **Wave 1's design depends on this; its engineering does not.**
+### Wave 1 — make it look and feel like Aquarius Writer
 
-### Wave 1 — the three things Royce named, plus what makes them usable
+The three things Royce named, now fully specified, plus the file basics.
 
-Everything Royce can see and point at, in the order he raised it.
-
-1. **Favorites** (row 2, M). New feature, built to match Swift. Sidebar
-   section, a toggle affordance on tree rows and editor headers, persistence in
-   `.aquarius/`, an MCP tool alongside.
-2. **Make the workflow switcher findable** (row 3, S). It exists; it does not
-   read as a control. Give it a border, a hover, a label, and an honest empty
-   state. Cheap, and it retires a complaint on its own.
-3. **The layout catch-up** (row 1, L). Scope set by Wave 0. This is the
-   expensive one and the one Royce mentioned first — treat the rest of Wave 1
-   as things that ship while this is being designed.
-4. **Create a file from the UI** (row 4, M). Not on Royce's list, but it
-   belongs in Wave 1: an app where a writer cannot make a new note, and where
-   an AI client *can*, will not survive a week of real use.
+1. **Themes** (row 2, M) — swap Parchment/old-Midnight for Ice/ocean-Midnight
+   + the four Aqua accents. Cheapest, most visible win in the whole plan.
+2. **Workflow switcher as a footer chip** (row from §3 above, S).
+3. **Favorites + quick views** (row 4, M).
+4. **Shell layout catch-up** (row 1, L) — top bar with ⌘K capsule, resizable
+   persisted panes, 28pt collapse gutters, retire the status bar.
+5. **Page canvas** (row 3, M) — pairs naturally with the layout work.
+6. **Create / rename / move files in the UI** (rows 5–6, M+M) — with their
+   MCP counterparts where missing.
 
 ### Wave 2 — the features that are pretending to work
 
-Things that look finished and are not. Each is a trust problem: the app appears
-to offer something and then does nothing.
+7. **Compile / Export** (row 7, L) — pandoc as a Linux package dependency;
+   EPUB/PDF/DOCX/MD/Fountain; skip FDX (a stub in Swift too).
+8. **Conflict detection** (row 9, M).
+9. **Chapter reorder persists** (row 10, S).
+10. **Today on real data** (M) — build `.aquarius/sessions/`; the port would
+    actually *pass* Swift here, and the session format should be proposed as
+    the shared contract.
 
-5. **Compile / Export** (row 6, L) — the biggest single hole. A writing app
-   that cannot produce a manuscript is not finished.
-6. **Today panel on real data** (row 7, M) — write `.aquarius/sessions/`, wire
-   goals, retire the hardcoded numbers.
-7. **Conflict detection** (row 8, M) — the dialog is built; make it reachable
-   before someone loses a paragraph.
-8. **Chapter reorder persists** (row 9, S) — small, and it currently loses work
-   silently.
+### Wave 3 — depth and shell debt
 
-### Wave 3 — the Linux and shell debt
-
-9. **Popouts in the real shell** (row 10, S) and **rename/move** (row 5, M).
-10. **macOS window buttons** (row 11, S) — a decision for Royce: draw our own
-    on macOS too, or turn the system decorations back on there.
-11. **Per-workflow theme write-back** (row 12, S).
-12. **Terminal pane** (row 13, M) — the bring-your-own-agent story, once the
-    layout in row 1 is settled, since it needs somewhere to live.
+11. **Screenplay depth** (row 12, L) and **editable split** (row 11, M).
+12. **MCP tool catch-up** (row 17, M).
+13. **Popouts** (row 16, S), **wiki autocomplete** (13, S), **editor zoom**
+    (14, S), **welcome recents** (15, S), **empty states** (22, S),
+    **macOS buttons** (20, S), **theme write-back decision** (21, S),
+    **trash purge behavior** (align to Swift's confirm-first, S).
+14. **Terminal pane** (row 18, M) — once the Wave 1 layout gives it a home.
+15. **Semantic search** (row 19) — research the Linux embedding story first.
 
 ### Not planned
 
-Spark (row 14) and pricing (row 15) are closed decisions. Parity with the Swift
-app does **not** mean bringing them back.
+Spark and pricing are closed decisions. Parity does **not** mean bringing
+them back.
 
 ---
 
 ## One rule worth keeping
 
-The repo's doctrine since Stage 5 is *"if a human can do it in the app, an MCP
-client can do it too"* — new features ship with their MCP tool in the same
-change. Rows 4 and 9 show the rule being broken in the other direction: the MCP
-client can do things the human cannot. Both halves are worth holding to.
+The repo's doctrine since Stage 5 is *"if a human can do it in the app, an
+MCP client can do it too"* — new features ship with their MCP tool in the
+same change. Rows 5 and 10 show the rule broken in the other direction: the
+MCP client can do things the human cannot. Both halves are worth holding to
+— and row 17 shows the Swift app holds itself to the same rule with more
+than double the tool surface.
