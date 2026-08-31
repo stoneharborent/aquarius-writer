@@ -1,5 +1,8 @@
 import type { VaultService } from "./service";
 import type {
+  EntryReport,
+  NewFileKind,
+  NodeKind,
   VaultNode,
   Workflow,
   WorkflowKind,
@@ -40,7 +43,7 @@ const LANTERN_WORKFLOW: Workflow = {
       ],
     },
   ],
-  settings: { theme: "parchment", accent: "blue", fontSize: 17 },
+  settings: { theme: "ice", accent: "blue", fontSize: 17 },
   goals: { dailyWords: 1000, kind: "daily" },
 };
 
@@ -126,9 +129,9 @@ const LANTERN_TREE: VaultNode = {
 
 const WORKFLOWS_INDEX: WorkflowSummary[] = [
   { id: "lantern", name: "Lantern, Lantern", path: "~/Workflows/Imogen/Lantern", kind: "novel", items: 47, active: true, color: "blue", updated: "now" },
-  { id: "echo", name: "The Long Echo", path: "~/Workflows/Imogen/Echo", kind: "screenplay", items: 22, color: "sepia", updated: "yesterday" },
-  { id: "helmreach", name: "Helmreach Bible", path: "~/Workflows/Worldbuilding/Helmreach", kind: "worldbuilding", items: 88, color: "sage", updated: "3d ago" },
-  { id: "journal", name: "Daily Journal", path: "~/Workflows/Journal", kind: "notes", items: 412, color: "purple", updated: "Apr 12" },
+  { id: "echo", name: "The Long Echo", path: "~/Workflows/Imogen/Echo", kind: "screenplay", items: 22, color: "turquoise", updated: "yesterday" },
+  { id: "helmreach", name: "Helmreach Bible", path: "~/Workflows/Worldbuilding/Helmreach", kind: "worldbuilding", items: 88, color: "aquamarine", updated: "3d ago" },
+  { id: "journal", name: "Daily Journal", path: "~/Workflows/Journal", kind: "notes", items: 412, color: "indigo", updated: "Apr 12" },
 ];
 
 const FILE_CONTENTS: Record<string, string> = {
@@ -258,6 +261,155 @@ function buildPlaceholderPdf(): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
+// ── creating, renaming and moving, in memory ─────────────────────────────
+//
+// The preview has no filesystem, so these do to `LANTERN_TREE` and
+// `FILE_CONTENTS` what `vault::ops` does to a real folder. The rules are
+// copied deliberately — de-duplicate rather than overwrite, folders before
+// files, a move never rewrites the text — so the sidebar's add menu and its
+// rename/move affordances behave the same in `npm run dev` as they do in the
+// shipped shell. It lasts as long as the page does; a reload is a fresh vault.
+
+function findNode(path: string, from: VaultNode = LANTERN_TREE): VaultNode | null {
+  if (from.path === path) return from;
+  for (const child of from.children ?? []) {
+    const hit = findNode(path, child);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function parentOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i < 0 ? "" : path.slice(0, i);
+}
+
+function nameOf(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i < 0 ? path : path.slice(i + 1);
+}
+
+function sortChildren(node: VaultNode) {
+  node.children?.sort((a, b) => {
+    const ad = a.kind === "folder" ? 0 : 1;
+    const bd = b.kind === "folder" ? 0 : 1;
+    return ad - bd || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  });
+}
+
+/** The folder a new entry goes into, or null when the path isn't a folder. */
+function folderAt(path: string): VaultNode | null {
+  const node = findNode(path);
+  if (!node || node.kind !== "folder") return null;
+  node.children = node.children ?? [];
+  return node;
+}
+
+/** " 2", " 3", … until nothing in `folder` has that name. */
+function dedupe(folder: VaultNode, stem: string, ext: string | null): string {
+  const build = (s: string) => (ext ? `${s}.${ext}` : s);
+  const taken = (n: string) =>
+    (folder.children ?? []).some((c) => nameOf(c.path).toLowerCase() === n.toLowerCase());
+  let candidate = build(stem);
+  for (let n = 2; taken(candidate) && n < 1000; n++) candidate = build(`${stem} ${n}`);
+  return candidate;
+}
+
+function validateName(raw: string): string {
+  const name = raw.trim().replace(/[ .]+$/, "");
+  if (!name) throw new Error("give it a name");
+  if (name.startsWith(".")) throw new Error('a name starting with "." would make a hidden file');
+  if (/[/\\]/.test(name)) throw new Error('a name cannot contain "/" or "\\" — it is one name, not a path');
+  if (name.includes("..")) throw new Error('a name cannot contain ".."');
+  const bad = name.match(/[:*?"<>|]/);
+  if (bad) throw new Error(`a name cannot contain "${bad[0]}"`);
+  return name;
+}
+
+function kindOf(fileName: string): NodeKind {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "md" || ext === "markdown") return "markdown";
+  if (ext === "fountain") return "fountain";
+  if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp"].includes(ext)) return "image";
+  if (ext === "pdf") return "pdf";
+  return "other";
+}
+
+function displayName(fileName: string, kind: NodeKind): string {
+  return kind === "markdown" ? fileName.replace(/\.[^.]+$/, "") : fileName;
+}
+
+function seedFor(kind: NewFileKind, title: string): string {
+  return kind === "fountain"
+    ? `Title: ${title}\nCredit: Written by\nAuthor: \nDraft date: \n\nFADE IN:\n\nINT. SOMEWHERE — DAY\n\n`
+    : `---\ntitle: ${title}\nstatus: outline\n---\n\n# ${title}\n\n`;
+}
+
+/** Detach a node (and its subtree) from wherever it currently sits. */
+function detach(path: string): VaultNode {
+  const parent = findNode(parentOf(path));
+  const node = findNode(path);
+  if (!node || !parent?.children) throw new Error(`nothing at ${path}`);
+  parent.children = parent.children.filter((c) => c.path !== path);
+  return node;
+}
+
+/** Rewrite a subtree's paths after its root moved, carrying file text along. */
+function repath(node: VaultNode, from: string, to: string) {
+  if (node.path === from || node.path.startsWith(`${from}/`)) {
+    const next = to + node.path.slice(from.length);
+    if (node.kind !== "folder" && node.path in FILE_CONTENTS) {
+      FILE_CONTENTS[next] = FILE_CONTENTS[node.path];
+      delete FILE_CONTENTS[node.path];
+    }
+    node.path = next;
+  }
+  for (const child of node.children ?? []) repath(child, from, to);
+}
+
+function relocate(path: string, destFolder: string, newName?: string): EntryReport {
+  const node = findNode(path);
+  if (!node) throw new Error(`nothing at ${path}`);
+  const target = folderAt(destFolder);
+  if (!target) throw new Error(`no folder at ${destFolder || "the vault root"}`);
+  if (node.kind === "folder" && (destFolder === path || destFolder.startsWith(`${path}/`))) {
+    throw new Error(`cannot move "${path}" inside itself`);
+  }
+
+  const current = nameOf(path);
+  const isFolder = node.kind === "folder";
+  let stem = current;
+  let ext: string | null = null;
+  if (!isFolder) {
+    const dot = current.lastIndexOf(".");
+    if (dot > 0) { stem = current.slice(0, dot); ext = current.slice(dot + 1); }
+  }
+  if (newName !== undefined) {
+    const wanted = validateName(newName);
+    if (isFolder) { stem = wanted; }
+    else {
+      const dot = wanted.lastIndexOf(".");
+      // No extension typed: keep the one the file already has.
+      if (dot > 0) { stem = wanted.slice(0, dot); ext = wanted.slice(dot + 1); }
+      else stem = wanted;
+    }
+  }
+  const wantedName = ext ? `${stem}.${ext}` : stem;
+  if (wantedName === current && destFolder === parentOf(path)) {
+    return { path, name: node.name, kind: node.kind, from: path, renamed: false };
+  }
+
+  detach(path);
+  const finalName = dedupe(target, stem, ext);
+  const to = destFolder ? `${destFolder}/${finalName}` : finalName;
+  repath(node, path, to);
+  node.name = displayName(finalName, node.kind);
+  target.children = target.children ?? [];
+  target.children.push(node);
+  sortChildren(target);
+  return { path: to, name: node.name, kind: node.kind, from: path, renamed: finalName !== wantedName };
+}
+
 /** A picker row for a workflow the preview cannot actually make on disk. */
 function stubSummary(name: string, path: string, kind: WorkflowKind): WorkflowSummary {
   return { id: `wf-${Date.now()}`, name, path, kind, items: 0, color: "blue", updated: "now" };
@@ -303,6 +455,38 @@ export function createBrowserVaultService(): VaultService {
     },
     async writeFile(_workflowId, relPath, content) {
       FILE_CONTENTS[relPath] = content;
+    },
+    async createFile(_workflowId, parent, name, kind) {
+      const folder = folderAt(parent);
+      if (!folder) throw new Error(`no folder at ${parent || "the vault root"}`);
+      const ext = kind === "fountain" ? "fountain" : "md";
+      const wanted = validateName(name).replace(new RegExp(`\\.${ext}$`, "i"), "") || name;
+      const fileName = dedupe(folder, wanted, ext);
+      const path = parent ? `${parent}/${fileName}` : fileName;
+      const title = fileName.replace(/\.[^.]+$/, "");
+      FILE_CONTENTS[path] = seedFor(kind, title);
+      const node: VaultNode = { name: displayName(fileName, kindOf(fileName)), path, kind: kindOf(fileName) };
+      folder.children = folder.children ?? [];
+      folder.children.push(node);
+      sortChildren(folder);
+      return { path, name: node.name, kind: node.kind, renamed: fileName !== `${wanted}.${ext}` };
+    },
+    async createFolder(_workflowId, parent, name) {
+      const folder = folderAt(parent);
+      if (!folder) throw new Error(`no folder at ${parent || "the vault root"}`);
+      const wanted = validateName(name);
+      const folderName = dedupe(folder, wanted, null);
+      const path = parent ? `${parent}/${folderName}` : folderName;
+      folder.children = folder.children ?? [];
+      folder.children.push({ name: folderName, path, kind: "folder", children: [] });
+      sortChildren(folder);
+      return { path, name: folderName, kind: "folder", renamed: folderName !== wanted };
+    },
+    async rename(_workflowId, relPath, newName) {
+      return relocate(relPath, parentOf(relPath), newName);
+    },
+    async move(_workflowId, relPath, destFolder) {
+      return relocate(relPath, destFolder);
     },
     async softDelete(_workflowId, _relPath) {
       // No-op in browser mock.

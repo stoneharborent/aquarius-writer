@@ -74,8 +74,8 @@ throughout (SWIFT-AUDIT.md has file names).
 | 2 | **Ice / Midnight themes + Aqua accents** | verified (full hex tables in SWIFT-AUDIT §1.1) | ships the retired Parchment palette; accent keys still `sepia`/`sage` | **M** | Straight token swap in `src/theme/tokens.css` + accent renames. Keep the AquariusOS skin as-is. |
 | 3 | **Prose page canvas** (US-Letter sheet, 1" margins, shadow) | verified | plain text column | **M** | The single biggest "looks like a writing app" cue. |
 | 4 | **Favorites / Starred** + quick views (Starred · Today · Manuscript) | verified | absent | **M** | Store + `.aquarius/` persistence + sidebar section + MCP tool. |
-| 5 | **Create file / folder from the UI** | verified — add menu with MD/Screenplay picker | absent (MCP only) | **M** | An AI client can make a file in your vault and you cannot. |
-| 6 | **Rename / move / drag files in the tree** | verified — plus drag-in/out of the file manager | absent everywhere | **M** | Needs Rust op + `VaultService` + MCP tool + sidebar affordance. |
+| ~~5~~ | ~~**Create file / folder from the UI**~~ | verified — add menu with MD/Screenplay picker | ✅ **done** — WORKFLOW eyebrow + "+" add menu, inline name field, segmented Markdown/Screenplay picker; the new file opens in the editor | **M** | `ops::create_file` / `create_folder`, `vault_create_file` / `vault_create_folder`, MCP `create_folder` (`create_document` already existed). |
+| ~~6~~ | ~~**Rename / move files in the tree**~~ | verified — plus drag-in/out of the file manager | ✅ **done** — row menu (right-click or "⋯") with Rename (inline) and Move to… (folder picker) | **M** | `ops::rename_entry` / `move_entry`, `vault_rename` / `vault_move`, MCP `rename_document` / `move_document`. Names de-duplicate " 2"/" 3"; snapshots, comments and chapter order follow the file; bytes are never rewritten. **Still open: drag-reorder in the tree, and drag in/out of the file manager.** |
 | 7 | **Compile / Export** | **fully real**: Pandoc + xelatex; EPUB, PDF, DOCX, MD, Fountain; profiles; include options | **mock — Compile button has no click handler**, no Pandoc anywhere | **L** | On Linux pandoc is a package dependency — easier than macOS. FDX is a stub in Swift too; skip it. |
 | 8 | **Manuscript management** (mark folder as manuscript, ManuscriptHome grid, status filter chips, front-matter section) | verified | outline/corkboard exist but no marking UI, no home, no filters | **M** | `manuscriptFolders`/`draftFolders` in `workflow.json` is the shared contract. |
 | 9 | **Conflict dialog reachable** | verified — Keep Mine / Take Theirs / Save As Copy | dialog built, `raise()` never called | **M** | Carry open-time mtime into `vault_write_file`; refuse a moved write. |
@@ -86,7 +86,7 @@ throughout (SWIFT-AUDIT.md has file names).
 | 14 | **Per-document editor zoom** ⌘+/−/0, persisted per path | verified | global body-size slider only | **S** | |
 | 15 | **Welcome screen: recents list + drag-a-folder-to-open + AppMark glow** | verified | three cards only | **S** | |
 | 16 | **Popouts in the real shell** (⌃⌘O) | verified (ghost-slot design) | works in browser preview; blocked by missing Tauri capability | **S** | `core:webview:allow-create-webview-window` + window scope. NOTES §15d. |
-| 17 | **MCP tool catch-up** | **33 tools + a browser Web UI** — v1 of this doc wrongly assumed Swift had no MCP | 15 tools | **M** | Missing: rename, move, star, manuscript/draft toggles, scene tools, set_synopsis, insert/replace-lines, diff_version, take_snapshot, export. Web UI optional. |
+| 17 | **MCP tool catch-up** | **33 tools + a browser Web UI** — v1 of this doc wrongly assumed Swift had no MCP | 18 tools | **M** | Rename and move landed with row 6. Still missing: star, manuscript/draft toggles, scene tools, set_synopsis, insert/replace-lines, diff_version, take_snapshot, export. Web UI optional. |
 | 18 | **Terminal pane** | verified — multi-session tabs, agent config, drag-file-for-path | deliberately deferred | **M** | Still deferred; Swift sets the bar for when it lands. |
 | 19 | **Semantic search toggle in Find** | verified (on-device embeddings) | keyword only | research | Needs a Linux embedding story first — not a copy-paste. |
 | 20 | macOS window buttons | n/a (native) | absent on macOS | **S** | Decision: draw ours or re-enable decorations there. |
@@ -113,9 +113,9 @@ throughout (SWIFT-AUDIT.md has file names).
 | **Pricing / unlock dialog** | **absent by decision.** Swift still has $50 Studio tiers; that's a Swift cleanup question, not a port task. |
 | AquariusOS theme, Linux packaging, self-updater | **port ahead** — the reason this build exists |
 
-**Counts.** 22 open rows: 2 large-and-structural (shell layout, screenplay
-depth), 1 large (Compile), 10 medium, 8 small, 1 research. Spark and pricing
-stay closed. The v1 claim that the port was "ahead" on MCP was wrong — Swift
+**Counts.** 20 open rows (rows 5 and 6 closed 2026-08-30): 2
+large-and-structural (shell layout, screenplay depth), 1 large (Compile), 8
+medium, 8 small, 1 research. Spark and pricing stay closed. The v1 claim that the port was "ahead" on MCP was wrong — Swift
 has 33 tools and a Web UI.
 
 ---
@@ -135,8 +135,10 @@ The three things Royce named, now fully specified, plus the file basics.
 4. **Shell layout catch-up** (row 1, L) — top bar with ⌘K capsule, resizable
    persisted panes, 28pt collapse gutters, retire the status bar.
 5. **Page canvas** (row 3, M) — pairs naturally with the layout work.
-6. **Create / rename / move files in the UI** (rows 5–6, M+M) — with their
-   MCP counterparts where missing.
+6. ~~**Create / rename / move files in the UI** (rows 5–6, M+M)~~ ✅ done —
+   shipped with their MCP counterparts (`create_folder`, `rename_document`,
+   `move_document`) in the same change. Tree drag-reorder and drag in/out of
+   the file manager are the part of row 6 still outstanding.
 
 ### Wave 2 — the features that are pretending to work
 
@@ -170,7 +172,9 @@ them back.
 
 The repo's doctrine since Stage 5 is *"if a human can do it in the app, an
 MCP client can do it too"* — new features ship with their MCP tool in the
-same change. Rows 5 and 10 show the rule broken in the other direction: the
-MCP client can do things the human cannot. Both halves are worth holding to
-— and row 17 shows the Swift app holds itself to the same rule with more
-than double the tool surface.
+same change. Rows 5 and 10 showed the rule broken in the other direction:
+the MCP client could do things the human could not. Row 5 is closed, and row
+6 closed it in both directions at once — the sidebar's add menu, the row
+menu, and `create_folder` / `rename_document` / `move_document` are the same
+four functions in `vault::ops`. Row 10 is still open. Row 17 shows the Swift
+app holds itself to the same rule with nearly double the tool surface.

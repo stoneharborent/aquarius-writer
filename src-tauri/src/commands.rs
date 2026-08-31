@@ -309,6 +309,63 @@ pub fn vault_asset_ref(
     })
 }
 
+// ── making, renaming and moving things ───────────────────────────────────
+//
+// The four commands behind the sidebar's add menu and its row context menu.
+// None of them do filesystem work here: every one is a one-line call into
+// `vault::ops`, which is the same function the matching MCP tool calls. The
+// answer is an `EntryReport` — path, display name, kind, and where it came
+// from — so the renderer can patch its tree instead of reloading the vault.
+
+/// Create a document. `parent` is a folder path, `""` for the vault root;
+/// `kind` is "markdown" or "fountain".
+#[tauri::command]
+pub fn vault_create_file(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    parent: String,
+    name: String,
+    kind: String,
+) -> R<vault::ops::EntryReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::create_file(&root, &parent, &name, &kind, &state.self_writes)
+}
+
+#[tauri::command]
+pub fn vault_create_folder(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    parent: String,
+    name: String,
+) -> R<vault::ops::EntryReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::create_folder(&root, &parent, &name, &state.self_writes)
+}
+
+/// Rename a file or folder in place. `new_name` is one path segment.
+#[tauri::command]
+pub fn vault_rename(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    rel_path: String,
+    new_name: String,
+) -> R<vault::ops::EntryReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::rename_entry(&root, &rel_path, &new_name, &state.self_writes)
+}
+
+/// Move a file or folder into `dest_folder` (`""` for the vault root).
+#[tauri::command]
+pub fn vault_move(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    rel_path: String,
+    dest_folder: String,
+) -> R<vault::ops::EntryReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::move_entry(&root, &rel_path, &dest_folder, &state.self_writes)
+}
+
 #[tauri::command]
 pub fn vault_soft_delete(
     state: State<'_, AppState>,

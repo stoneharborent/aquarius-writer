@@ -15,10 +15,11 @@
 //! something is a separate, deliberate act — `mcp` emits `vault://changed`
 //! itself, exactly once, instead of letting the watcher guess.
 
+use crate::aux_store;
 use crate::fs_ops::atomic::{write_atomic, WriteOutcome};
 use crate::fs_ops::watcher::SelfWrites;
 use crate::model::Workflow;
-use crate::vault::{frontmatter, paths, workflow};
+use crate::vault::{frontmatter, paths, scaffold, workflow};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -26,6 +27,16 @@ pub type OpResult<T> = Result<T, String>;
 
 fn resolve(root: &Path, rel: &str) -> OpResult<PathBuf> {
     paths::resolve_in_root(root, rel).map_err(|e| e.0)
+}
+
+/// Like `resolve`, but `""` means the vault root — the only path the renderer
+/// ever sends for "the top of the tree".
+fn resolve_dir(root: &Path, rel: &str) -> OpResult<PathBuf> {
+    if rel.is_empty() {
+        Ok(root.to_path_buf())
+    } else {
+        resolve(root, rel)
+    }
 }
 
 // ── reading ──────────────────────────────────────────────────────────────
@@ -174,6 +185,475 @@ pub fn create_document(
     self_writes.record(&path);
     write_atomic(&path, content.as_bytes()).map_err(|e| format!("{rel}: {e}"))?;
     Ok(WriteReport { path: rel.to_string(), changed: true, bytes: content.len() })
+}
+
+// ── new files and folders, renaming, moving ──────────────────────────────
+//
+// Wave 1 rows 5–6 of docs/PARITY.md: until now an MCP client could create a
+// document in the writer's vault and the writer could not, and neither could
+// rename or move anything. All four operations live here so the sidebar's add
+// menu and the `create_document` / `rename_document` / `move_document` tools
+// are literally the same code.
+//
+// Three rules hold across all of them:
+//
+// * **One segment, never a path.** Names go through `scaffold::validate_name`,
+//   which is the same check "Create new workflow" uses: no separators, no
+//   `..`, no leading dot, no reserved characters. Where the entry *lands* is
+//   the caller's separate `parent` argument, always resolved through
+//   `paths::resolve_in_root`.
+// * **A collision never overwrites.** "Chapter One" becomes "Chapter One 2",
+//   then "Chapter One 3" — the Swift app's behaviour (SWIFT-AUDIT §1.4), and
+//   the only one that can't silently eat a file.
+// * **History follows the file.** A rename or move migrates the document's
+//   snapshot folder and its `comments.json` key (`aux_store::migrate_*`) in
+//   the same call, so version history is attached to the document rather than
+//   to the name it used to have.
+
+/// A file or folder after it was created, renamed or moved.
+///
+/// Enough for the renderer to patch its tree without a full reload: `kind`
+/// matches `NodeKind` in `src/types/vault.ts`, and `name` is what the sidebar
+/// paints — markdown drops its extension, everything else keeps it, the same
+/// rule `vault::tree` follows.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryReport {
+    /// Where it is now, vault-relative.
+    pub path: String,
+    /// Display name for the tree row.
+    pub name: String,
+    /// "folder" | "markdown" | "fountain" | "image" | "pdf" | "other".
+    pub kind: String,
+    /// Where it was before a rename or move. `None` for a fresh create.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// True when the requested name was taken and a " 2"/" 3" suffix was used.
+    pub renamed: bool,
+}
+
+/// The document kinds the add menu offers, and the extension each gets.
+pub const NEW_FILE_KINDS: &[(&str, &str)] = &[("markdown", "md"), ("fountain", "fountain")];
+
+fn extension_for(kind: &str) -> OpResult<&'static str> {
+    NEW_FILE_KINDS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, ext)| *ext)
+        .ok_or_else(|| {
+            format!(
+                "unknown file kind \"{kind}\" — expected one of {}",
+                NEW_FILE_KINDS.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(", ")
+            )
+        })
+}
+
+/// The display name `vault::tree` would give this file — markdown without its
+/// extension, everything else with.
+fn display_name(file_name: &str, kind: &str) -> String {
+    if kind == "markdown" {
+        Path::new(file_name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| file_name.to_string())
+    } else {
+        file_name.to_string()
+    }
+}
+
+/// `stem` (+ `.ext`), suffixed " 2", " 3", … until nothing is in the way.
+fn dedupe(dir: &Path, stem: &str, ext: Option<&str>) -> String {
+    let build = |s: &str| match ext {
+        Some(e) => format!("{s}.{e}"),
+        None => s.to_string(),
+    };
+    let mut candidate = build(stem);
+    let mut n = 2;
+    // The ceiling is a guard against a pathological folder, not a real limit:
+    // a thousand "Untitled" files in one place is already a different problem.
+    while dir.join(&candidate).exists() && n < 1000 {
+        candidate = build(&format!("{stem} {n}"));
+        n += 1;
+    }
+    candidate
+}
+
+fn join_rel(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parent}/{name}")
+    }
+}
+
+/// Split a file name the way a rename needs it: (stem, extension).
+fn split_name(file_name: &str) -> (String, Option<String>) {
+    let p = Path::new(file_name);
+    match (p.file_stem(), p.extension()) {
+        (Some(stem), Some(ext)) => (
+            stem.to_string_lossy().to_string(),
+            Some(ext.to_string_lossy().to_string()),
+        ),
+        _ => (file_name.to_string(), None),
+    }
+}
+
+/// Stamp every path in a subtree, so a folder move doesn't wake the watcher.
+///
+/// The ledger matches whole paths, and moving a folder emits an event for each
+/// file inside it. Recording only the folder would leave every child looking
+/// like an external edit — one spurious tree reload per move.
+fn record_tree(self_writes: &SelfWrites, path: &Path) {
+    self_writes.record(path);
+    let Ok(entries) = std::fs::read_dir(path) else { return };
+    for entry in entries.filter_map(Result::ok) {
+        let child = entry.path();
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            record_tree(self_writes, &child);
+        } else {
+            self_writes.record(&child);
+        }
+    }
+}
+
+/// Starting text for a new document.
+///
+/// Mirrors what `scaffold::lay_out` writes for a brand-new workflow, so a file
+/// made from the add menu opens looking like one the app made itself: markdown
+/// gets a title/status frontmatter block and an H1, Fountain gets a title page
+/// and a slug line.
+fn seed_for(kind: &str, title: &str) -> String {
+    match kind {
+        "fountain" => format!(
+            "Title: {title}\nCredit: Written by\nAuthor: \nDraft date: \n\nFADE IN:\n\nINT. SOMEWHERE — DAY\n\n"
+        ),
+        _ => format!("---\ntitle: {title}\nstatus: outline\n---\n\n# {title}\n\n"),
+    }
+}
+
+/// Create a document in `parent` (`""` for the vault root).
+///
+/// `kind` is "markdown" or "fountain" — the two the sidebar's segmented picker
+/// offers. The extension is ours to choose; a name that already carries the
+/// right one is not given it twice.
+pub fn create_file(
+    root: &Path,
+    parent: &str,
+    name: &str,
+    kind: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<EntryReport> {
+    let ext = extension_for(kind)?;
+    let requested = scaffold::validate_name(name)?;
+    // "Chapter One.md" and "Chapter One" both mean the same file.
+    let stem = match requested.strip_suffix(&format!(".{ext}")) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => requested,
+    };
+
+    let dir = resolve_dir(root, parent)?;
+    guard_not_metadata(root, &dir)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {parent}: {e}"))?;
+
+    let file_name = dedupe(&dir, &stem, Some(ext));
+    let target = dir.join(&file_name);
+    // The de-duplicated stem, so a second "Chapter One" is titled
+    // "Chapter One 2" inside the file as well as on disk.
+    let title = split_name(&file_name).0;
+
+    self_writes.record(&target);
+    write_atomic(&target, seed_for(kind, &title).as_bytes())
+        .map_err(|e| format!("could not create {file_name}: {e}"))?;
+
+    Ok(EntryReport {
+        path: join_rel(parent, &file_name),
+        name: display_name(&file_name, kind),
+        kind: kind.to_string(),
+        from: None,
+        renamed: file_name != format!("{stem}.{ext}"),
+    })
+}
+
+/// Create an empty folder in `parent` (`""` for the vault root).
+pub fn create_folder(
+    root: &Path,
+    parent: &str,
+    name: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<EntryReport> {
+    let requested = scaffold::validate_name(name)?;
+    let dir = resolve_dir(root, parent)?;
+    guard_not_metadata(root, &dir)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {parent}: {e}"))?;
+
+    let folder_name = dedupe(&dir, &requested, None);
+    let target = dir.join(&folder_name);
+    self_writes.record(&target);
+    std::fs::create_dir(&target).map_err(|e| format!("could not create {folder_name}: {e}"))?;
+
+    Ok(EntryReport {
+        path: join_rel(parent, &folder_name),
+        name: folder_name.clone(),
+        kind: "folder".into(),
+        from: None,
+        renamed: folder_name != requested,
+    })
+}
+
+/// Rename a file or folder in place.
+///
+/// A file keeps its extension unless the new name carries one: renaming
+/// "Ch_03.md" to "Helmreach in Rain" gives "Helmreach in Rain.md", which is
+/// what a writer typing over a tree row means.
+pub fn rename_entry(
+    root: &Path,
+    rel: &str,
+    new_name: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<EntryReport> {
+    let source = resolve(root, rel)?;
+    guard_movable(root, rel, &source)?;
+    let parent_rel = parent_of(rel);
+    let dir = source
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("{rel} has no parent folder"))?;
+
+    let is_dir = source.is_dir();
+    let requested = scaffold::validate_name(new_name)?;
+    let (mut stem, mut ext) = split_name(&requested);
+    if !is_dir && ext.is_none() {
+        // No extension typed: keep the one the file already has.
+        ext = split_name(&file_name_of(rel)).1;
+    }
+    if is_dir {
+        stem = requested.clone();
+        ext = None;
+    }
+
+    let target_name = match &ext {
+        Some(e) => format!("{stem}.{e}"),
+        None => stem.clone(),
+    };
+    if target_name == file_name_of(rel) {
+        // Nothing to do, and renaming a path onto itself would trip the
+        // de-duplicator into inventing a " 2".
+        return Ok(unchanged_report(root, rel, is_dir));
+    }
+
+    let final_name = dedupe(&dir, &stem, ext.as_deref());
+    let dest_rel = join_rel(&parent_rel, &final_name);
+    finish_move(root, rel, &dest_rel, &source, &dir.join(&final_name), is_dir, self_writes)?;
+    Ok(move_report(rel, &dest_rel, &final_name, is_dir, final_name != target_name))
+}
+
+/// Move a file or folder into `dest_folder` (`""` for the vault root), keeping
+/// its name.
+pub fn move_entry(
+    root: &Path,
+    rel: &str,
+    dest_folder: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<EntryReport> {
+    let source = resolve(root, rel)?;
+    guard_movable(root, rel, &source)?;
+    let dir = resolve_dir(root, dest_folder)?;
+    guard_not_metadata(root, &dir)?;
+    if !dir.is_dir() {
+        return Err(format!("no folder at {}", if dest_folder.is_empty() { "the vault root" } else { dest_folder }));
+    }
+
+    let is_dir = source.is_dir();
+    // Moving a folder into itself (or into one of its own children) would
+    // detach the whole subtree from the vault.
+    if is_dir && (dest_folder == rel || dest_folder.starts_with(&format!("{rel}/"))) {
+        return Err(format!("cannot move \"{rel}\" inside itself"));
+    }
+    if parent_of(rel) == dest_folder {
+        return Ok(unchanged_report(root, rel, is_dir));
+    }
+
+    let name = file_name_of(rel);
+    let (stem, ext) = if is_dir { (name.clone(), None) } else { split_name(&name) };
+    let final_name = dedupe(&dir, &stem, ext.as_deref());
+    let dest_rel = join_rel(dest_folder, &final_name);
+    finish_move(root, rel, &dest_rel, &source, &dir.join(&final_name), is_dir, self_writes)?;
+    Ok(move_report(rel, &dest_rel, &final_name, is_dir, final_name != name))
+}
+
+/// The shared tail of rename and move: stamp the ledger, move the bytes, carry
+/// the aux data across.
+fn finish_move(
+    root: &Path,
+    from_rel: &str,
+    to_rel: &str,
+    source: &Path,
+    target: &Path,
+    is_dir: bool,
+    self_writes: &SelfWrites,
+) -> OpResult<()> {
+    // Both ends, and the whole subtree, before the move — after it the source
+    // paths no longer exist to walk.
+    if is_dir {
+        record_tree(self_writes, source);
+    } else {
+        self_writes.record(source);
+    }
+    self_writes.record(target);
+
+    // `rename` keeps the bytes exactly as they are, which is what makes a move
+    // of a frontmatter-less file byte-identical: nothing reads or rewrites the
+    // content at any point in this path.
+    if std::fs::rename(source, target).is_err() {
+        // Different filesystem (a vault spanning a mount point). Copy, verify
+        // the copy landed, then drop the original.
+        if is_dir {
+            copy_dir(source, target).map_err(|e| format!("could not move {from_rel}: {e}"))?;
+            std::fs::remove_dir_all(source).map_err(|e| format!("could not remove {from_rel}: {e}"))?;
+        } else {
+            std::fs::copy(source, target).map_err(|e| format!("could not move {from_rel}: {e}"))?;
+            std::fs::remove_file(source).map_err(|e| format!("could not remove {from_rel}: {e}"))?;
+        }
+    }
+    if is_dir {
+        record_tree(self_writes, target);
+    }
+
+    // History follows the file. A failure here has not lost anything — the
+    // document is at its new path either way — so it is reported, not fatal.
+    let migrated = if is_dir {
+        aux_store::migrate_folder(root, from_rel, to_rel)
+    } else {
+        aux_store::migrate_document(root, from_rel, to_rel)
+    };
+    if let Err(e) = migrated {
+        eprintln!("[vault] {from_rel} → {to_rel}: version history did not follow it: {e}");
+    }
+    if let Err(e) = follow_in_workflow(root, from_rel, to_rel, self_writes) {
+        eprintln!("[vault] {from_rel} → {to_rel}: workflow.json not updated: {e}");
+    }
+    Ok(())
+}
+
+/// Point `workflow.json` at the new path.
+///
+/// Manuscripts address their chapters by path. Without this a renamed chapter
+/// would fall out of the manuscript order, and `reconcile_chapter_order` would
+/// re-append it at the *end* on the next open — a rename would silently
+/// reorder the book.
+fn follow_in_workflow(
+    root: &Path,
+    from_rel: &str,
+    to_rel: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<()> {
+    let (mut wf, _) = workflow::read_or_create(root).map_err(|e| e.to_string())?;
+    let prefix = format!("{from_rel}/");
+    let remap = |p: &str| -> Option<String> {
+        if p == from_rel {
+            Some(to_rel.to_string())
+        } else {
+            p.strip_prefix(&prefix).map(|rest| format!("{to_rel}/{rest}"))
+        }
+    };
+
+    let mut changed = false;
+    for manuscript in wf.manuscripts.iter_mut() {
+        if let Some(next) = remap(&manuscript.folder) {
+            manuscript.folder = next;
+            changed = true;
+        }
+        for chapter in manuscript.chapter_order.iter_mut() {
+            if let Some(next) = remap(chapter) {
+                *chapter = next;
+                changed = true;
+            }
+        }
+    }
+    for draft in wf.drafts.iter_mut() {
+        for chapter in draft.chapter_order.iter_mut() {
+            if let Some(next) = remap(chapter) {
+                *chapter = next;
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        save_workflow(root, &wf, self_writes)?;
+    }
+    Ok(())
+}
+
+fn move_report(from: &str, to: &str, name: &str, is_dir: bool, renamed: bool) -> EntryReport {
+    let kind = if is_dir { "folder".to_string() } else { crate::vault::tree::kind_for(name).to_string() };
+    EntryReport {
+        path: to.to_string(),
+        name: display_name(name, &kind),
+        kind,
+        from: Some(from.to_string()),
+        renamed,
+    }
+}
+
+fn unchanged_report(_root: &Path, rel: &str, is_dir: bool) -> EntryReport {
+    let name = file_name_of(rel);
+    let kind = if is_dir { "folder".to_string() } else { crate::vault::tree::kind_for(&name).to_string() };
+    EntryReport {
+        path: rel.to_string(),
+        name: display_name(&name, &kind),
+        kind,
+        from: Some(rel.to_string()),
+        renamed: false,
+    }
+}
+
+fn file_name_of(rel: &str) -> String {
+    rel.rsplit('/').next().unwrap_or(rel).to_string()
+}
+
+fn parent_of(rel: &str) -> String {
+    match rel.rfind('/') {
+        Some(i) => rel[..i].to_string(),
+        None => String::new(),
+    }
+}
+
+/// Refuse anything that would reach into `.aquarius/`. The metadata folder is
+/// never in the tree, so a path pointing at it came from a caller inventing
+/// one, and letting a move land there could scramble the trash index or a
+/// snapshot trail.
+fn guard_not_metadata(root: &Path, path: &Path) -> OpResult<()> {
+    if paths::is_metadata(root, path) {
+        return Err("that path is inside the app's .aquarius/ folder".into());
+    }
+    Ok(())
+}
+
+fn guard_movable(root: &Path, rel: &str, source: &Path) -> OpResult<()> {
+    if rel.is_empty() {
+        return Err("the vault root itself cannot be renamed or moved".into());
+    }
+    guard_not_metadata(root, source)?;
+    if paths::is_ignored_name(&file_name_of(rel)) {
+        return Err(format!("{rel}: that name is reserved for app temporaries"));
+    }
+    if !source.exists() {
+        return Err(format!("nothing at {rel}"));
+    }
+    Ok(())
+}
+
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)?.filter_map(Result::ok) {
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 /// Set (or add) one frontmatter key on a document.
@@ -375,6 +855,294 @@ mod tests {
     fn creating_a_fountain_file_is_allowed() {
         let t = TempDir::new("ops-create-fountain");
         assert!(create_document(t.path(), "Episodes/Pilot.fountain", "INT.", &sw()).is_ok());
+    }
+
+    // ── create / rename / move ───────────────────────────────────────────
+
+    #[test]
+    fn creates_a_markdown_file_with_seeded_frontmatter() {
+        let t = TempDir::new("ops-create-file");
+        let writes = sw();
+        let made = create_file(t.path(), "Drafts", "Chapter Five", "markdown", &writes).unwrap();
+
+        assert_eq!(made.path, "Drafts/Chapter Five.md");
+        assert_eq!(made.name, "Chapter Five", "markdown rows drop the extension");
+        assert_eq!(made.kind, "markdown");
+        assert!(!made.renamed);
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Drafts/Chapter Five.md")).unwrap(),
+            "---\ntitle: Chapter Five\nstatus: outline\n---\n\n# Chapter Five\n\n"
+        );
+        assert!(writes.is_own(&t.path().join("Drafts/Chapter Five.md")));
+    }
+
+    #[test]
+    fn creates_a_screenplay_with_a_title_page_and_keeps_its_extension() {
+        let t = TempDir::new("ops-create-fountain-file");
+        let writes = sw();
+        // The writer typed the extension themselves — it must not be doubled.
+        let made = create_file(t.path(), "", "Pilot.fountain", "fountain", &writes).unwrap();
+        assert_eq!(made.path, "Pilot.fountain");
+        assert_eq!(made.name, "Pilot.fountain", "non-markdown rows keep the extension");
+        let text = std::fs::read_to_string(t.path().join("Pilot.fountain")).unwrap();
+        assert!(text.starts_with("Title: Pilot\n"), "got {text:?}");
+        assert!(text.contains("INT. SOMEWHERE"));
+    }
+
+    #[test]
+    fn a_taken_name_gets_a_numbered_suffix_rather_than_overwriting() {
+        let t = TempDir::new("ops-dedupe");
+        let writes = sw();
+        t.write("Drafts/Chapter One.md", "the original");
+
+        let second = create_file(t.path(), "Drafts", "Chapter One", "markdown", &writes).unwrap();
+        assert_eq!(second.path, "Drafts/Chapter One 2.md");
+        assert!(second.renamed);
+        let third = create_file(t.path(), "Drafts", "Chapter One", "markdown", &writes).unwrap();
+        assert_eq!(third.path, "Drafts/Chapter One 3.md");
+
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Drafts/Chapter One.md")).unwrap(),
+            "the original",
+            "the file that was already there is untouched"
+        );
+    }
+
+    #[test]
+    fn creates_folders_and_de_duplicates_them_too() {
+        let t = TempDir::new("ops-create-folder");
+        let writes = sw();
+        let first = create_folder(t.path(), "", "Research", &writes).unwrap();
+        assert_eq!(first.path, "Research");
+        assert_eq!(first.kind, "folder");
+        assert!(t.path().join("Research").is_dir());
+
+        let second = create_folder(t.path(), "", "Research", &writes).unwrap();
+        assert_eq!(second.path, "Research 2");
+        assert!(second.renamed);
+
+        let nested = create_folder(t.path(), "Research", "Bells", &writes).unwrap();
+        assert_eq!(nested.path, "Research/Bells");
+    }
+
+    #[test]
+    fn create_refuses_names_that_are_really_paths_and_unknown_kinds() {
+        let t = TempDir::new("ops-create-guards");
+        let writes = sw();
+        assert!(create_file(t.path(), "", "Drafts/Sneaky", "markdown", &writes).is_err());
+        assert!(create_file(t.path(), "", "../Sneaky", "markdown", &writes).is_err());
+        assert!(create_file(t.path(), "", ".hidden", "markdown", &writes).is_err());
+        assert!(create_file(t.path(), "", "  ", "markdown", &writes).is_err());
+        assert!(create_file(t.path(), "", "Fine", "docx", &writes).is_err());
+        assert!(create_file(t.path(), "../elsewhere", "Fine", "markdown", &writes).is_err());
+        assert!(create_folder(t.path(), "", ".aquarius", &writes).is_err());
+        assert!(create_folder(t.path(), ".aquarius", "sneaky", &writes).is_err());
+    }
+
+    #[test]
+    fn renaming_a_document_keeps_its_extension_and_carries_its_history() {
+        let t = TempDir::new("ops-rename");
+        let writes = sw();
+        t.write("Drafts/Ch_03.md", "---\ntitle: Old\n---\n\nrain");
+        crate::aux_store::save_versions(
+            t.path(),
+            "Drafts/Ch_03.md",
+            &[crate::aux_store::VersionEntry {
+                id: "v1".into(), at: 1, label: "Auto".into(), named: false,
+                words: 1, body: "rain".into(),
+            }],
+        )
+        .unwrap();
+
+        let report = rename_entry(t.path(), "Drafts/Ch_03.md", "Helmreach in Rain", &writes).unwrap();
+        assert_eq!(report.path, "Drafts/Helmreach in Rain.md");
+        assert_eq!(report.from.as_deref(), Some("Drafts/Ch_03.md"));
+        assert_eq!(report.name, "Helmreach in Rain");
+        assert!(!t.path().join("Drafts/Ch_03.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Drafts/Helmreach in Rain.md")).unwrap(),
+            "---\ntitle: Old\n---\n\nrain",
+            "a rename never rewrites the file"
+        );
+
+        let mut budget = usize::MAX;
+        let versions =
+            crate::aux_store::list_versions(t.path(), "Drafts/Helmreach in Rain.md", &mut budget);
+        assert_eq!(versions.len(), 1, "version history followed the rename");
+        assert!(writes.is_own(&t.path().join("Drafts/Helmreach in Rain.md")));
+    }
+
+    #[test]
+    fn renaming_onto_a_taken_name_suffixes_instead_of_clobbering() {
+        let t = TempDir::new("ops-rename-collide");
+        let writes = sw();
+        t.write("Drafts/One.md", "one");
+        t.write("Drafts/Two.md", "two");
+        let report = rename_entry(t.path(), "Drafts/Two.md", "One", &writes).unwrap();
+        assert_eq!(report.path, "Drafts/One 2.md");
+        assert!(report.renamed);
+        assert_eq!(std::fs::read_to_string(t.path().join("Drafts/One.md")).unwrap(), "one");
+    }
+
+    #[test]
+    fn renaming_to_the_same_name_is_a_no_op_not_a_numbered_copy() {
+        let t = TempDir::new("ops-rename-same");
+        let writes = sw();
+        t.write("Notes.md", "x");
+        let report = rename_entry(t.path(), "Notes.md", "Notes", &writes).unwrap();
+        assert_eq!(report.path, "Notes.md");
+        assert!(!t.path().join("Notes 2.md").exists());
+    }
+
+    #[test]
+    fn moving_a_document_leaves_its_bytes_alone() {
+        let t = TempDir::new("ops-move");
+        let writes = sw();
+        // No frontmatter at all — the case the byte-for-byte rule is about.
+        let plain = "Just prose. No fences, no keys.\n";
+        t.write("Inbox/note.md", plain);
+        t.write("Characters/Imogen.md", "niece");
+
+        let report = move_entry(t.path(), "Inbox/note.md", "Characters", &writes).unwrap();
+        assert_eq!(report.path, "Characters/note.md");
+        assert_eq!(report.from.as_deref(), Some("Inbox/note.md"));
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Characters/note.md")).unwrap(),
+            plain,
+            "a move must not add a frontmatter block or touch a byte"
+        );
+        assert!(!t.path().join("Inbox/note.md").exists());
+    }
+
+    #[test]
+    fn moving_to_the_vault_root_and_back_works() {
+        let t = TempDir::new("ops-move-root");
+        let writes = sw();
+        t.write("Drafts/loose.md", "x");
+        assert_eq!(move_entry(t.path(), "Drafts/loose.md", "", &writes).unwrap().path, "loose.md");
+        assert_eq!(
+            move_entry(t.path(), "loose.md", "Drafts", &writes).unwrap().path,
+            "Drafts/loose.md"
+        );
+    }
+
+    #[test]
+    fn moving_a_folder_takes_its_contents_and_its_history() {
+        let t = TempDir::new("ops-move-folder");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "one");
+        t.write("Drafts/Notes/aside.md", "aside");
+        std::fs::create_dir_all(t.path().join("Archive")).unwrap();
+        crate::aux_store::save_comments(
+            t.path(),
+            "Drafts/Ch_01.md",
+            vec![crate::aux_store::CommentEntry {
+                id: "c1".into(), at: 1, anchor: "one".into(),
+                text: "keep".into(), resolved: false,
+            }],
+        )
+        .unwrap();
+
+        let report = move_entry(t.path(), "Drafts", "Archive", &writes).unwrap();
+        assert_eq!(report.path, "Archive/Drafts");
+        assert_eq!(report.kind, "folder");
+        assert_eq!(std::fs::read_to_string(t.path().join("Archive/Drafts/Ch_01.md")).unwrap(), "one");
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Archive/Drafts/Notes/aside.md")).unwrap(),
+            "aside"
+        );
+        assert!(!t.path().join("Drafts").exists());
+        assert_eq!(
+            crate::aux_store::read_comments(t.path())
+                .get("Archive/Drafts/Ch_01.md")
+                .unwrap()[0]
+                .text,
+            "keep"
+        );
+        assert!(
+            writes.is_own(&t.path().join("Archive/Drafts/Ch_01.md")),
+            "every moved child is stamped, or the watcher reloads the tree for our own move"
+        );
+    }
+
+    #[test]
+    fn move_and_rename_refuse_the_ways_they_could_lose_a_file() {
+        let t = TempDir::new("ops-move-guards");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "one");
+        t.write("Drafts/Inner/deep.md", "deep");
+
+        // A folder inside itself would detach the whole subtree.
+        assert!(move_entry(t.path(), "Drafts", "Drafts", &writes).is_err());
+        assert!(move_entry(t.path(), "Drafts", "Drafts/Inner", &writes).is_err());
+        // Out of the vault, into the metadata folder, or onto nothing.
+        assert!(move_entry(t.path(), "Drafts/Ch_01.md", "../elsewhere", &writes).is_err());
+        assert!(move_entry(t.path(), "Drafts/Ch_01.md", ".aquarius", &writes).is_err());
+        assert!(move_entry(t.path(), "Drafts/Ch_01.md", "Nowhere", &writes).is_err());
+        assert!(move_entry(t.path(), "missing.md", "Drafts", &writes).is_err());
+        assert!(rename_entry(t.path(), "", "anything", &writes).is_err());
+        assert!(rename_entry(t.path(), "Drafts/Ch_01.md", "Sub/dir", &writes).is_err());
+        assert!(rename_entry(t.path(), "../outside.md", "x", &writes).is_err());
+
+        // Nothing above moved anything.
+        assert!(t.path().join("Drafts/Ch_01.md").exists());
+        assert!(t.path().join("Drafts/Inner/deep.md").exists());
+    }
+
+    #[test]
+    fn a_renamed_chapter_keeps_its_place_in_the_manuscript() {
+        let t = TempDir::new("ops-rename-chapter");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "a");
+        t.write("Drafts/Ch_02.md", "b");
+        t.write("Drafts/Ch_03.md", "c");
+        let (wf, _) = workflow::read_or_create(t.path()).unwrap();
+        assert_eq!(wf.manuscripts[0].chapter_order.len(), 3);
+
+        rename_entry(t.path(), "Drafts/Ch_02.md", "The Bell Ringer's Vow", &writes).unwrap();
+
+        let (after, _) = workflow::read_or_create(t.path()).unwrap();
+        assert_eq!(
+            after.manuscripts[0].chapter_order,
+            vec!["Drafts/Ch_01.md", "Drafts/The Bell Ringer's Vow.md", "Drafts/Ch_03.md"],
+            "the chapter stays second instead of being re-appended at the end"
+        );
+        assert_eq!(after.drafts[0].chapter_order, after.manuscripts[0].chapter_order);
+    }
+
+    #[test]
+    fn renaming_the_manuscript_folder_moves_the_manuscript_with_it() {
+        let t = TempDir::new("ops-rename-ms-folder");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "a");
+        workflow::read_or_create(t.path()).unwrap();
+
+        rename_entry(t.path(), "Drafts", "Manuscript", &writes).unwrap();
+
+        let (after, _) = workflow::read_or_create(t.path()).unwrap();
+        assert_eq!(after.manuscripts[0].folder, "Manuscript");
+        assert_eq!(after.manuscripts[0].chapter_order, vec!["Manuscript/Ch_01.md"]);
+    }
+
+    #[test]
+    fn moving_a_document_does_not_disturb_the_trash() {
+        let t = TempDir::new("ops-move-trash");
+        let writes = sw();
+        t.write("Drafts/gone.md", "gone");
+        t.write("Drafts/here.md", "here");
+        let rec = crate::fs_ops::trash::soft_delete(
+            t.path(), "Drafts/gone.md", crate::vault::registry::now_ms(),
+        )
+        .unwrap();
+
+        move_entry(t.path(), "Drafts/here.md", "", &writes).unwrap();
+
+        let index = crate::fs_ops::trash::read_index(t.path());
+        assert_eq!(index.entries.len(), 1);
+        assert_eq!(index.entries[0].path, "Drafts/gone.md");
+        let restored = crate::fs_ops::trash::restore(t.path(), &rec.id).unwrap();
+        assert_eq!(restored.as_deref(), Some("Drafts/gone.md"));
+        assert_eq!(std::fs::read_to_string(t.path().join("Drafts/gone.md")).unwrap(), "gone");
     }
 
     #[test]

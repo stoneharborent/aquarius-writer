@@ -142,6 +142,42 @@ pub struct CreateParam {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct CreateFolderParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// The folder to create it inside, relative to the vault root — e.g.
+    /// "Drafts". Omit or pass "" for the vault root itself.
+    #[serde(default)]
+    pub parent: Option<String>,
+    /// Name for the new folder. One name, not a path: no "/" and no "..".
+    pub name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct RenameParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// The file or folder to rename, relative to the vault root.
+    pub path: String,
+    /// The new name. One name, not a path — to put the file somewhere else,
+    /// use move_document. A document keeps its extension unless you give it a
+    /// new one, so "Helmreach in Rain" renames "Ch_03.md" to
+    /// "Helmreach in Rain.md".
+    pub new_name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct MoveParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// The file or folder to move, relative to the vault root.
+    pub path: String,
+    /// The folder to move it into, relative to the vault root. Pass "" for the
+    /// vault root. The folder must already exist — use create_folder first.
+    pub destination_folder: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct SearchParam {
     /// Workflow id, from `list_workflows`.
     pub workflow_id: String,
@@ -302,6 +338,66 @@ than overwriting if something is already there — use write_document for that."
         let report =
             ops::create_document(&root, &path, content.as_deref().unwrap_or(""), &state.self_writes)
                 .map_err(invalid)?;
+        self.notify(&workflow_id);
+        json(report)
+    }
+
+    #[tool(
+        name = "create_folder",
+        description = "Create a new folder in a vault. `name` is one folder name, not a path — \
+say where it goes with `parent`. If a folder of that name is already there the new one is \
+given a numbered name (\"Research 2\") rather than merging into it, which is what the app's \
+own add menu does."
+    )]
+    fn create_folder(
+        &self,
+        Parameters(CreateFolderParam { workflow_id, parent, name }): Parameters<CreateFolderParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let report =
+            ops::create_folder(&root, parent.as_deref().unwrap_or(""), &name, &state.self_writes)
+                .map_err(invalid)?;
+        self.notify(&workflow_id);
+        json(report)
+    }
+
+    #[tool(
+        name = "rename_document",
+        description = "Rename a document or folder in place, keeping it where it is. Pass one \
+new name, not a path — move_document is how you relocate something. A document keeps its \
+extension unless the new name carries one. If the name is already taken the rename lands on a \
+numbered variant (\"Chapter One 2\") instead of overwriting anything. The file's bytes are not \
+touched, and its version history and margin comments follow it to the new name."
+    )]
+    fn rename_document(
+        &self,
+        Parameters(RenameParam { workflow_id, path, new_name }): Parameters<RenameParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let report =
+            ops::rename_entry(&root, &path, &new_name, &state.self_writes).map_err(invalid)?;
+        self.notify(&workflow_id);
+        json(report)
+    }
+
+    #[tool(
+        name = "move_document",
+        description = "Move a document or folder into another folder in the same vault, keeping \
+its name. The destination folder must already exist (create_folder makes one); pass \"\" to move \
+something to the vault root. Moving a folder takes everything inside it. A name collision at the \
+destination is resolved with a numbered variant rather than an overwrite. The bytes are not \
+rewritten, and version history and comments follow the file."
+    )]
+    fn move_document(
+        &self,
+        Parameters(MoveParam { workflow_id, path, destination_folder }): Parameters<MoveParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let report = ops::move_entry(&root, &path, &destination_folder, &state.self_writes)
+            .map_err(invalid)?;
         self.notify(&workflow_id);
         json(report)
     }
@@ -509,6 +605,12 @@ whole text with your change applied. Deleting is soft — trash_document moves t
 the vault's Recently Deleted, where restore_document brings it back for 30 days. There is no \
 permanent delete.
 
+Reorganising a vault is create_document / create_folder to add, rename_document to change a \
+name in place, and move_document to put something in a different folder. Renames and moves \
+never rewrite a file's bytes, and they carry its version history and margin comments with it. \
+A name that is already taken produces a numbered variant (\"Chapter One 2\") — nothing here \
+overwrites an existing file.
+
 The writer may have this same vault open in the app while you work. Your writes reach the UI \
 immediately, but a document they are actively editing holds unsaved text that will win the \
 next time they save — so tell them what you changed rather than assuming they watched it \
@@ -537,13 +639,16 @@ mod tests {
     /// should be a deliberate edit here rather than a silent regression.
     const EXPECTED: &[&str] = &[
         "create_document",
+        "create_folder",
         "get_workflow",
         "list_folder",
         "list_snapshots",
         "list_trash",
         "list_workflows",
+        "move_document",
         "read_document",
         "read_snapshot",
+        "rename_document",
         "reorder_chapters",
         "restore_document",
         "search",
@@ -616,7 +721,10 @@ mod tests {
     #[test]
     fn path_parameters_tell_the_client_they_are_vault_relative() {
         let router = AquariusMcp::tool_router();
-        for name in ["read_document", "write_document", "create_document", "list_folder"] {
+        for name in [
+            "read_document", "write_document", "create_document", "list_folder",
+            "create_folder", "rename_document", "move_document",
+        ] {
             let schema = serde_json::to_string(&router.get(name).unwrap().input_schema).unwrap();
             assert!(
                 schema.contains("relative to the vault root"),

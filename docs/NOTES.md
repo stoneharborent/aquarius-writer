@@ -380,11 +380,15 @@ Two consequences for later stages:
   document was open (the editor's copy is written; the version trail holds the
   previous text). Doing this properly means carrying the mtime read at open time
   into `vault_write_file` and refusing the write when it moved.
-- **Renaming and creating *files*** are not in the `VaultService` interface at
-  all — nine methods, none of them create or rename. The UI has no affordance for
-  it either, so this is a product gap rather than a backend one. Still true after
-  v0.1.1: that release added creating a **workflow**, which is a different thing
-  (§14b), and left creating a file inside one exactly where it was.
+- ~~**Renaming and creating *files*** are not in the `VaultService` interface at
+  all — nine methods, none of them create or rename.~~ **Closed** (Wave 1, rows
+  5–6 of PARITY.md). `createFile` / `createFolder` / `rename` / `move` are on
+  the seam, in `vault::ops`, on four Tauri commands, and on the MCP surface as
+  `create_folder` / `rename_document` / `move_document`. The sidebar has a
+  WORKFLOW eyebrow with a "+" add menu (Markdown/Screenplay segmented picker)
+  and a per-row menu with Rename and Move to…. A rename or move carries the
+  document's snapshot folder and `comments.json` key with it, repoints
+  `workflow.json`'s chapter order, and never rewrites the file's bytes.
 - **`macOSPrivateApi`** (§6) is still unset and transparency still inactive. It
   now matters to Stage 3/4, which own the window chrome.
 

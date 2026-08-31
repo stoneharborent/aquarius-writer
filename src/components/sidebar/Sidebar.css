@@ -14,7 +14,7 @@
  */
 .sidebar {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
   background: var(--sidebar-solid);
   border-right: 1px solid var(--line);
   min-width: 0;
@@ -144,6 +144,171 @@
   color: var(--accent);
   border-color: transparent;
 }
+
+/* ── the WORKFLOW eyebrow and its add menu ─────────────────────────────── */
+
+.sb-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 4px 14px;
+}
+
+.sb-eyebrow-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.sb-add { position: relative; display: flex; }
+
+.sb-add-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sb-add-btn:hover { background: var(--surface); border-color: var(--line); }
+
+/* ── the one menu shape: add menu and tree-row menu ─────────────────────── */
+
+.sb-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 12px;
+  z-index: 30;
+  min-width: 150px;
+  max-width: 240px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sb-menu-right { left: auto; right: 0; }
+
+.sb-menu-scroll {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.sb-menu-item {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--ink);
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-menu-item:hover { background: var(--bg-soft); }
+.sb-menu-item:disabled { color: var(--ink-mute); cursor: default; background: none; }
+
+/* ── naming a new file or folder, inline ────────────────────────────────── */
+
+.sb-rowwrap { position: relative; }
+
+.sb-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 2px 10px 6px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.sb-composer-where {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-soft);
+  border-radius: 6px;
+}
+
+.sb-seg {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.sb-seg.on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.sb-name-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.sb-name-input:focus { outline: none; border-color: var(--accent); }
+.sb-name-input:disabled { color: var(--ink-mute); }
+
+.sb-renaming { cursor: default; }
+.sb-name-inline {
+  flex: 1;
+  padding: 1px 4px;
+  background: var(--surface);
+}
+
+/* hover-revealed row actions */
+.sb-more {
+  display: none;
+  margin-left: auto;
+  color: var(--ink-mute);
+  font-size: 12px;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 4px;
+  flex: none;
+}
+.sb-row:hover .sb-more { display: inline-block; }
+.sb-more:hover { color: var(--ink); background: var(--bg-soft); }
 
 /* hover-revealed soft-delete */
 .sb-del {

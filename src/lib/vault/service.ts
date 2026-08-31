@@ -1,4 +1,11 @@
-import type { VaultNode, Workflow, WorkflowKind, WorkflowSummary } from "@/types/vault";
+import type {
+  EntryReport,
+  NewFileKind,
+  VaultNode,
+  Workflow,
+  WorkflowKind,
+  WorkflowSummary,
+} from "@/types/vault";
 
 /** Vault service contract — implemented twice: browser-mock and tauri-fs. */
 export interface VaultService {
@@ -30,6 +37,30 @@ export interface VaultService {
   readBinary(workflowId: string, relPath: string): Promise<Uint8Array>;
   /** Write a file. */
   writeFile(workflowId: string, relPath: string, content: string): Promise<void>;
+  /**
+   * Create a document inside `parent` (`""` for the vault root), seeded with
+   * the frontmatter or title page its kind expects. A name that is already
+   * taken gets a " 2" / " 3" suffix — this never overwrites.
+   */
+  createFile(
+    workflowId: string,
+    parent: string,
+    name: string,
+    kind: NewFileKind,
+  ): Promise<EntryReport>;
+  /** Create an empty folder inside `parent` (`""` for the vault root). */
+  createFolder(workflowId: string, parent: string, name: string): Promise<EntryReport>;
+  /**
+   * Rename a file or folder in place. `newName` is one path segment; a
+   * document keeps its extension unless the new name carries one.
+   */
+  rename(workflowId: string, relPath: string, newName: string): Promise<EntryReport>;
+  /**
+   * Move a file or folder into `destFolder` (`""` for the vault root), keeping
+   * its name. The bytes are not rewritten, and the document's version history
+   * and comments follow it.
+   */
+  move(workflowId: string, relPath: string, destFolder: string): Promise<EntryReport>;
   /** Move a file into .aquarius/trash/ (30d retention metadata). */
   softDelete(workflowId: string, relPath: string): Promise<void>;
   /** Subscribe to FS changes within a workflow. Returns an unsubscribe fn. */

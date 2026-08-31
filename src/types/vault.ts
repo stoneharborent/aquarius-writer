@@ -1,7 +1,5 @@
 // Vault data shapes. The on-disk contract from HANDOFF.md §3 + §4.
 
-import type { AccentName, ThemeName } from "@/theme/theme";
-
 export type WorkflowKind = "novel" | "screenplay" | "worldbuilding" | "notes";
 
 export type ChapterStatus = "final" | "drafting" | "rev" | "outline";
@@ -35,8 +33,14 @@ export interface Manuscript {
 }
 
 export interface WorkflowSettings {
-  theme: ThemeName;
-  accent: AccentName;
+  /**
+   * Raw off disk, so it is a `string` and not a `ThemeName`: a `workflow.json`
+   * written before the Ice palette landed says `"parchment"`, and the Rust
+   * struct's default still does. Run it through `normalizeTheme` before use.
+   */
+  theme: string;
+  /** Raw off disk — may still be `purple` / `sepia` / `sage`. See above. */
+  accent: string;
   fontSize: number;
 }
 
@@ -62,7 +66,8 @@ export interface WorkflowSummary {
   kind: WorkflowKind;
   items: number;
   active?: boolean;
-  color: AccentName;
+  /** The workflow's saved accent, raw off disk — normalize before rendering. */
+  color: string;
   updated: string; // "now" | "yesterday" | ISO etc
 }
 
@@ -75,4 +80,26 @@ export interface VaultNode {
   children?: VaultNode[];
   frontmatter?: DocFrontMatter;
   words?: number;
+}
+
+/** The two document kinds the sidebar's add menu offers. */
+export type NewFileKind = "markdown" | "fountain";
+
+/**
+ * A file or folder after it was created, renamed or moved — the answer from
+ * `vault_create_file` / `vault_create_folder` / `vault_rename` / `vault_move`
+ * (`EntryReport` in `src-tauri/src/vault/ops.rs`).
+ *
+ * Enough to patch the tree without reloading the whole vault.
+ */
+export interface EntryReport {
+  /** Where it is now, vault-relative. */
+  path: string;
+  /** Display name for the tree row — markdown drops its extension. */
+  name: string;
+  kind: NodeKind;
+  /** Where it was before a rename or move; absent for a fresh create. */
+  from?: string;
+  /** True when the name was taken and a " 2" / " 3" suffix was used. */
+  renamed: boolean;
 }

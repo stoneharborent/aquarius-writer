@@ -106,6 +106,18 @@ fn doc_dir(root: &Path, rel: &str) -> PathBuf {
     dir
 }
 
+/// `Drafts` → `.aquarius/snapshots/Drafts/` — the subtree holding every
+/// snapshot for documents inside that folder.
+fn folder_dir(root: &Path, rel: &str) -> PathBuf {
+    let mut dir = snapshots_dir(root);
+    for comp in Path::new(rel).components() {
+        if let std::path::Component::Normal(c) = comp {
+            dir.push(c);
+        }
+    }
+    dir
+}
+
 fn comments_path(root: &Path) -> PathBuf {
     aq_dir(root).join("comments.json")
 }
@@ -239,9 +251,100 @@ pub fn save_comments(root: &Path, rel: &str, entries: Vec<CommentEntry>) -> std:
     } else {
         all.insert(rel.to_string(), entries);
     }
+    write_comments(root, &all)
+}
+
+fn write_comments(root: &Path, all: &BTreeMap<String, Vec<CommentEntry>>) -> std::io::Result<()> {
     fs::create_dir_all(aq_dir(root))?;
-    let json = serde_json::to_string_pretty(&all).map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(all).map_err(std::io::Error::other)?;
     write_atomic(&comments_path(root), format!("{json}\n").as_bytes())?;
+    Ok(())
+}
+
+// ── following a file when it is renamed or moved ─────────────────────────
+//
+// Both stores are keyed by the document's *relative path*, so a rename that
+// only touched the file would strand its whole history: the snapshot folder
+// would sit under the old name forever and `comments.json` would keep pointing
+// at a path that no longer exists. History belongs to the document, not to the
+// name it happened to have, so `vault::ops` calls these in the same operation
+// as the rename — see the aux-migration note there.
+
+/// Move one document's snapshot folder and comment key to a new path.
+pub fn migrate_document(root: &Path, from_rel: &str, to_rel: &str) -> std::io::Result<()> {
+    if from_rel == to_rel {
+        return Ok(());
+    }
+    move_tree(&doc_dir(root, from_rel), &doc_dir(root, to_rel))?;
+    let mut all = read_comments(root);
+    if let Some(entries) = all.remove(from_rel) {
+        all.insert(to_rel.to_string(), entries);
+        write_comments(root, &all)?;
+    }
+    Ok(())
+}
+
+/// The same, for a folder: its whole snapshot subtree and every comment key
+/// underneath it.
+pub fn migrate_folder(root: &Path, from_rel: &str, to_rel: &str) -> std::io::Result<()> {
+    if from_rel == to_rel || from_rel.is_empty() || to_rel.is_empty() {
+        return Ok(());
+    }
+    move_tree(&folder_dir(root, from_rel), &folder_dir(root, to_rel))?;
+
+    let prefix = format!("{from_rel}/");
+    let mut next: BTreeMap<String, Vec<CommentEntry>> = BTreeMap::new();
+    let mut changed = false;
+    for (key, entries) in read_comments(root) {
+        match key.strip_prefix(&prefix) {
+            Some(rest) => {
+                next.insert(format!("{to_rel}/{rest}"), entries);
+                changed = true;
+            }
+            None => {
+                next.insert(key, entries);
+            }
+        }
+    }
+    if changed {
+        write_comments(root, &next)?;
+    }
+    Ok(())
+}
+
+/// Move a metadata folder, creating the destination's parents.
+///
+/// A folder already sitting at the destination is history for a document that
+/// no longer exists there (the vault side de-duplicates names, so the new path
+/// was free on disk). It is replaced rather than merged: two documents' trails
+/// interleaved in one index would be worse than losing an orphan.
+fn move_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    if !from.exists() || from == to {
+        return Ok(());
+    }
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if to.exists() {
+        fs::remove_dir_all(to)?;
+    }
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    copy_tree(from, to)?;
+    fs::remove_dir_all(from)
+}
+
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)?.filter_map(Result::ok) {
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
     Ok(())
 }
 
@@ -394,6 +497,64 @@ mod tests {
 
         save_comments(t.path(), "Drafts/Ch_01.md", vec![]).unwrap();
         assert!(read_comments(t.path()).is_empty(), "clearing a doc's comments removes the key");
+    }
+
+    fn comment(text: &str) -> CommentEntry {
+        CommentEntry {
+            id: format!("c-{text}"),
+            at: 1,
+            anchor: "somewhere".into(),
+            text: text.into(),
+            resolved: false,
+        }
+    }
+
+    #[test]
+    fn a_renamed_document_keeps_its_versions_and_comments() {
+        let t = TempDir::new("aux-migrate-doc");
+        save_versions(t.path(), "Drafts/Ch_03.md", &[entry("v1", "Auto", false, "third pass")]).unwrap();
+        save_comments(t.path(), "Drafts/Ch_03.md", vec![comment("tighten this")]).unwrap();
+
+        migrate_document(t.path(), "Drafts/Ch_03.md", "Drafts/Helmreach in Rain.md").unwrap();
+
+        let mut budget = usize::MAX;
+        assert!(
+            list_versions(t.path(), "Drafts/Ch_03.md", &mut budget).is_empty(),
+            "the old path must not still own the trail"
+        );
+        let moved = list_versions(t.path(), "Drafts/Helmreach in Rain.md", &mut budget);
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].body, "third pass");
+
+        let all = read_comments(t.path());
+        assert!(all.get("Drafts/Ch_03.md").is_none());
+        assert_eq!(all.get("Drafts/Helmreach in Rain.md").unwrap()[0].text, "tighten this");
+    }
+
+    #[test]
+    fn a_moved_folder_takes_every_documents_history_with_it() {
+        let t = TempDir::new("aux-migrate-folder");
+        save_versions(t.path(), "Drafts/Ch_01.md", &[entry("v1", "Auto", false, "one")]).unwrap();
+        save_versions(t.path(), "Drafts/Deep/Ch_02.md", &[entry("v2", "Auto", false, "two")]).unwrap();
+        save_comments(t.path(), "Drafts/Ch_01.md", vec![comment("a")]).unwrap();
+        save_comments(t.path(), "Drafts/Deep/Ch_02.md", vec![comment("b")]).unwrap();
+        save_comments(t.path(), "Characters/Imogen.md", vec![comment("untouched")]).unwrap();
+
+        migrate_folder(t.path(), "Drafts", "Archive/Drafts").unwrap();
+
+        let mut budget = usize::MAX;
+        assert_eq!(list_versions(t.path(), "Archive/Drafts/Ch_01.md", &mut budget)[0].body, "one");
+        assert_eq!(list_versions(t.path(), "Archive/Drafts/Deep/Ch_02.md", &mut budget)[0].body, "two");
+        assert!(list_versions(t.path(), "Drafts/Ch_01.md", &mut budget).is_empty());
+
+        let all = read_comments(t.path());
+        assert_eq!(all.get("Archive/Drafts/Ch_01.md").unwrap()[0].text, "a");
+        assert_eq!(all.get("Archive/Drafts/Deep/Ch_02.md").unwrap()[0].text, "b");
+        assert_eq!(
+            all.get("Characters/Imogen.md").unwrap()[0].text,
+            "untouched",
+            "a key outside the moved folder is left alone"
+        );
     }
 
     #[test]

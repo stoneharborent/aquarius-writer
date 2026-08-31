@@ -1,7 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { VaultService } from "./service";
-import type { VaultNode, Workflow, WorkflowSummary } from "@/types/vault";
+import type { EntryReport, VaultNode, Workflow, WorkflowSummary } from "@/types/vault";
 
 // The real backend: every call lands in a Rust command in `src-tauri/src/`.
 // Nothing here does filesystem work itself — path safety, atomic writes and
@@ -72,6 +72,22 @@ export function createTauriVaultService(): VaultService {
 
     async writeFile(workflowId, relPath, content) {
       await invoke("vault_write_file", { workflowId, relPath, content });
+    },
+
+    async createFile(workflowId, parent, name, kind) {
+      return invoke<EntryReport>("vault_create_file", { workflowId, parent, name, kind });
+    },
+
+    async createFolder(workflowId, parent, name) {
+      return invoke<EntryReport>("vault_create_folder", { workflowId, parent, name });
+    },
+
+    async rename(workflowId, relPath, newName) {
+      return invoke<EntryReport>("vault_rename", { workflowId, relPath, newName });
+    },
+
+    async move(workflowId, relPath, destFolder) {
+      return invoke<EntryReport>("vault_move", { workflowId, relPath, destFolder });
     },
 
     async softDelete(workflowId, relPath) {

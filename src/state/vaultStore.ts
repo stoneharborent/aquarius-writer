@@ -1,5 +1,8 @@
 import { create } from "zustand";
+import type { StoreApi } from "zustand";
 import type {
+  EntryReport,
+  NewFileKind,
   VaultNode,
   Workflow,
   WorkflowKind,
@@ -9,6 +12,8 @@ import { vault } from "@/lib/vault";
 import { hydrateAux } from "@/lib/vault/aux";
 import { notices } from "@/state/noticeStore";
 import { logToShell } from "@/lib/logging";
+import { useEditor } from "@/state/editorStore";
+import { useSplit } from "@/state/splitStore";
 
 export type EditorView = "editor" | "outline" | "corkboard";
 
@@ -68,6 +73,18 @@ interface VaultState {
   removeFromTree: (path: string) => void;
   /** Re-insert a restored file into the tree, creating parent folders. */
   addToTree: (path: string) => void;
+  /**
+   * Make a document inside `parent` ("" for the vault root) and open it.
+   * Resolves to its path, or null when it could not be made (the reason is
+   * already on screen as a notice).
+   */
+  createFile: (parent: string, name: string, kind: NewFileKind) => Promise<string | null>;
+  /** Make an empty folder inside `parent` ("" for the vault root). */
+  createFolder: (parent: string, name: string) => Promise<string | null>;
+  /** Rename a tree row in place. `newName` is one name, never a path. */
+  renameEntry: (path: string, newName: string) => Promise<string | null>;
+  /** Move a tree row into another folder ("" for the vault root). */
+  moveEntry: (path: string, destFolder: string) => Promise<string | null>;
   toggleExpanded: (path: string) => void;
   expandAll: (paths: string[]) => void;
   setView: (view: EditorView) => void;
@@ -110,6 +127,160 @@ function startWatching(id: string) {
   unwatch = vault().watch(id, () => {
     void useVault.getState().refreshTree();
   });
+}
+
+// ── patching the tree after a create / rename / move ─────────────────────
+//
+// The backend answers each of those with an `EntryReport` — where the entry is
+// now, what to call it, what kind it is, and where it came from. That is
+// deliberately enough to edit the tree in place: a full `loadWorkflow` would
+// re-read every file in the vault to redraw one row, and would throw away the
+// writer's expanded folders on the way past.
+
+const cloneTree = (n: VaultNode): VaultNode => ({ ...n, children: n.children?.map(cloneTree) });
+
+/** Folders first, then files, each case-insensitive — the backend's order. */
+function sortChildren(node: VaultNode) {
+  node.children?.sort((a, b) => {
+    const ad = a.kind === "folder" ? 0 : 1;
+    const bd = b.kind === "folder" ? 0 : 1;
+    return ad - bd || a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  });
+}
+
+function findFolder(node: VaultNode, path: string): VaultNode | null {
+  if (node.kind === "folder" && node.path === path) return node;
+  for (const child of node.children ?? []) {
+    const hit = findFolder(child, path);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Remove the node at `path` from the tree and hand it back, subtree intact. */
+function detachNode(node: VaultNode, path: string): VaultNode | null {
+  if (!node.children) return null;
+  const i = node.children.findIndex((c) => c.path === path);
+  if (i >= 0) return node.children.splice(i, 1)[0];
+  for (const child of node.children) {
+    const hit = detachNode(child, path);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Rewrite a moved subtree's paths: everything under `from` now lives at `to`. */
+function repath(node: VaultNode, from: string, to: string) {
+  if (node.path === from || node.path.startsWith(`${from}/`)) {
+    node.path = to + node.path.slice(from.length);
+  }
+  for (const child of node.children ?? []) repath(child, from, to);
+}
+
+const parentPathOf = (path: string) =>
+  path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+
+/** Every ancestor folder path of `path`, so the tree can be opened to it. */
+function ancestorsOf(path: string): string[] {
+  const segments = path.split("/").slice(0, -1);
+  return segments.map((_, i) => segments.slice(0, i + 1).join("/"));
+}
+
+/** Apply one `EntryReport` to a tree, returning a new one. */
+function applyEntry(tree: VaultNode, report: EntryReport): VaultNode {
+  const root = cloneTree(tree);
+  let node = report.from ? detachNode(root, report.from) : null;
+  if (node && report.from) repath(node, report.from, report.path);
+  if (!node) {
+    node = { name: report.name, path: report.path, kind: report.kind };
+    if (report.kind === "folder") node.children = [];
+  }
+  node.name = report.name;
+  node.kind = report.kind;
+  node.path = report.path;
+
+  const parent = findFolder(root, parentPathOf(report.path)) ?? root;
+  parent.children = parent.children ?? [];
+  if (!parent.children.some((c) => c.path === node.path)) parent.children.push(node);
+  sortChildren(parent);
+  return root;
+}
+
+/** `path`, if it sat at or inside `from`, rewritten to its new home. */
+const followed = (path: string | null, from: string, to: string) =>
+  path && (path === from || path.startsWith(`${from}/`)) ? to + path.slice(from.length) : path;
+
+/** The manifest addresses chapters by path too — keep it in step. */
+function followInWorkflow(wf: Workflow, from: string, to: string): Workflow {
+  const at = (p: string) => followed(p, from, to) ?? p;
+  return {
+    ...wf,
+    manuscripts: wf.manuscripts.map((m) => ({
+      ...m,
+      folder: at(m.folder),
+      chapterOrder: m.chapterOrder.map(at),
+    })),
+    drafts: wf.drafts.map((d) => ({ ...d, chapterOrder: d.chapterOrder.map(at) })),
+  };
+}
+
+type SetVault = StoreApi<VaultState>["setState"];
+type GetVault = StoreApi<VaultState>["getState"];
+
+/**
+ * The shared body of rename and move.
+ *
+ * A path is not just a row in the tree: it is also the key of an open editor
+ * buffer, the current selection, the split pane's document, a set of expanded
+ * folders, and the manuscript's chapter order. All of them follow the file, in
+ * one `set` — anything left pointing at the old path would be an editor
+ * writing to a file that no longer exists.
+ */
+async function applyRelocation(
+  set: SetVault,
+  get: GetVault,
+  path: string,
+  run: (workflowId: string) => Promise<EntryReport>,
+  failure: string,
+): Promise<string | null> {
+  const wf = get().current;
+  if (!wf || !get().tree) return null;
+  try {
+    // Unsaved text belongs to the old path, and only the old path exists right
+    // now. A debounced save landing after the move would recreate the file the
+    // writer just moved away.
+    await useEditor.getState().flushUnder(path);
+
+    const report = await run(wf.id);
+    const to = report.path;
+    if (to === path) return path;
+
+    useEditor.getState().remapPath(path, to);
+
+    const split = useSplit.getState();
+    const secondary = followed(split.secondaryPath, path, to);
+    if (secondary !== split.secondaryPath) {
+      if (secondary) split.openSplit(secondary, split.reference);
+      else split.closeSplit();
+    }
+
+    const tree = get().tree;
+    const current = get().current;
+    set({
+      tree: tree ? applyEntry(tree, report) : tree,
+      current: current ? followInWorkflow(current, path, to) : current,
+      selectedPath: followed(get().selectedPath, path, to),
+      expanded: new Set([...get().expanded].map((p) => followed(p, path, to) ?? p)),
+    });
+
+    if (report.renamed) {
+      notices.say(`Saved as "${report.name}"`, "that name was already taken in that folder");
+    }
+    return to;
+  } catch (e) {
+    notices.fail(failure, e);
+    return null;
+  }
 }
 
 export const useVault = create<VaultState>((set, get) => ({
@@ -334,6 +505,55 @@ export const useVault = create<VaultState>((set, get) => ({
       cursor.children.push({ name: segs[segs.length - 1], path, kind });
     }
     set({ tree: root });
+  },
+
+  async createFile(parent, name, kind) {
+    const wf = get().current;
+    const tree = get().tree;
+    if (!wf || !tree) return null;
+    try {
+      const report = await vault().createFile(wf.id, parent, name, kind);
+      set({ tree: applyEntry(tree, report) });
+      get().expandAll(ancestorsOf(report.path));
+      // A new document opens in the editor — making a file and then having to
+      // find it in the tree would be a strange way to start writing.
+      set({ selectedPath: report.path, view: "editor" });
+      if (report.renamed) {
+        notices.say(`Created "${report.name}"`, "a file of that name was already there");
+      }
+      return report.path;
+    } catch (e) {
+      notices.fail("Could not create that file", e);
+      return null;
+    }
+  },
+
+  async createFolder(parent, name) {
+    const wf = get().current;
+    const tree = get().tree;
+    if (!wf || !tree) return null;
+    try {
+      const report = await vault().createFolder(wf.id, parent, name);
+      set({ tree: applyEntry(tree, report) });
+      get().expandAll([...ancestorsOf(report.path), report.path]);
+      if (report.renamed) {
+        notices.say(`Created "${report.name}"`, "a folder of that name was already there");
+      }
+      return report.path;
+    } catch (e) {
+      notices.fail("Could not create that folder", e);
+      return null;
+    }
+  },
+
+  async renameEntry(path, newName) {
+    return applyRelocation(set, get, path, (wf) => vault().rename(wf, path, newName),
+      "Could not rename that");
+  },
+
+  async moveEntry(path, destFolder) {
+    return applyRelocation(set, get, path, (wf) => vault().move(wf, path, destFolder),
+      "Could not move that");
   },
 
   toggleExpanded(path) {
