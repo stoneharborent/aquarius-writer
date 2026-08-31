@@ -6,6 +6,68 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## v0.3.0 — 2026-08-31
+
+The big catch-up with the Mac app — how it looks, and what it can actually do.
+
+### It looks like Aquarius Writer now
+
+- **New themes.** The light theme is **Ice** — a cool blue-white — and the dark
+  theme is a deep ocean navy, both matching the Mac app's current palette, with
+  four aqua accents to pick from. Your saved theme choice carries over
+  automatically. The AquariusOS look is unchanged.
+- **Your writing sits on a page.** Prose and notes render on a letter-size
+  sheet with real margins and a soft shadow instead of filling the window edge
+  to edge.
+- **The window works like the Mac app's.** A top bar holds the toolbar and a
+  search box (⌘K); the sidebar and right panel resize by dragging and remember
+  their widths; panels collapse to a slim labeled strip; the bottom status bar
+  is gone, with everything it held moved somewhere more sensible.
+- **On a Mac, the close/minimize/zoom buttons are back** — the native ones,
+  top-left, where Mac apps keep them.
+
+### Files behave like files
+
+- **Make things.** The "+" next to WORKFLOW creates a file (Markdown or
+  Screenplay) or a folder, right where you want it.
+- **Move things.** Drag any file or folder onto another folder — folders
+  spring open as you hover — or use the row's ⋯ menu to rename or move it.
+  Your version history, comments and chapter order follow the file wherever
+  it goes.
+- **Star things.** Mark any file or folder as a favorite and find it in the
+  new **Starred** view at the top of the sidebar, next to Today and
+  Manuscript.
+- **Switch workflows** from the chip at the bottom of the sidebar — it lists
+  every workflow you've connected, and can add or manage them.
+
+### It can produce a manuscript
+
+- **Compile is real.** ⌘E exports your manuscript or document as Markdown or
+  Fountain out of the box, and as EPUB, Word or PDF once pandoc is installed
+  (the sheet tells you exactly what to install; on AquariusOS it ships with
+  the system). Chapters compile in your chosen order, with submission,
+  paperback and reader-proof layouts to pick from.
+
+### Your words are safer and counted
+
+- **Nothing gets silently overwritten anymore.** If a file changes outside the
+  app while you're editing it, Aquarius stops and asks: keep your version,
+  take the disk's version, or save yours as a copy — and it snapshots
+  whichever side loses, so nothing is ever gone.
+- **Today is real.** The Today panel now shows the words you actually wrote
+  today, per document, with a streak and a two-week chart — and the daily
+  goal is yours to set, right in the panel.
+- **Chapter reordering sticks.** Drag chapters in the rail and the new order
+  survives closing the app.
+
+### For AI tools
+
+- The built-in MCP server grew from 15 tools to 21: creating folders,
+  renaming, moving, starring, compiling and reading your writing stats are
+  all available to a connected assistant — and an assistant's edits now take
+  an automatic snapshot first, and can be told to refuse a write if the file
+  changed since it last looked.
+
 ## v0.2.0 — 2026-08-29
 
 Aquarius Writer can update itself on AquariusOS.
