@@ -6,6 +6,22 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## v0.3.1 — 2026-08-31
+
+The caret goes where you point it.
+
+- **Clicking in the editor puts the cursor on the character you clicked** —
+  including deep in a long chapter — and the arrow keys move one line at a
+  time again. The editor's click math believed lines were closer together
+  than they were painted, and the error grew the further down a document you
+  went. Worst on Linux; subtly wrong everywhere. Fixed at the root.
+- **The writing font now ships with the app.** Body text is Source Serif 4 on
+  every platform, so a Linux install no longer falls back to whatever serif
+  the system has — and text measures identically everywhere, which is what
+  keeps the cursor honest.
+- Heading sizes, spacing and the screenplay layout grid are now aligned to
+  whole pixels throughout the editor.
+
 ## v0.3.0 — 2026-08-31
 
 The big catch-up with the Mac app — how it looks, and what it can actually do.
