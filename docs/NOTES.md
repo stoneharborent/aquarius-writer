@@ -1364,6 +1364,18 @@ already untrue — the row's ⋯ menu has had **Rename** and **Move to…** sinc
 PARITY row 6 shipped — but the half he reached for first was: the tree looked
 like a tree, so he dragged, and nothing happened.
 
+**§18a — and then it still didn't work (2026-08-31).** The hook was fine; the
+window was eating the events. Tauri's `dragDropEnabled` window option defaults
+to **true**, which installs a *native* drag handler on the webview for OS
+file-drops — and on macOS (WKWebView) that handler consumes `dragover`/`drop`
+before the page sees them. `dragstart` still fires, so a row lifts, shows a
+ghost, and then nothing responds: no ring, no drop, no error. The fix is
+`"dragDropEnabled": false` in **both** window configs (`tauri.conf.json` and
+`tauri.macos.conf.json` — §15c's merge-patch rule). The cost is that Tauri's
+native file-drop events are off, which loses nothing today: drag-in from the
+OS file manager was never built, and when it is, it should be done with the
+HTML5 events that this flag makes usable.
+
 `useTreeDrag` in `Sidebar.tsx` is the whole feature. It is deliberately thin,
 because **it does not move anything itself**: it calls the same
 `vaultStore.moveEntry` the Move to… menu calls, which is `vault_move` →

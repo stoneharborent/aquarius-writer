@@ -12,7 +12,8 @@
         "transparent": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "resizable": true
+        "resizable": true,
+        "dragDropEnabled": false
       }
     ]
   }
