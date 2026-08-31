@@ -35,7 +35,7 @@ const GROUPS: { name: string; rows: ShortcutRow[] }[] = [
     name: "View",
     rows: [
       { combo: "⌘\\", label: "Toggle sidebar" },
-      { combo: "⌘⇧L", label: "Toggle theme (Parchment / Midnight)" },
+      { combo: "⌘⇧L", label: "Toggle theme (Ice / Midnight)" },
     ],
   },
   {

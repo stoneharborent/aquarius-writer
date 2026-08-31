@@ -1,25 +1,32 @@
 /* Aquarius Writer — design tokens
- * Ported from `Aquarius Writer/vault/theme.jsx`.
- * Theme: [data-theme="parchment" | "midnight" | "aquarius"] on <html>.
- * Accent: [data-accent="blue" | "purple" | "sepia" | "sage"] on <html>.
+ * Theme: [data-theme="ice" | "midnight" | "aquarius"] on <html>.
+ * Accent: [data-accent="blue" | "indigo" | "turquoise" | "aquamarine"].
  *
- * Parchment and Midnight are the original two themes and their values are
- * frozen — nothing in the AquariusOS work below touches them.
+ * Ice and Midnight are the Swift app's two themes, transcribed from
+ * `docs/SWIFT-AUDIT.md` §1.1 — which was written from a full read of
+ * `Branches/Apps/AquariusWriter/swift/Theme/Theme.swift`. They replaced the
+ * retired Parchment / warm-neutral-Midnight pair on 2026-08-30. Every value
+ * below is the Swift value; none was picked by eye. Ice's stored preference
+ * value in Swift is still literally `"parchment"` — the port migrates that on
+ * read (see `theme.ts`) and writes `"ice"`.
  *
  * AquariusOS (`aquarius`) is the operating system's own skin. Every value in
  * that block is copied verbatim out of
  * `AquariusOS/os-image/branding/tokens.md`, which is the law for the OS look;
- * no colour there was picked by eye. The token each value came from is named in
- * a comment beside it.
+ * no colour there was picked by eye either. The token each value came from is
+ * named in a comment beside it. The palette swap did not touch that block.
  */
 
 :root {
   --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  --font-serif: "Source Serif 4", "Source Serif Pro", "Iowan Old Style", Georgia, serif;
+  /* SWIFT-AUDIT §1.2: prose is Iowan Old Style, with the Swift web-mirror
+     fallback chain Palatino → Source Serif 4 → Georgia behind it. Iowan ships
+     with macOS; on Linux it simply falls through, which is the intent. */
+  --font-serif: "Iowan Old Style", Palatino, "Palatino Linotype", "Source Serif 4", "Source Serif Pro", Georgia, serif;
   --font-mono: "Courier Prime", "Courier New", ui-monospace, monospace;
-  /* Display / heading face. Parchment and Midnight have never had a separate
-     display font — their headings are the serif — so it resolves to the serif
-     and they render exactly as before. AquariusOS overrides it with Sora. */
+  /* Display / heading face. Ice and Midnight have no separate display font —
+     their headings are the serif — so it resolves to the serif. AquariusOS
+     overrides it with Sora. */
   --font-display: var(--font-serif);
 
   --prose-size: 17px;
@@ -29,9 +36,8 @@
   /* Radius + motion, declared for every theme.
      AquariusOS overrides them with the tokens.md values (7/9/12/16px,
      120/220ms at `cubic-bezier(.22,1,.36,1)`). The defaults below are the
-     numbers the component CSS has always hard-coded, so Parchment and
-     Midnight render exactly as they did — this block adds names for values
-     that already existed, it does not change any of them.
+     numbers the component CSS has always hard-coded — this block adds names
+     for values that already existed, it does not change any of them.
      Only the Stage 4 window chrome reads these so far; the other 94
      `border-radius` declarations in the component CSS are still literals. */
   --radius-input: 5px;
@@ -43,72 +49,87 @@
   --motion-medium: 220ms;
 }
 
-/* ─── Parchment ─── */
-:root[data-theme="parchment"] {
-  --desktop: radial-gradient(120% 100% at 70% 0%, #d8c8a4 0%, #b89c70 55%, #8c6f48 100%);
+/* ─── Ice ───
+ * The Swift app's light theme (SWIFT-AUDIT §1.1). Cool blue-whites; the ink is
+ * a deep navy rather than a brown-black.
+ */
+:root[data-theme="ice"] {
+  /* The desktop behind the window: ice blue → powder → a deeper harbour blue,
+     drawn from the Aqua family's light end (#DCF3FF ice blue). */
+  --desktop: radial-gradient(120% 100% at 70% 0%, #DCF3FF 0%, #B0E0E6 55%, #73A9C2 100%);
 
-  --bg: #F4EDE0;
-  --bg-soft: #EDE5D4;
-  --sidebar: rgba(244, 237, 224, 0.86);
+  --bg: #EAF1F8;
+  --bg-soft: #DFEAF4;
+  --sidebar: rgba(234, 241, 248, 0.86);   /* bg @ 86% */
   /* The same colour with the transparency taken out, for browsers with no
      `backdrop-filter` — WebKitGTK on Linux may be one. See Sidebar.css. */
-  --sidebar-solid: #F4EDE0;
+  --sidebar-solid: #EAF1F8;
   /* Hover fill for window furniture (the Linux minimise/maximise/close). It
      has to differ from `--bg-soft`, which is what the title bar itself is. */
-  --chrome-hover: rgba(42, 36, 29, 0.08);
-  --surface: #FAF5E9;
-  --surface-alt: #EFE7D3;
+  --chrome-hover: rgba(22, 39, 58, 0.08);
+  --surface: #F7FBFE;
+  --surface-alt: #E4EDF6;
 
-  --ink: #2A241D;
-  --ink-prose: #1F1A14;
-  --ink-soft: #5B5247;
-  --ink-mute: #8E8470;
-  --ink-inverse: #FAF5E9;
+  --ink: #16273A;
+  --ink-prose: #0E1B2A;
+  --ink-soft: #47586B;
+  --ink-mute: #7C90A4;
+  --ink-inverse: #F7FBFE;
 
-  --line: rgba(42, 36, 29, 0.08);
-  --line-strong: rgba(42, 36, 29, 0.16);
+  --line: rgba(22, 39, 58, 0.10);         /* ink @ 10% */
+  --line-strong: rgba(22, 39, 58, 0.18);  /* ink @ 18% */
 
   --starred: #C28B22;
-  --success: #5B8B5C;
-  --warn: #B66E2E;
-  --danger: #B84A3A;
+  --success: #1F9E8C;
+  --warn: #C2792E;
+  --danger: #C8463B;
 
-  --shadow-window: 0 28px 80px rgba(60, 40, 20, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
-  --shadow-float: 0 16px 40px rgba(60, 40, 20, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+  --shadow-window: 0 28px 80px rgba(16, 40, 66, 0.32), 0 0 0 0.5px rgba(22, 39, 58, 0.12);
+  --shadow-float: 0 16px 40px rgba(16, 40, 66, 0.20), 0 0 0 0.5px rgba(22, 39, 58, 0.10);
 
   --accent-alpha-soft: 0.14;
   --accent-alpha-selection: 0.18;
   --accent-alpha-ring: 0.35;
 }
 
-/* ─── Midnight ─── */
+/* ─── Midnight ───
+ * The Swift app's dark theme (SWIFT-AUDIT §1.1): deep-ocean navy, not the warm
+ * neutral the port used to ship.
+ */
 :root[data-theme="midnight"] {
-  --desktop: radial-gradient(140% 100% at 80% 0%, #2a1d3a 0%, #0e0d12 55%, #050507 100%);
+  /* The same deep-ocean ramp the Swift AppMark is drawn on (#143A66 → #070D1A),
+     carried out to black at the edge. */
+  --desktop: radial-gradient(140% 100% at 80% 0%, #143A66 0%, #070D1A 55%, #000000 100%);
 
-  --bg: #161519;
-  --bg-soft: #1B1A20;
-  --sidebar: rgba(22, 21, 25, 0.84);
-  --sidebar-solid: #161519;
-  --chrome-hover: rgba(232, 226, 214, 0.09);
-  --surface: #1C1B22;
-  --surface-alt: #23222A;
+  --bg: #0B1220;
+  --bg-soft: #111A2B;
+  --sidebar: rgba(11, 18, 32, 0.84);      /* bg @ 84% */
+  --sidebar-solid: #0B1220;
+  --chrome-hover: rgba(220, 243, 255, 0.09);
+  --surface: #121C2E;
+  --surface-alt: #1B2940;
 
-  --ink: #EAE3D4;
-  --ink-prose: #E4DDCD;
-  --ink-soft: #A8A092;
-  --ink-mute: #6E685F;
-  --ink-inverse: #161519;
+  --ink: #DCE9F4;
+  --ink-prose: #E7F2FB;
+  --ink-soft: #93A7BC;
+  --ink-mute: #5C6E82;
+  --ink-inverse: #0B1220;
 
-  --line: rgba(232, 226, 214, 0.07);
-  --line-strong: rgba(232, 226, 214, 0.14);
+  --line: rgba(220, 243, 255, 0.08);      /* ice blue @ 8% */
+  --line-strong: rgba(220, 243, 255, 0.16); /* ice blue @ 16% */
 
   --starred: #E6B947;
-  --success: #7BAE7C;
-  --warn: #D8945A;
-  --danger: #D87070;
+  --success: #5FC9B0;
+  --warn: #E0A35A;
+  --danger: #E07B7B;
 
-  --shadow-window: 0 24px 80px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
-  --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  /* The Aqua accents are electric on Midnight (#40E0D0, #7FFFD4, #00BFFF) —
+     white text on them is unreadable, so filled accent controls take the
+     background navy instead. Ice keeps the white in the `:root` block below. */
+  --accent-ink: #0B1220;
+
+  --shadow-window: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 0.5px rgba(220, 243, 255, 0.07);
+  --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(220, 243, 255, 0.09);
 
   --accent-alpha-soft: 0.18;
   --accent-alpha-selection: 0.22;
@@ -172,7 +193,7 @@
 
   /* Accent is locked at theme level, not per `data-accent`. tokens.md allows
      exactly one accent: starlight. Nebula is forbidden as a control colour and
-     ancient must stay rare, so purple / sepia / sage have no legal value under
+     ancient must stay rare, so indigo / turquoise / aquamarine have no legal value
      this theme — the picker is hidden for it in Settings and in the footer.
      Declaring it here rather than in four `[data-accent]` rules means a stale
      accent saved in a workflow file cannot leak a non-OS colour either. */
@@ -193,9 +214,8 @@
   /* Radius + motion, straight from tokens.md. The Linux window controls read
      these (Stage 4); the rest of the component CSS still hard-codes its radii
      and transitions, which Stage 3 was scoped not to restructure. The base
-     `:root` block declares the same names with the values Parchment and
-     Midnight have always drawn, so overriding them here changes only this
-     theme. */
+     `:root` block declares the same names with the values Ice and Midnight
+     draw, so overriding them here changes only this theme. */
   --radius-input: 7px;
   --radius-button: 9px;
   --radius-card: 12px;
@@ -205,30 +225,37 @@
   --motion-medium: 220ms;
 }
 
-/* ─── Accents (independent of theme) ─── */
-:root[data-theme="parchment"][data-accent="blue"]   { --accent: #3D5FB8; --accent-rgb: 61, 95, 184; }
-:root[data-theme="parchment"][data-accent="purple"] { --accent: #6E51D6; --accent-rgb: 110, 81, 214; }
-:root[data-theme="parchment"][data-accent="sepia"]  { --accent: #A8693B; --accent-rgb: 168, 105, 59; }
-:root[data-theme="parchment"][data-accent="sage"]   { --accent: #5B8B5C; --accent-rgb: 91, 139, 92; }
+/* ─── Accents ───
+ * The four Aqua accents (SWIFT-AUDIT §1.1). Each is a pair: deepened for
+ * contrast on Ice, electric on Midnight. They are per-theme rather than
+ * theme-independent because that is how Swift defines them.
+ */
+:root[data-theme="ice"][data-accent="blue"]       { --accent: #2C8FC4; --accent-rgb: 44, 143, 196; }  /* aquarius blue */
+:root[data-theme="ice"][data-accent="indigo"]     { --accent: #6E2BE0; --accent-rgb: 110, 43, 224; }
+:root[data-theme="ice"][data-accent="turquoise"]  { --accent: #0E9AA0; --accent-rgb: 14, 154, 160; }
+:root[data-theme="ice"][data-accent="aquamarine"] { --accent: #12A07C; --accent-rgb: 18, 160, 124; }
 
-:root[data-theme="midnight"][data-accent="blue"]    { --accent: #7E9CEC; --accent-rgb: 126, 156, 236; }
-:root[data-theme="midnight"][data-accent="purple"]  { --accent: #9B82FF; --accent-rgb: 155, 130, 255; }
-:root[data-theme="midnight"][data-accent="sepia"]   { --accent: #D9A56B; --accent-rgb: 217, 165, 107; }
-:root[data-theme="midnight"][data-accent="sage"]    { --accent: #7BAE7C; --accent-rgb: 123, 174, 124; }
+:root[data-theme="midnight"][data-accent="blue"]       { --accent: #00BFFF; --accent-rgb: 0, 191, 255; }    /* deep sky */
+:root[data-theme="midnight"][data-accent="indigo"]     { --accent: #9B82FF; --accent-rgb: 155, 130, 255; }
+:root[data-theme="midnight"][data-accent="turquoise"]  { --accent: #40E0D0; --accent-rgb: 64, 224, 208; }
+:root[data-theme="midnight"][data-accent="aquamarine"] { --accent: #7FFFD4; --accent-rgb: 127, 255, 212; }
 
 :root {
+  /* Swift's derivation rule, unchanged: accentSoft = accent @ 18% dark / 14%
+     light, selection @ 22% / 18%, ringFocus @ 40% / 35%. The percentages live
+     on each theme as `--accent-alpha-*`; this is where they get applied. */
   --accent-soft: rgba(var(--accent-rgb), var(--accent-alpha-soft));
   --selection: rgba(var(--accent-rgb), var(--accent-alpha-selection));
   --ring-focus: rgba(var(--accent-rgb), var(--accent-alpha-ring));
-  /* White on Parchment's and Midnight's accents, as it has always been.
-     AquariusOS overrides it with `on-accent` (#080B14) — starlight is far too
-     bright to carry white text. */
+  /* White on Ice's deepened accents. Midnight overrides it with its own
+     background navy and AquariusOS with `on-accent` (#080B14) — both of those
+     have accents far too bright to carry white text. */
   --accent-ink: #FFFFFF;
 }
 
 /* ─── AquariusOS: the few things a variable can't carry ───
  * Everything above is variables. These four rules are the exceptions, and each
- * is scoped to the theme so Parchment and Midnight are untouched.
+ * is scoped to the theme so Ice and Midnight are untouched.
  */
 
 /* 1. Sora ships at 600/700 only. Two headings ask for 500; bump them rather

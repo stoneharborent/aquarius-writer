@@ -15,7 +15,7 @@ import {
   SettingsIcon,
   SparkleIcon,
 } from "@/icons";
-import { ACCENTS, THEMES, THEME_LABEL, themeLocksAccent } from "@/theme/theme";
+import { ACCENTS, ACCENT_LABEL, THEMES, THEME_LABEL, themeLocksAccent } from "@/theme/theme";
 import { useTheme } from "@/state/themeStore";
 import "./CommandPalette.css";
 
@@ -77,7 +77,7 @@ export function CommandPalette() {
       for (const a of ACCENTS) {
         out.push({
           id: `accent:${a}`, group: "Theme",
-          label: `Accent · ${a}`,
+          label: `Accent · ${ACCENT_LABEL[a]}`,
           icon: <SettingsIcon size={13} color="var(--ink-soft)" />,
           run: () => { setAccent(a); close(); },
         });

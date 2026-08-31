@@ -12,7 +12,7 @@ import { installLogBridge } from "@/lib/logging";
 installLogBridge();
 
 // Put the theme on <html> before the first render, so the app never flashes
-// Parchment on a machine whose default is AquariusOS.
+// Ice on a machine whose default is AquariusOS.
 bootTheme();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

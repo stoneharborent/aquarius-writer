@@ -6,7 +6,7 @@
  * in this folder and are compiled into the bundle. Nothing is fetched at
  * runtime.
  *
- * The families are registered under "AQ "-prefixed names on purpose. Parchment
+ * The families are registered under "AQ "-prefixed names on purpose. Ice
  * and Midnight already list "Inter" first in --font-ui; registering a webfont
  * called "Inter" would silently change how those two themes render on machines
  * that do not have Inter installed. The prefix keeps this strictly additive:

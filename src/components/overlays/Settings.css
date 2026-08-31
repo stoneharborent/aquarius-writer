@@ -71,15 +71,18 @@
   background: var(--accent);
 }
 
-.st-chip-accent[data-accent="blue"]   .st-chip-swatch { background: #3D5FB8; }
-.st-chip-accent[data-accent="purple"] .st-chip-swatch { background: #6E51D6; }
-.st-chip-accent[data-accent="sepia"]  .st-chip-swatch { background: #A8693B; }
-.st-chip-accent[data-accent="sage"]   .st-chip-swatch { background: #5B8B5C; }
+/* The four Aqua accents, in their Ice values (the default) and their Midnight
+   values. Same pairs as the `[data-accent]` blocks in tokens.css — a swatch
+   has to show the colour you would actually get. */
+.st-chip-accent[data-accent="blue"]       .st-chip-swatch { background: #2C8FC4; }
+.st-chip-accent[data-accent="indigo"]     .st-chip-swatch { background: #6E2BE0; }
+.st-chip-accent[data-accent="turquoise"]  .st-chip-swatch { background: #0E9AA0; }
+.st-chip-accent[data-accent="aquamarine"] .st-chip-swatch { background: #12A07C; }
 
-:root[data-theme="midnight"] .st-chip-accent[data-accent="blue"]   .st-chip-swatch { background: #7E9CEC; }
-:root[data-theme="midnight"] .st-chip-accent[data-accent="purple"] .st-chip-swatch { background: #9B82FF; }
-:root[data-theme="midnight"] .st-chip-accent[data-accent="sepia"]  .st-chip-swatch { background: #D9A56B; }
-:root[data-theme="midnight"] .st-chip-accent[data-accent="sage"]   .st-chip-swatch { background: #7BAE7C; }
+:root[data-theme="midnight"] .st-chip-accent[data-accent="blue"]       .st-chip-swatch { background: #00BFFF; }
+:root[data-theme="midnight"] .st-chip-accent[data-accent="indigo"]     .st-chip-swatch { background: #9B82FF; }
+:root[data-theme="midnight"] .st-chip-accent[data-accent="turquoise"]  .st-chip-swatch { background: #40E0D0; }
+:root[data-theme="midnight"] .st-chip-accent[data-accent="aquamarine"] .st-chip-swatch { background: #7FFFD4; }
 
 .st-help {
   font-family: var(--font-serif);

@@ -9,6 +9,7 @@ import {
   SparkleIcon,
 } from "@/icons";
 import { useVault } from "@/state/vaultStore";
+import { DEFAULT_ACCENT, normalizeAccent } from "@/theme/theme";
 import type { WorkflowKind, WorkflowSummary } from "@/types/vault";
 import "./SelectWorkflow.css";
 
@@ -284,7 +285,7 @@ function RecentRow({
   return (
     <button
       className={`sw-recent-row${isLast ? " last" : ""}`}
-      data-color={w.color}
+      data-color={normalizeAccent(w.color) ?? DEFAULT_ACCENT}
       onClick={onClick}
     >
       <span className="sw-recent-icon">

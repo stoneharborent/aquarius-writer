@@ -1,6 +1,6 @@
 /* Linux window controls — see WindowControls.tsx for why they exist.
  *
- * Every value here is a theme variable, so the buttons follow Parchment,
+ * Every value here is a theme variable, so the buttons follow Ice,
  * Midnight and AquariusOS without a single hard-coded colour. Under
  * AquariusOS that means `os-image/branding/tokens.md` decides how they look:
  * glyphs in `text-2`, hover in `surface-3`, close in `danger`, 9px radius,

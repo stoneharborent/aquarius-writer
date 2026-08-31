@@ -1,23 +1,63 @@
 import { detectPlatform } from "@/lib/platform";
 
-export type ThemeName = "parchment" | "midnight" | "aquarius";
-export type AccentName = "blue" | "purple" | "sepia" | "sage";
+export type ThemeName = "ice" | "midnight" | "aquarius";
+export type AccentName = "blue" | "indigo" | "turquoise" | "aquamarine";
 
-export const THEMES: ThemeName[] = ["parchment", "midnight", "aquarius"];
-export const ACCENTS: AccentName[] = ["blue", "purple", "sepia", "sage"];
+export const THEMES: ThemeName[] = ["ice", "midnight", "aquarius"];
+export const ACCENTS: AccentName[] = ["blue", "indigo", "turquoise", "aquamarine"];
 
 export const THEME_LABEL: Record<ThemeName, string> = {
-  parchment: "Parchment",
+  ice: "Ice",
   midnight: "Midnight",
   aquarius: "AquariusOS",
 };
 
 export const ACCENT_LABEL: Record<AccentName, string> = {
-  blue: "Blue",
-  purple: "Muted purple",
-  sepia: "Sepia",
-  sage: "Sage",
+  blue: "Aquarius Blue",
+  indigo: "Indigo",
+  turquoise: "Turquoise",
+  aquamarine: "Aquamarine",
 };
+
+/* ─── Migration ───────────────────────────────────────────────────────────
+ *
+ * The palette was replaced on 2026-08-30 to match the Swift app (SWIFT-AUDIT
+ * §1.1): Parchment became Ice, and the accents became the four Aqua colours.
+ * Preferences written before that day are still on disk — in localStorage, in
+ * every `workflow.json` ever saved, and in the Rust struct's default, which
+ * still writes `"parchment"`. The Swift app has the same history and simply
+ * kept `"parchment"` as Ice's stored value forever (SWIFT-AUDIT §4).
+ *
+ * So: read the old names, write only the new ones. Every read site goes
+ * through `normalizeTheme` / `normalizeAccent` below — that is the only place
+ * the retired names are allowed to appear.
+ */
+
+const THEME_ALIAS: Record<string, ThemeName> = {
+  parchment: "ice",
+};
+
+const ACCENT_ALIAS: Record<string, AccentName> = {
+  purple: "indigo",
+  sepia: "turquoise",
+  sage: "aquamarine",
+};
+
+/** A stored/URL theme value → a current theme id, or undefined if unusable. */
+export function normalizeTheme(v: unknown): ThemeName | undefined {
+  if (typeof v !== "string") return undefined;
+  const k = v.toLowerCase();
+  if ((THEMES as string[]).includes(k)) return k as ThemeName;
+  return THEME_ALIAS[k];
+}
+
+/** A stored/URL accent value → a current accent id, or undefined if unusable. */
+export function normalizeAccent(v: unknown): AccentName | undefined {
+  if (typeof v !== "string") return undefined;
+  const k = v.toLowerCase();
+  if ((ACCENTS as string[]).includes(k)) return k as AccentName;
+  return ACCENT_ALIAS[k];
+}
 
 /** AquariusOS locks the accent to starlight — see tokens.css. */
 export function themeLocksAccent(theme: ThemeName): boolean {
@@ -37,31 +77,31 @@ export function isAccentName(v: unknown): v is AccentName {
  *
  * Linux means "running on AquariusOS" for our purposes — the app is the OS's
  * stock writing app and should look like the OS on first boot. Everywhere else
- * keeps Parchment, exactly as the design handoff intends.
+ * gets Ice, the Swift app's light theme.
  *
  * The platform check itself lives in `lib/platform.ts` — Stage 4's window
  * chrome asks the same question, so it is one function, not two.
  */
 export function defaultTheme(): ThemeName {
-  return detectPlatform() === "linux" ? "aquarius" : "parchment";
+  return detectPlatform() === "linux" ? "aquarius" : "ice";
 }
 
 export const DEFAULT_ACCENT: AccentName = "blue";
 
 /**
- * `?theme=aquarius&accent=sage` — a dev/screenshot override. It wins over the
- * saved preference for the life of the tab and is never written back to disk,
- * so opening a link like that can't change what the writer sees next launch.
+ * `?theme=aquarius&accent=turquoise` — a dev/screenshot override. It wins over
+ * the saved preference for the life of the tab and is never written back to
+ * disk, so opening a link like that can't change what the writer sees next
+ * launch. Retired names still work here too (`?theme=parchment` → Ice), so old
+ * screenshot scripts and bookmarks keep resolving to something real.
  */
 export function themeFromQuery(): { theme?: ThemeName; accent?: AccentName } {
   if (typeof window === "undefined") return {};
   try {
     const q = new URLSearchParams(window.location.search);
-    const theme = q.get("theme");
-    const accent = q.get("accent");
     return {
-      theme: isThemeName(theme) ? theme : undefined,
-      accent: isAccentName(accent) ? accent : undefined,
+      theme: normalizeTheme(q.get("theme")),
+      accent: normalizeAccent(q.get("accent")),
     };
   } catch {
     return {};
@@ -76,10 +116,8 @@ export function applyTheme(theme: ThemeName, accent: AccentName) {
 
 export function readTheme(): { theme: ThemeName; accent: AccentName } {
   const root = document.documentElement;
-  const theme = root.dataset.theme;
-  const accent = root.dataset.accent;
   return {
-    theme: isThemeName(theme) ? theme : defaultTheme(),
-    accent: isAccentName(accent) ? accent : DEFAULT_ACCENT,
+    theme: normalizeTheme(root.dataset.theme) ?? defaultTheme(),
+    accent: normalizeAccent(root.dataset.accent) ?? DEFAULT_ACCENT,
   };
 }

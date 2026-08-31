@@ -209,15 +209,17 @@
 }
 
 /* Per-row color coding by workflow color. */
-.sw-recent-row[data-color="blue"]   .sw-recent-icon { background: rgba(61, 95, 184, 0.14); color: #3D5FB8; }
-.sw-recent-row[data-color="purple"] .sw-recent-icon { background: rgba(110, 81, 214, 0.14); color: #6E51D6; }
-.sw-recent-row[data-color="sepia"]  .sw-recent-icon { background: rgba(168, 105, 59, 0.14); color: #A8693B; }
-.sw-recent-row[data-color="sage"]   .sw-recent-icon { background: rgba(91, 139, 92, 0.14); color: #5B8B5C; }
+/* A recent row is tinted with the workflow's own saved accent — the same four
+   Aqua pairs as tokens.css, Ice values first, Midnight values below. */
+.sw-recent-row[data-color="blue"]       .sw-recent-icon { background: rgba(44, 143, 196, 0.14); color: #2C8FC4; }
+.sw-recent-row[data-color="indigo"]     .sw-recent-icon { background: rgba(110, 43, 224, 0.14); color: #6E2BE0; }
+.sw-recent-row[data-color="turquoise"]  .sw-recent-icon { background: rgba(14, 154, 160, 0.14); color: #0E9AA0; }
+.sw-recent-row[data-color="aquamarine"] .sw-recent-icon { background: rgba(18, 160, 124, 0.14); color: #12A07C; }
 
-:root[data-theme="midnight"] .sw-recent-row[data-color="blue"]   .sw-recent-icon { background: rgba(126, 156, 236, 0.2); color: #7E9CEC; }
-:root[data-theme="midnight"] .sw-recent-row[data-color="purple"] .sw-recent-icon { background: rgba(155, 130, 255, 0.2); color: #9B82FF; }
-:root[data-theme="midnight"] .sw-recent-row[data-color="sepia"]  .sw-recent-icon { background: rgba(217, 165, 107, 0.2); color: #D9A56B; }
-:root[data-theme="midnight"] .sw-recent-row[data-color="sage"]   .sw-recent-icon { background: rgba(123, 174, 124, 0.2); color: #7BAE7C; }
+:root[data-theme="midnight"] .sw-recent-row[data-color="blue"]       .sw-recent-icon { background: rgba(0, 191, 255, 0.2); color: #00BFFF; }
+:root[data-theme="midnight"] .sw-recent-row[data-color="indigo"]     .sw-recent-icon { background: rgba(155, 130, 255, 0.2); color: #9B82FF; }
+:root[data-theme="midnight"] .sw-recent-row[data-color="turquoise"]  .sw-recent-icon { background: rgba(64, 224, 208, 0.2); color: #40E0D0; }
+:root[data-theme="midnight"] .sw-recent-row[data-color="aquamarine"] .sw-recent-icon { background: rgba(127, 255, 212, 0.2); color: #7FFFD4; }
 
 .sw-recent-main {
   flex: 1;

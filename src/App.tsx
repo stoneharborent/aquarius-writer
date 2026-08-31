@@ -7,6 +7,7 @@ import { ConflictDialog } from "@/components/safety/ConflictDialog";
 import { Notices } from "@/components/notices/Notices";
 import {
   ACCENTS,
+  ACCENT_LABEL,
   AccentName,
   THEMES,
   THEME_LABEL,
@@ -142,7 +143,7 @@ export default function App() {
             <label className="vw-toggle">
               accent
               <select value={accent} onChange={(e) => setAccent(e.target.value as AccentName)}>
-                {ACCENTS.map((a) => <option key={a} value={a}>{a}</option>)}
+                {ACCENTS.map((a) => <option key={a} value={a}>{ACCENT_LABEL[a]}</option>)}
               </select>
             </label>
           )}
