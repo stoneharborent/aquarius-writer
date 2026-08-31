@@ -7,6 +7,7 @@ import {
   THEMES,
   THEME_LABEL,
   ACCENT_LABEL,
+  applyProseMetrics,
   themeLocksAccent,
 } from "@/theme/theme";
 import { useTheme } from "@/state/themeStore";
@@ -93,6 +94,11 @@ export function Settings() {
                 </div>
               )}
 
+              {/* Both sliders go through `applyProseMetrics`, which rounds the
+                  size × leading product to a whole-pixel line box before it
+                  reaches the editor. Writing `--prose-size` or
+                  `--prose-leading` directly from here is what shipped the
+                  fractional 28.05px line box in v0.3.0 — see NOTES §1a. */}
               <div className="st-section">
                 <h3>Reading</h3>
                 <label className="st-slider">
@@ -103,7 +109,7 @@ export function Settings() {
                     onChange={(e) => {
                       const n = Number(e.target.value);
                       setFontSize(n);
-                      document.documentElement.style.setProperty("--prose-size", `${n}px`);
+                      applyProseMetrics(n, lineHeight);
                     }}
                   />
                   <span className="st-slider-val">{fontSize}px</span>
@@ -116,10 +122,12 @@ export function Settings() {
                     onChange={(e) => {
                       const n = Number(e.target.value) / 10;
                       setLineHeight(n);
-                      document.documentElement.style.setProperty("--prose-leading", String(n));
+                      applyProseMetrics(fontSize, n);
                     }}
                   />
-                  <span className="st-slider-val">{lineHeight.toFixed(2)}</span>
+                  <span className="st-slider-val">
+                    {lineHeight.toFixed(2)} · {Math.round(fontSize * lineHeight)}px
+                  </span>
                 </label>
               </div>
             </>

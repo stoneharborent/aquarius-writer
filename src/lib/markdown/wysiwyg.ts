@@ -103,6 +103,32 @@ function wrapInline(
   }
 }
 
+/* ── Metrics rule for everything below (NOTES §1a) ──────────────────────────
+ *
+ * Two things are load-bearing for caret accuracy, and both were broken here
+ * before v0.3.1:
+ *
+ * 1. VERTICAL RHYTHM IS PADDING, NEVER MARGIN. CodeMirror measures each line
+ *    with `getBoundingClientRect()` (see `measureVisibleLineHeights` in
+ *    @codemirror/view) — a BORDER BOX, which excludes margins. Every pixel of
+ *    margin on a `.cm-line` is space the painted document has and the height
+ *    map does not, so the map drifts a little further out of step with the DOM
+ *    on every line. `posAtCoords` picks the line via that map, which is
+ *    literally "the click landed on the wrong line". `moveVertically` walks
+ *    the same map in half-textHeight steps and has an explicit "did I land on
+ *    the line's padding?" recovery — it knows about padding and has no such
+ *    handling for margins, which is the arrow keys skipping. Padding is inside
+ *    the border box and is measured, so all rhythm here is padding.
+ *
+ * 2. NO FRACTIONAL METRICS. Font sizes, line heights, paddings and letter
+ *    spacing in the content path are whole pixels. WebKitGTK snaps fractional
+ *    boxes to device pixels; CoreText carries the fraction. Same CSS, two
+ *    different painted layouts, and the height map only matches one of them.
+ *    Values below are the previous em-relative values rounded once, at design
+ *    time, so both engines see the same integer.
+ *
+ * If you add a rule here: padding, whole pixels, and no `em`.
+ */
 export const proseTheme = EditorView.theme(
   {
     "&": {
@@ -110,7 +136,7 @@ export const proseTheme = EditorView.theme(
       backgroundColor: "transparent",
       fontFamily: "var(--font-serif)",
       fontSize: "var(--prose-size)",
-      lineHeight: "var(--prose-leading)",
+      lineHeight: "var(--prose-line-px)", // was 1.65 → 28.05px
       // Grow with content — see fountain-ext.ts (same embed fix).
       height: "auto",
     },
@@ -118,28 +144,50 @@ export const proseTheme = EditorView.theme(
       caretColor: "var(--accent)",
       padding: "0",
       maxWidth: "none",
+      // Restated so nothing inherited from the shell (--ui-size is 13.5px
+      // under AquariusOS) can reach the content path.
+      fontFamily: "var(--font-serif)",
+      fontSize: "var(--prose-size)",
+      lineHeight: "var(--prose-line-px)",
+      letterSpacing: "normal",
     },
     "&.cm-focused": { outline: "none" },
+    // Paragraph gap: was `margin: 0 0 0.55em 0` (9.35px, invisible to the
+    // height map). Now 9px of padding, which is measured.
     ".cm-line": {
-      padding: "0",
-      margin: "0 0 0.55em 0",
+      margin: "0",
+      padding: "0 0 var(--prose-para-gap) 0",
     },
+    // Headings. `.cm-heading` and `.cm-hN` land on the same line element, so
+    // the per-level rules below carry the whole metric set; only the shared,
+    // metric-free properties stay here. Padding-top is the old 1.4em margin
+    // minus the 9px the previous line already contributes as padding-bottom
+    // (margins collapsed, padding does not) — so the gap above a heading in
+    // running text is unchanged. A heading on line 1 sits 9px higher than it
+    // used to; that is the whole visual cost of the fix.
+    //
+    //        old size        →  new   old line-height  →  new   pad-top  pad-bottom
+    //   h1   1.8em  = 30.6px →  31px   36.72px         →  37px   34px     15px
+    //   h2   1.45em = 24.65  →  25px   29.58           →  30px   26px     12px
+    //   h3   1.2em  = 20.4   →  20px   24.48           →  24px   20px     10px
+    //   h4-6 1.05em = 17.85  →  18px   21.42           →  21px   16px      9px
     ".cm-heading": {
       fontWeight: "600",
-      lineHeight: "1.2",
       color: "var(--ink-prose)",
-      letterSpacing: "-0.01em",
-      marginTop: "1.4em",
-      marginBottom: "0.5em",
+      // Dropped: `letterSpacing: -0.01em`. At 31px that is -0.31px per glyph,
+      // which WebKitGTK and CoreText accumulate differently across a line and
+      // walks the caret's X off the glyph it belongs to.
+      letterSpacing: "normal",
+      margin: "0",
     },
-    ".cm-h1": { fontSize: "1.8em" },
-    ".cm-h2": { fontSize: "1.45em" },
-    ".cm-h3": { fontSize: "1.2em" },
-    ".cm-h4, .cm-h5, .cm-h6": { fontSize: "1.05em" },
+    ".cm-h1": { fontSize: "31px", lineHeight: "37px", paddingTop: "34px", paddingBottom: "15px" },
+    ".cm-h2": { fontSize: "25px", lineHeight: "30px", paddingTop: "26px", paddingBottom: "12px" },
+    ".cm-h3": { fontSize: "20px", lineHeight: "24px", paddingTop: "20px", paddingBottom: "10px" },
+    ".cm-h4, .cm-h5, .cm-h6": { fontSize: "18px", lineHeight: "21px", paddingTop: "16px", paddingBottom: "9px" },
     ".cm-em": { fontStyle: "italic" },
     ".cm-inline-code": {
       fontFamily: "var(--font-mono)",
-      fontSize: "0.85em",
+      fontSize: "14px", // was 0.85em = 14.45px
       backgroundColor: "var(--bg-soft)",
       borderRadius: "3px",
       padding: "0 3px",

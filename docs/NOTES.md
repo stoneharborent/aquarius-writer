@@ -4,7 +4,7 @@
 byte-for-byte as delivered. It is never edited. When reality has moved on from
 what it says, the discrepancy is recorded here instead.
 
-Last reviewed: 2026-08-29 (v0.2.0 — the AquariusOS self-updater, §16).
+Last reviewed: 2026-08-31 (v0.3.1 — the WebKitGTK caret fixes, §1a).
 
 ---
 
@@ -23,6 +23,171 @@ npm package, pinned in `package.json` at `^1.2.4`, wrapped in `src/lib/fountain.
 
 The *intent* of the non-negotiable is preserved and still holds: we do not write
 our own Fountain parser, we wire through a library and pin it.
+
+### 1a. WebKitGTK and the caret
+
+Royce, on the bench (v0.3.0, AquariusOS): *"inside the editor, clicking puts the
+cursor in the wrong place, and the arrow keys skip lines."* Everything outside
+the editor clicked fine, so it was not display scaling, and the macOS build was
+clean.
+
+**How CodeMirror turns a click into a caret.** It does not hit-test the DOM
+first. It keeps a **height map** — a running total of every line's height,
+measured with `getBoundingClientRect()` — and `posAtCoords` divides the click's
+Y through that map to pick a *line*, then does real glyph hit-testing inside
+that one line. Arrow keys go through the same map: `moveVertically` steps down
+in half-line increments and asks `posAtCoords` what it hit.
+
+So there is exactly one way to break the caret: **let the painted document and
+the height map disagree about where a line is.** Everything below is a way that
+was happening.
+
+#### The margins CodeMirror could not see
+
+`getBoundingClientRect()` returns a **border box**. Margins are outside it.
+The prose theme's line rule was:
+
+```
+".cm-line": { padding: "0", margin: "0 0 0.55em 0" }
+```
+
+That is 9.35px of paragraph rhythm on every single line that the height map
+never counted. The map thought line *n* started at *n* × 28.05px; the compositor
+painted it at *n* × 37.4px. Twenty lines down the page, the map and the document
+are 187px — about five lines — apart, and a click lands five lines off. It gets
+worse the further you scroll, which is exactly what a caret bug of this shape
+looks like.
+
+`moveVertically` has an explicit recovery for landing on a line's **padding**
+(`posAtCoords` re-scans when the Y falls in the pad rather than on a glyph). It
+has no equivalent for margins, because CodeMirror's contract is that lines do
+not have them — its own base theme spaces lines with `padding: 0 2px 0 6px`.
+Land a vertical step in a margin and there is nothing to recover to; the step is
+resolved against the wrong block and the caret jumps a line. That is the arrow
+keys.
+
+**Every margin in the editor content path is now padding.** Prose lines,
+headings, the Fountain scene/character/transition/section indents, and the page
+break rule in `ScreenplayEditor.css` (which carried a 22px `margin-top`, folded
+into its existing `padding-top`). Where a heading's margin used to *collapse*
+with the previous line's, the replacement padding-top is the old value minus the
+9px the previous line already contributes, so the painted gap is unchanged in
+running text. A heading on line 1 sits 9px higher than it did. That is the whole
+visual cost.
+
+This one was never Linux-specific — it was wrong on macOS too, just with the
+same wrongness in both places often enough that a short document felt fine.
+
+#### The fractional line box
+
+`--prose-size: 17px` × `--prose-leading: 1.65` = **28.05px**. WebKitGTK snaps a
+fractional line box to device pixels; CoreText carries the fraction. Same CSS,
+two different painted layouts — and CodeMirror's height map, built from
+measurement, matches only one of them. The rounding error is small per line and
+strictly cumulative, which is why the caret was roughly right at the top of a
+document and badly wrong at the bottom.
+
+The editor content path now uses whole pixels for everything: font sizes, line
+heights, paddings, letter-spacing. `--prose-line-px` (28px) and
+`--prose-para-gap` (9px) are the new tokens; `--prose-leading` survives for
+chrome that wants the ratio, and **nothing inside `.cm-content` may read it**.
+The heading sizes were `em` multiples of 17px and are now the same numbers
+rounded once, at design time: 31 / 25 / 20 / 18px. The screenplay grid went from
+14px × 1.55 (21.7px) to a flat 22px.
+
+Rounding has to happen where the two numbers *meet*, and CSS cannot round — so
+the Settings "Body size" and "Line height" sliders no longer write
+`--prose-size` / `--prose-leading` at the root and let the editor multiply them.
+They both call `applyProseMetrics(size, leading)` in `src/theme/theme.ts`, which
+rounds the product and writes `--prose-line-px`. The Line height slider now also
+shows the resulting pixel value, because that is the number that matters.
+
+#### The serif nobody bundled
+
+`--font-serif` was a pure fallback chain, per SWIFT-AUDIT §1.2:
+
+```
+"Iowan Old Style", Palatino, "Source Serif 4", Georgia, serif
+```
+
+with the note that on Linux it "simply falls through, which is the intent". None
+of those faces was bundled. macOS resolved it to **Iowan Old Style**; Linux fell
+all the way to **DejaVu Serif**. Different advance widths, different text height
+for the same string, and therefore a different height map from the identical
+document — plus a different answer to "which glyph is under this X".
+
+**Source Serif 4 is now bundled** (`src/fonts/source-serif-4-*.woff2`, SIL OFL
+1.1, `LICENSE-SourceSerif4-OFL.txt` beside it, from the same Google Fonts source
+as the other three) and registered as **"AQ Source Serif"**, following the
+`AQ `-prefix rule in §2e. It leads `--font-serif` on **both** platforms. Iowan
+stays behind it as a webfont-failure fallback only.
+
+That is a deliberate trade: the port loses the Iowan look on macOS and gains
+identical text metrics on both platforms. For an editor whose caret position is
+computed from those metrics, that is not close. Roman *and* italic are bundled —
+`.cm-em`, the blockquote and the Fountain synopsis all ask for italic, and a
+WebKitGTK-synthesised oblique has different metrics again.
+
+`--font-mono` had the same unbundled-chain hazard (Courier Prime is not bundled
+either, so Ice/Midnight on Linux landed on DejaVu Sans Mono). The bundled
+`AQ JetBrains Mono` now sits ahead of the generics as a floor. It is not put
+first: Courier is the industry face for a screenplay and macOS has it.
+Full mono parity wants a bundled Courier Prime, and that is a follow-up.
+
+#### What was already clean
+
+`src/lib/markdown/wysiwyg.ts` hides markdown syntax with
+`Decoration.replace({})` — the real CodeMirror mechanism, which removes the
+characters from the layout in a way the measurement understands. It was never
+the `font-size: 0` / `letter-spacing: -1em` / `display: none` kind of trick that
+breaks measurement, and it did not need changing. Same for
+`wikilink-ext.ts`, which uses plain `Decoration.mark`. Suspect number one turned
+out to be the one innocent party.
+
+The percentage left-indents on the Fountain elements (`26%` / `20%` / `14%`) are
+gone anyway, replaced by the pixels they resolved to at the 696px design width.
+They were not a height-map problem — horizontal padding does not affect a line's
+height — but they resolved to fractions (26% of 696px is 180.96px) and moved
+with the pane. A screenplay indent is an absolute grid measured in inches, so
+fixed pixels are also closer to the PARITY row 12 target.
+
+#### Bench checklist
+
+Verify on AquariusOS, not on the Mac; the Mac cannot reproduce any of this.
+
+1. **Long prose document, click at the bottom.** Open a chapter of 100+ lines,
+   scroll to the very end, click in the middle of the last visible paragraph.
+   The caret must land on the character you clicked. This is the test that
+   failed before — the error grew with distance from the top.
+2. **Click at the top, middle, bottom.** Same document, three clicks. All three
+   exact.
+3. **Arrow keys down the whole document.** Hold ↓ from line 1 to the end. No
+   skipped lines, no doubled lines, and the column should hold.
+4. **Arrow keys across headings.** ↓ and ↑ through an H1, an H2 and an H3. A
+   heading has more padding than a body line and is the most likely remaining
+   place for a step to land oddly.
+5. **Arrow keys across a blockquote and a wrapped paragraph.** Wrapped lines
+   are one block with several visual rows; ↓ must walk the rows.
+6. **Click on a hidden syntax mark's line.** Put the caret on a `**bold**` line
+   so the markers fade in, then click a line above and below it. The document
+   reflows when markers appear; the caret must stay accurate through it.
+7. **Screenplay editor, same three clicks and the ↓ hold.** Then check a
+   character cue and a dialogue block specifically — those carry the largest
+   indents.
+8. **Screenplay page break.** Scroll past an estimated page break (the rule with
+   the `p. N` label) and click below it. The 22px that used to be a margin is
+   the exact thing this checks.
+9. **Settings → Reading → Body size and Line height.** Move both sliders, then
+   click and arrow through the document again at the new size. The pixel value
+   next to the Line height slider should always be a whole number.
+10. **Confirm the serif actually loaded.** The editor body text should be Source
+    Serif 4, not DejaVu Serif — check an italic word too (`*like this*`), which
+    should be a true italic and not a slanted roman. If it looks like DejaVu,
+    the webfont did not load and every metric fix above is running on the wrong
+    face.
+11. **All three themes.** Ice, Midnight and AquariusOS. AquariusOS sets
+    `--ui-size: 13.5px`, which is the only fractional type size left in the app;
+    it must not reach the editor content.
 
 ## 2. "Two themes only" — Stage 3 added a third
 

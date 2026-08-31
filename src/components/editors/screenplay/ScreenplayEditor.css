@@ -16,17 +16,25 @@
 }
 
 .screenplay-editor .cm-content {
+  /* Whole pixels: 720 - 2×12 = a 696px content box, which is what the
+     fixed-pixel Fountain indents in fountain-ext.ts are derived from. */
   max-width: 720px;
   margin: 0 auto;
   padding: 0 12px;
 }
 
 /* Estimated page breaks — a top rule + "p. N" label on the first line of
-   each new page (line decoration; pure CSS, no widgets). */
+   each new page (line decoration; pure CSS, no widgets).
+
+   The 22px used to be `margin-top`, which CodeMirror's height map cannot see
+   (it measures border boxes) — a page break therefore shifted every line below
+   it out from under the caret. It is folded into the padding instead; the
+   painted gap is unchanged. NOTES §1a. The ::before label is absolutely
+   positioned and so contributes no layout. */
 .cm-aq-pagebreak-line {
   border-top: 1px solid var(--line);
-  margin-top: 22px;
-  padding-top: 10px !important;
+  margin-top: 0;
+  padding-top: 32px !important;
   position: relative;
 }
 .cm-aq-pagebreak-line::before {

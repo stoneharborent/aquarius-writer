@@ -1,10 +1,13 @@
-/* Aquarius Writer — bundled OS typefaces (AquariusOS theme only)
+/* Aquarius Writer — bundled typefaces
  *
  * Sora (display), Inter (UI) and JetBrains Mono (mono) are the three typefaces
- * named in os-image/branding/tokens.md. Mac dev machines do not ship them and
- * the Linux build cannot assume Fedora packages them, so the woff2 files live
- * in this folder and are compiled into the bundle. Nothing is fetched at
- * runtime.
+ * named in os-image/branding/tokens.md, and are used by the AquariusOS theme
+ * only. Source Serif 4 is different: it is the EDITOR CONTENT serif for every
+ * theme (see the block at the bottom of this file and NOTES §1a).
+ *
+ * Mac dev machines do not ship any of them and the Linux build cannot assume
+ * Fedora packages them, so the woff2 files live in this folder and are
+ * compiled into the bundle. Nothing is fetched at runtime.
  *
  * The families are registered under "AQ "-prefixed names on purpose. Ice
  * and Midnight already list "Inter" first in --font-ui; registering a webfont
@@ -16,9 +19,10 @@
  * which is why there is one file per subset rather than one per weight.
  * Subsets are the Google Fonts latin and latin-ext slices.
  *
- * Licences: SIL Open Font License 1.1, all three — full texts beside this file
+ * Licences: SIL Open Font License 1.1, all four — full texts beside this file
  * (LICENSE-*.txt). Downloaded from fonts.googleapis.com/css2 on 2026-08-25:
- * Sora v17, Inter v20, JetBrains Mono v24.
+ * Sora v17, Inter v20, JetBrains Mono v24. Source Serif 4 v14 was added
+ * 2026-08-31 from the same source.
  */
 
 /* ── Sora → "AQ Sora", weights 600 700 ── */
@@ -72,5 +76,59 @@
   font-weight: 400 500;
   font-display: swap;
   src: url("./jetbrains-mono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ── Source Serif 4 → "AQ Source Serif", weights 400 700 + italics ──
+ *
+ * This one is NOT AquariusOS-only. `--font-serif` is the editor content face
+ * on every theme, and it used to be a pure fallback chain:
+ *
+ *   "Iowan Old Style", Palatino, "Source Serif 4", Georgia, serif
+ *
+ * Nothing in that chain was bundled, so macOS resolved it to Iowan Old Style
+ * (CoreText) and Linux fell all the way through to DejaVu Serif (fontconfig).
+ * Two different faces means two different advance widths and two different
+ * text heights for the same document — which is half of why the caret landed
+ * in the wrong place on the WebKitGTK build. Bundling the face makes both
+ * platforms measure the same glyphs. See docs/NOTES.md §1a.
+ *
+ * Italic is bundled as well as roman: `.cm-em`, the Fountain synopsis line and
+ * the blockquote style all set `font-style: italic`, and a synthesised oblique
+ * (which is what WebKitGTK would draw from the roman) has different metrics
+ * again.
+ *
+ * Variable files, optical size axis baked at the Google Fonts default.
+ */
+@font-face {
+  font-family: "AQ Source Serif";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./source-serif-4-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "AQ Source Serif";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./source-serif-4-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "AQ Source Serif";
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./source-serif-4-italic-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "AQ Source Serif";
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./source-serif-4-italic-latin-ext.woff2") format("woff2");
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }

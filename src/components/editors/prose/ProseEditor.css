@@ -15,8 +15,14 @@
   overflow: visible;
 }
 
+/* Content metrics. `line-height` is the whole-pixel token, never the
+   `--prose-leading` ratio: 17 × 1.65 = 28.05px, and a fractional line box is
+   rounded by WebKitGTK but not by CoreText, which desynchronises CodeMirror's
+   height map from the painted document on Linux only. NOTES §1a.
+   This file is imported by both ProseEditor and NoteEditor. */
 .prose-editor .cm-content {
   font-family: var(--font-serif);
   font-size: var(--prose-size);
-  line-height: var(--prose-leading);
+  line-height: var(--prose-line-px);
+  letter-spacing: normal;
 }

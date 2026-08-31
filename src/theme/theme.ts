@@ -108,6 +108,37 @@ export function themeFromQuery(): { theme?: ThemeName; accent?: AccentName } {
   }
 }
 
+/**
+ * Reading preferences → editor content metrics, rounded to whole pixels.
+ *
+ * The Settings "Body size" and "Line height" sliders used to write
+ * `--prose-size` and `--prose-leading` straight onto the root, and the editor
+ * multiplied them at paint time. That is how the shipped default became a
+ * 28.05px line box, which desynchronised CodeMirror's height map from the
+ * painted document on WebKitGTK and put the caret on the wrong line
+ * (docs/NOTES.md §1a).
+ *
+ * The rounding therefore has to happen HERE, once, at the only place the two
+ * numbers meet — not in CSS, which cannot round. `--prose-line-px` and
+ * `--prose-para-gap` are what the editor actually reads; `--prose-leading` is
+ * still written for chrome that wants the ratio.
+ *
+ * @param sizePx  body size in whole pixels (the slider is integer-stepped)
+ * @param leading unrounded ratio, e.g. 1.65
+ */
+export function applyProseMetrics(sizePx: number, leading: number) {
+  const root = document.documentElement;
+  // Guard the floor: a 0px line box would make every line coincide.
+  const linePx = Math.max(1, Math.round(sizePx * leading));
+  // The paragraph gap tracked the body size as 0.55em; keep the relationship
+  // and round it the same way.
+  const gapPx = Math.max(0, Math.round(sizePx * 0.55));
+  root.style.setProperty("--prose-size", `${Math.round(sizePx)}px`);
+  root.style.setProperty("--prose-leading", String(leading));
+  root.style.setProperty("--prose-line-px", `${linePx}px`);
+  root.style.setProperty("--prose-para-gap", `${gapPx}px`);
+}
+
 export function applyTheme(theme: ThemeName, accent: AccentName) {
   const root = document.documentElement;
   root.dataset.theme = theme;

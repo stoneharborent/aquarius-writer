@@ -19,11 +19,27 @@
 
 :root {
   --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  /* SWIFT-AUDIT §1.2: prose is Iowan Old Style, with the Swift web-mirror
-     fallback chain Palatino → Source Serif 4 → Georgia behind it. Iowan ships
-     with macOS; on Linux it simply falls through, which is the intent. */
-  --font-serif: "Iowan Old Style", Palatino, "Palatino Linotype", "Source Serif 4", "Source Serif Pro", Georgia, serif;
-  --font-mono: "Courier Prime", "Courier New", ui-monospace, monospace;
+  /* SWIFT-AUDIT §1.2 asked for Iowan Old Style with the Swift web-mirror chain
+     Palatino → Source Serif 4 → Georgia behind it, and said Linux "simply
+     falls through, which is the intent".
+
+     That intent was wrong, and it cost us the v0.3.0 caret bug (NOTES §1a).
+     Nothing in that chain was bundled: macOS resolved it to Iowan Old Style,
+     Linux fell all the way to DejaVu Serif, and the two faces have different
+     advance widths and different text heights for the same string. Source
+     Serif 4 is now bundled as "AQ Source Serif" (src/fonts/) and leads the
+     chain on BOTH platforms, so the editor measures identical glyphs
+     everywhere. Iowan stays behind it as a webfont-failure fallback only —
+     the visual consistency is worth more than the Iowan look. */
+  --font-serif: "AQ Source Serif", "Iowan Old Style", Palatino, "Palatino Linotype", "Source Serif 4", "Source Serif Pro", Georgia, serif;
+  /* The screenplay face, and the chrome's numeric face. Courier Prime is not
+     bundled either, so Ice/Midnight on Linux used to fall through to whatever
+     fontconfig calls `monospace` (DejaVu Sans Mono) — the same unbundled-chain
+     hazard the serif had (NOTES §1a). The bundled AQ JetBrains Mono now sits
+     ahead of the generics as the deterministic floor. It is NOT put first:
+     Courier is the industry face for a screenplay and macOS has it. Full
+     mono parity wants a bundled Courier Prime; that is a follow-up. */
+  --font-mono: "Courier Prime", "Courier New", "AQ JetBrains Mono", ui-monospace, monospace;
   /* Display / heading face. Ice and Midnight have no separate display font —
      their headings are the serif — so it resolves to the serif. AquariusOS
      overrides it with Sora. */
@@ -32,6 +48,30 @@
   --prose-size: 17px;
   --prose-leading: 1.65;
   --ui-size: 13px;
+
+  /* ── Editor content metrics: whole pixels only (NOTES §1a) ──
+   *
+   * CodeMirror builds its height map out of `getBoundingClientRect().height`
+   * per line and then maps a click's Y back through that map to find the line.
+   * Anything the map cannot see, or rounds differently from the compositor,
+   * desynchronises the two — the caret lands on the wrong line and arrow keys
+   * skip. WebKitGTK rounds fractional line boxes to device pixels where
+   * CoreText does not, so the divergence only showed up on Linux.
+   *
+   * So: the editor content path uses these whole-pixel values, never the ratio.
+   *   --prose-line-px   17 × 1.65 = 28.05  → 28px
+   *   --prose-para-gap  0.55em    =  9.35  →  9px   (as PADDING, not margin —
+   *                                                  margins are outside the
+   *                                                  border box CM measures)
+   *   --screenplay-*    14 × 1.55 = 21.7   → 22px
+   *
+   * `--prose-leading` is kept for chrome that wants the ratio; nothing inside
+   * `.cm-content` may use it. */
+  --prose-line-px: 28px;
+  --prose-para-gap: 9px;
+  --screenplay-size: 14px;
+  --screenplay-line-px: 22px;
+  --screenplay-para-gap: 2px;
 
   /* Radius + motion, declared for every theme.
      AquariusOS overrides them with the tokens.md values (7/9/12/16px,
