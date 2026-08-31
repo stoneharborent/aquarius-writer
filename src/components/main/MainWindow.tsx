@@ -7,6 +7,7 @@ import { NoteEditor } from "@/components/editors/note/NoteEditor";
 import { ScreenplayEditor } from "@/components/editors/screenplay/ScreenplayEditor";
 import { TitlePage } from "@/components/editors/screenplay/TitlePage";
 import { estimatePages } from "@/lib/markdown/fountain-smart";
+import { countWords } from "@/lib/words";
 import { ImageViewer } from "@/components/viewers/ImageViewer";
 import { PdfViewer } from "@/components/viewers/PdfViewer";
 import { HtmlViewer } from "@/components/viewers/HtmlViewer";
@@ -489,8 +490,4 @@ function EditorPlaceholder({ selectedPath }: { selectedPath: string | null }) {
       </p>
     </div>
   );
-}
-
-function countWords(s: string): number {
-  return (s.trim().match(/\S+/g) ?? []).length;
 }

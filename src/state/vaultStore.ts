@@ -15,6 +15,8 @@ import { logToShell } from "@/lib/logging";
 import { useEditor } from "@/state/editorStore";
 import { useSplit } from "@/state/splitStore";
 import { useFavorites } from "@/state/favoritesStore";
+import { useSessions } from "@/state/sessionsStore";
+import { DEFAULT_GOAL } from "@/lib/vault/sessions";
 
 export type EditorView = "editor" | "outline" | "corkboard";
 
@@ -99,7 +101,18 @@ interface VaultState {
   expandAll: (paths: string[]) => void;
   setView: (view: EditorView) => void;
   setActiveDraft: (id: string) => void;
-  reorderChapters: (next: string[]) => void;
+  /**
+   * Rearrange the manuscript's chapters — and *keep* the arrangement.
+   *
+   * Painted immediately, then written to `.aquarius/workflow.json` through the
+   * same `vault::ops::reorder_chapters` the MCP `reorder_chapters` tool calls.
+   * A refused write puts the old order back and says so, because a rail that
+   * silently forgets a drag is worse than one that never offered it
+   * (docs/PARITY.md row 10).
+   */
+  reorderChapters: (next: string[]) => Promise<void>;
+  /** Set the vault's daily word goal — the Today panel's ring is editable. */
+  setDailyGoal: (dailyWords: number) => Promise<void>;
 }
 
 /// Last workflow the user had open — so the app launches straight back into
@@ -438,6 +451,12 @@ export const useVault = create<VaultState>((set, get) => ({
       // After the hydration, never before it: the starred list arrives with the
       // rest of the aux snapshot.
       useFavorites.getState().load(workflow.id);
+      // Today's words and the last fortnight. Not awaited — the panel is an
+      // overlay nobody is looking at yet, and a vault should open at the speed
+      // of its tree.
+      void useSessions
+        .getState()
+        .load(workflow.id, workflow.goals?.dailyWords ?? DEFAULT_GOAL);
       set({
         current: workflow,
         tree,
@@ -463,6 +482,7 @@ export const useVault = create<VaultState>((set, get) => ({
     stopWatching();
     writeLastWorkflow(null);
     useFavorites.getState().clear();
+    useSessions.getState().clear();
     set({ current: null, tree: null, selectedPath: null });
   },
 
@@ -477,6 +497,8 @@ export const useVault = create<VaultState>((set, get) => ({
       // The tree reloading is also how an MCP client's `toggle_star` reaches
       // the sidebar — the tool emits the same change event a file edit does.
       void useFavorites.getState().refresh();
+      // `workflow.json` may have been edited by hand while the app was open.
+      useSessions.getState().setGoal(workflow.goals?.dailyWords ?? DEFAULT_GOAL);
     } catch (e) {
       console.error("tree refresh failed:", e);
     }
@@ -602,18 +624,56 @@ export const useVault = create<VaultState>((set, get) => ({
 
   setActiveDraft(id) { set({ activeDraftId: id }); },
 
-  reorderChapters(next) {
+  async reorderChapters(next) {
     const cur = get().current;
     if (!cur || cur.manuscripts.length === 0) return;
-    const updated: Workflow = {
-      ...cur,
-      manuscripts: cur.manuscripts.map((m, i) =>
-        i === 0 ? { ...m, chapterOrder: next } : m,
-      ),
-      drafts: cur.drafts.map((d) =>
-        d.id === get().activeDraftId ? { ...d, chapterOrder: next } : d,
-      ),
-    };
-    set({ current: updated });
+    const manuscript = cur.manuscripts[0];
+    const previous = manuscript.chapterOrder;
+
+    // Which drafts follow is the backend's rule, mirrored here so the screen
+    // and `workflow.json` never disagree: a draft that was showing the
+    // manuscript's own order follows it, a draft the writer has re-cut keeps
+    // its own shape.
+    const mirrors = (order: string[]) =>
+      order.length === previous.length && order.every((p, i) => p === previous[i]);
+    const withOrder = (base: Workflow, order: string[]): Workflow => ({
+      ...base,
+      manuscripts: base.manuscripts.map((m, i) => (i === 0 ? { ...m, chapterOrder: order } : m)),
+      drafts: base.drafts.map((d) => (mirrors(d.chapterOrder) ? { ...d, chapterOrder: order } : d)),
+    });
+
+    set({ current: withOrder(cur, next) });
+    try {
+      const report = await vault().reorderChapters(cur.id, next, manuscript.id);
+      if (get().current?.id !== cur.id) return;
+      set({ current: withOrder(cur, report.order) });
+    } catch (e) {
+      // Nothing was written, so the screen has to go back to what is on disk.
+      if (get().current?.id === cur.id) set({ current: withOrder(cur, previous) });
+      notices.fail("Could not save the new chapter order", e);
+    }
+  },
+
+  async setDailyGoal(dailyWords) {
+    const cur = get().current;
+    if (!cur) return;
+    const previous = cur.goals;
+    const goal = Math.round(dailyWords);
+    if (!Number.isFinite(goal) || goal <= 0) return;
+
+    set({ current: { ...cur, goals: { ...previous, dailyWords: goal } } });
+    useSessions.getState().setGoal(goal);
+    try {
+      const goals = await vault().setDailyGoal(cur.id, goal);
+      if (get().current?.id !== cur.id) return;
+      set({ current: { ...get().current!, goals } });
+      useSessions.getState().setGoal(goals.dailyWords);
+    } catch (e) {
+      if (get().current?.id === cur.id) {
+        set({ current: { ...get().current!, goals: previous } });
+        useSessions.getState().setGoal(previous.dailyWords);
+      }
+      notices.fail("Could not save the daily goal", e);
+    }
   },
 }));

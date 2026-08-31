@@ -221,6 +221,8 @@ Your Folder/
     workflow.json          what this vault is, and its chapter order
     snapshots/…            version history, as plain readable markdown
     comments.json          margin comments
+    favorites.json         the rows you starred
+    sessions/…             one small file per day: what you wrote, and when
     trash/                 deleted files, kept 30 days, then swept
   Drafts/Ch_01.md          ← your writing, untouched
 ```
@@ -331,16 +333,20 @@ Two more things worth knowing:
 
 ### What it can do
 
-Fifteen operations, and the rule going forward is that this list keeps pace with
-the app: **if you can do it in the window, an AI client can do it too.**
+Twenty-one operations, and the rule going forward is that this list keeps pace
+with the app: **if you can do it in the window, an AI client can do it too.**
 
 | | |
 |---|---|
 | `list_workflows`, `get_workflow` | which vaults exist; one vault's manifest and file tree |
 | `list_folder`, `search` | look around; find text across the vault |
 | `read_document`, `write_document`, `create_document` | read a file, replace one, make a new one |
+| `create_folder`, `rename_document`, `move_document` | reorganise the vault, without rewriting a file's bytes |
 | `set_frontmatter_status` | mark a chapter final / drafting / rev / outline |
 | `reorder_chapters` | rearrange the manuscript |
+| `toggle_star` | star or unstar a file or folder |
+| `compile_document` | export the manuscript — markdown, fountain, epub, docx, pdf |
+| `writing_stats` | words written today and over the last fortnight (read-only) |
 | `trash_document`, `list_trash`, `restore_document` | the reversible delete, and undoing it |
 | `list_snapshots`, `read_snapshot` | read the version history (read-only) |
 | `server_info` | a connectivity check |

@@ -6,6 +6,7 @@
 // Tauri shell, localStorage in the browser preview. Same exported API either
 // way — nothing that calls into this file needs to know which is running.
 import { vault } from "@/lib/vault";
+import { countWords } from "@/lib/words";
 import { auxBackend } from "./aux-store";
 import type { VaultNode } from "@/types/vault";
 
@@ -21,10 +22,6 @@ export function hydrateAux(wf: string): Promise<void> {
 
 const AUTO_COALESCE_MS = 5 * 60_000;
 const MAX_AUTO = 25;
-
-function countWords(s: string): number {
-  return (s.match(/\S+/g) ?? []).length;
-}
 
 export function listVersions(wf: string, path: string): VersionEntry[] {
   return auxBackend().listVersions(wf, path);

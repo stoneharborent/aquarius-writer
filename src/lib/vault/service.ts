@@ -2,7 +2,9 @@ import type {
   EntryReport,
   FileRead,
   FileStamp,
+  Goals,
   NewFileKind,
+  ReorderReport,
   VaultNode,
   Workflow,
   WorkflowKind,
@@ -92,6 +94,25 @@ export interface VaultService {
   move(workflowId: string, relPath: string, destFolder: string): Promise<EntryReport>;
   /** Move a file into .aquarius/trash/ (30d retention metadata). */
   softDelete(workflowId: string, relPath: string): Promise<void>;
+  /**
+   * Write a manuscript's chapter order into `workflow.json`.
+   *
+   * `order` must be a permutation of the order the manuscript already has —
+   * this rearranges, it never adds or removes — and anything else is rejected
+   * rather than half-applied. Omit `manuscriptId` for the first (and usually
+   * only) manuscript. Drafts whose order mirrored the manuscript's follow it.
+   */
+  reorderChapters(
+    workflowId: string,
+    order: string[],
+    manuscriptId?: string,
+  ): Promise<ReorderReport>;
+  /**
+   * Set the vault's daily word goal (`workflow.json` → `goals.dailyWords`),
+   * which is what the Today panel's ring is measured against. Resolves to the
+   * goals as they now stand.
+   */
+  setDailyGoal(workflowId: string, dailyWords: number): Promise<Goals>;
   /** Subscribe to FS changes within a workflow. Returns an unsubscribe fn. */
   watch(workflowId: string, onChange: () => void): () => void;
 }

@@ -554,6 +554,41 @@ export function createBrowserVaultService(): VaultService {
     async softDelete(_workflowId, _relPath) {
       // No-op in browser mock.
     },
+
+    async reorderChapters(_workflowId, order, manuscriptId) {
+      // The same contract the Rust side enforces: a permutation, nothing
+      // added, nothing dropped — so a bug that drops a chapter shows up in
+      // `npm run dev` and not only on a real vault.
+      const index = manuscriptId
+        ? LANTERN_WORKFLOW.manuscripts.findIndex((m) => m.id === manuscriptId)
+        : 0;
+      const manuscript = LANTERN_WORKFLOW.manuscripts[index];
+      if (!manuscript) throw new Error(`unknown manuscript: ${manuscriptId}`);
+      const before = [...manuscript.chapterOrder].sort();
+      const after = [...order].sort();
+      if (before.length !== after.length || before.some((p, i) => p !== after[i])) {
+        throw new Error(
+          `the new order must be a permutation of the current ${before.length} chapters`,
+        );
+      }
+      const old = manuscript.chapterOrder;
+      manuscript.chapterOrder = [...order];
+      for (const draft of LANTERN_WORKFLOW.drafts) {
+        if (draft.chapterOrder.length === old.length
+            && draft.chapterOrder.every((p, i) => p === old[i])) {
+          draft.chapterOrder = [...order];
+        }
+      }
+      return { manuscriptId: manuscript.id, order: [...order] };
+    },
+
+    async setDailyGoal(_workflowId, dailyWords) {
+      if (dailyWords <= 0 || dailyWords > 1_000_000) {
+        throw new Error("a daily goal has to be between 1 and 1,000,000 words");
+      }
+      LANTERN_WORKFLOW.goals = { ...LANTERN_WORKFLOW.goals, dailyWords };
+      return LANTERN_WORKFLOW.goals;
+    },
     watch(_workflowId, _onChange) {
       return () => {};
     },

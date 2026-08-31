@@ -2,8 +2,10 @@ import { create } from "zustand";
 import { parse, stringify } from "@/lib/frontmatter";
 import { vault } from "@/lib/vault";
 import { recordAutoVersion, takeSnapshot } from "@/lib/vault/aux";
+import { countWords } from "@/lib/words";
 import { useConflict } from "@/state/conflictStore";
 import { notices } from "@/state/noticeStore";
+import { useSessions } from "@/state/sessionsStore";
 import type { DocFrontMatter, FileStamp } from "@/types/vault";
 
 export type SaveStatus = "clean" | "dirty" | "saving" | "saved" | "error" | "conflict";
@@ -134,6 +136,12 @@ export const useEditor = create<EditorState>((set, get) => ({
         },
       },
     }));
+    // The day's baseline for this document. It has to be taken *here* and not
+    // only at save time: a writer who opens a 2,410-word chapter and writes
+    // four hundred words before the first autosave would otherwise have that
+    // first burst swallowed, because the earliest count the day ever saw would
+    // already include it.
+    void useSessions.getState().note(workflowId, path, countWords(parsed.body));
   },
 
   edit(path, body) {
@@ -179,6 +187,11 @@ export const useEditor = create<EditorState>((set, get) => ({
       // Version trail: every save records an auto version (coalesced within
       // 5 minutes) — the web mirror of the desktop SnapshotStore cadence.
       recordAutoVersion(doc.workflowId, path, next);
+      // Session trail: where this document's word count stands now, so the
+      // Today panel can subtract it from where the day started. The *body*,
+      // counted the way the footer counts it — a status chip changing must not
+      // read as words written. This is the debounced save, not a keystroke.
+      void useSessions.getState().note(doc.workflowId, path, countWords(doc.body));
       set((s) => ({
         docs: {
           ...s.docs,

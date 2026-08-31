@@ -277,6 +277,15 @@ pub struct CompileParam {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct StatsParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// How many calendar days to summarise, ending today. Defaults to 14.
+    #[serde(default)]
+    pub days: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct SnapshotParam {
     /// Workflow id, from `list_workflows`.
     pub workflow_id: String,
@@ -747,6 +756,33 @@ the compile."
     }
 
     #[tool(
+        name = "writing_stats",
+        description = "How much the writer has actually written lately, from the vault's own \
+session log (.aquarius/sessions/, one file per calendar day in the writer's local timezone). \
+Returns today — words written, the daily goal, and the per-document gains behind that number — \
+plus one entry per day for the last two weeks (14 by default, oldest first, days with nothing \
+written included as zeroes) and the current streak of consecutive days with any words. \
+READ-ONLY: this records nothing and changes nothing. Counts are gains, not totals — a chapter \
+that went from 2,410 to 2,822 words today reports 412, and a day where words were deleted \
+counts as zero rather than going negative. Use it to answer \"how is the book going\" without \
+guessing from file sizes."
+    )]
+    fn writing_stats(
+        &self,
+        Parameters(StatsParam { workflow_id, days }): Parameters<StatsParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let (wf, _) = vault::workflow::read_or_create(&root).map_err(internal)?;
+        let view = crate::sessions::view(
+            &root,
+            days.unwrap_or(crate::sessions::SPARK_DAYS),
+            wf.goals.daily_words,
+            crate::vault::registry::now_ms(),
+        );
+        json(view)
+    }
+
+    #[tool(
         name = "server_info",
         description = "What this MCP server is attached to: the app version, the port it is \
 listening on, and how many vaults are registered. Useful as a connectivity check."
@@ -795,6 +831,10 @@ overwrites an existing file.
 
 toggle_star marks a file or folder as a favourite; get_workflow lists the starred paths \
 alongside the tree. Stars are metadata in the vault, never a change to the document.
+
+writing_stats is the vault's session log: words written today and on each of the last fourteen \
+days, the daily goal, and the current streak. It is read-only, and the numbers are gains rather \
+than totals — the app records them as the writer saves.
 
 compile_document turns a manuscript into a finished file — markdown, fountain, epub, docx or \
 pdf. Markdown and fountain always work; the other three need pandoc installed on the machine, \
@@ -848,6 +888,7 @@ mod tests {
         "toggle_star",
         "trash_document",
         "write_document",
+        "writing_stats",
     ];
 
     #[test]

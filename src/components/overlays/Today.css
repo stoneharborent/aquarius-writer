@@ -29,6 +29,40 @@
   font-weight: 400;
 }
 
+/* The daily goal, editable in place. A button that looks like the text it
+   replaces until it is hovered — the affordance appears when a pointer is
+   near it, the way the tree's star does. */
+.td-goal {
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--ink-mute);
+  background: transparent;
+  border: 0.5px solid transparent;
+  border-radius: 5px;
+  padding: 0 5px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.td-goal:hover,
+.td-goal:focus-visible {
+  color: var(--ink);
+  border-color: var(--line);
+  background: var(--bg-soft);
+}
+
+.td-goal-input {
+  width: 5.5em;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--ink);
+  background: var(--bg-soft);
+  border: 0.5px solid var(--accent);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
 .td-label {
   font-family: var(--font-serif);
   font-size: 13px;
@@ -41,6 +75,21 @@
   font-size: 12px;
   color: var(--starred);
   margin-top: 6px;
+}
+
+.td-streak-note {
+  color: var(--ink-mute);
+}
+
+/* Empty states: a plain sentence that says what will fill the space, never a
+   shrug and never a blank rectangle (PARITY row 22's house style). */
+.td-empty {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-style: italic;
+  color: var(--ink-soft);
+  line-height: 1.5;
 }
 
 .td-section-head {

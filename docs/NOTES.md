@@ -1734,3 +1734,139 @@ where the caller just read the list it is rewriting.
 - **The `conflict` save status is not a failure state.** It renders as "changed
   on disk" in `--warn`, not "save failed" in `--danger`, because nothing failed
   — a write was held back on purpose.
+
+---
+
+## 21. Today runs on real data, and the session format is a proposal
+
+*2026-08-31 — closes PARITY row 10 and the Today row; finishes Wave 2.*
+
+Two things in this app were pretending. The chapter rail's drag reordered
+chapters in memory and forgot them on the next open, while the MCP
+`reorder_chapters` tool had been persisting the same order since Stage 5. And
+the Today panel — goal ring, streak, 14-day sparkline, per-document deltas —
+was painted from a `const TODAY = {…}` at the top of the file. So is the Swift
+app's (SWIFT-AUDIT §2.6). Both were fixed in one change because they share a
+premise: the manifest on disk is the truth, and the screen should be showing
+it.
+
+### 21a. The reorder was three lines and one real risk
+
+`vault::ops::reorder_chapters` already existed, already validated, already
+wrote `workflow.json`, already carried mirroring drafts along. The UI simply
+was not calling it. So: a `vault_reorder_chapters` command, a
+`reorderChapters` on the service seam (both implementations), and
+`vaultStore.reorderChapters` became async — paint the new order immediately,
+write it, and **put the old order back if the write is refused**. A rail that
+silently forgets a drag is worse than one that never offered it.
+
+The store mirrors the backend's rule about drafts rather than inventing its
+own: a draft still showing the manuscript's order follows it, a draft the
+writer has re-cut keeps its shape. Before, the store updated the *active*
+draft regardless, which would now be a screen that disagreed with the file.
+
+The part that was actually at risk is not the write — it is
+`workflow::reconcile_chapter_order`, which runs on every
+`vault_load_workflow` and merges the manifest against what is on disk. If that
+pass had re-sorted, the rail would have snapped back to alphabetical the next
+time the vault opened and the bug would have looked identical to the one being
+fixed. `ops::a_reordered_manuscript_survives_the_next_open` pins it: reopen,
+reconcile, assert nothing moved — then add a chapter outside the app and
+assert it lands at the *end* rather than re-sorting the writer's arrangement.
+
+### 21b. `.aquarius/sessions/` — one file per calendar day
+
+HANDOFF §3 sketched this folder in May 2026 and nothing built it. The exact
+shape, the rules, and the note that it is offered to the Swift app as a shared
+contract live in **PARITY.md → "The session format"**; the code is
+`src-tauri/src/sessions.rs`. What is worth recording here is *why* it is
+shaped that way.
+
+**Absolute counts, not deltas.** HANDOFF §4 proposed logging
+`{ docPath, words, at }` deltas — "+412 words to Ch 03". That is the right
+thing to *display* and the wrong thing to store: an append log of deltas
+double-counts on a retry, cannot be reconciled against a file that changed
+outside the app, and turns a corrupt tail into a wrong number rather than a
+missing one. Storing `{ start, latest }` per document per day makes every
+write idempotent — the same save landing twice changes nothing — and makes the
+day's total a pure function of the file. `latest` is simply the last count we
+saw.
+
+**Local dates.** A writer working until one in the morning expects those words
+in the day they think they are in. So the filename comes from
+`chrono::Local`, and the browser preview's equivalent walks days at noon so a
+DST shift cannot skip one.
+
+**A first observation is a baseline.** This is the whole trick and it is easy
+to get wrong. If the count were only recorded on save, opening a 2,410-word
+chapter and writing four hundred words before the first autosave would record
+`start = 2,822` and credit the writer with nothing. So `editorStore.open`
+notes the count too — the baseline is taken when the document appears, and
+every save moves `latest`.
+
+**Losses floor at zero, per document.** The day's total is
+`Σ max(0, latest − start)`. Cutting six hundred words out of chapter one does
+not cancel the two hundred and fifty written into chapter two. A day is never
+negative, and it also means a day spent revising downward reads as zero — the
+one place this is stricter than it looks, and deliberate: the number claims
+"words written", not "net change".
+
+**Words are counted one way.** `src/lib/words.ts` is now the single
+`countWords`, used by the footer stats, the version trail and the session
+notes, over the document **body** with its frontmatter removed. Three
+near-identical private copies were how the footer and the Today panel could
+have quietly disagreed about the same paragraph.
+
+**Nothing here is fatal.** A corrupt day file reads as an empty day and is
+replaced by the next write. Unknown keys survive at both levels (`extra`,
+flattened), because the format is being offered to another app and a field
+this version has never heard of must not be dropped on the way through.
+
+### 21c. Renames migrate; the trash does not
+
+Sessions are keyed by path like snapshots and comments, so they ride the same
+door: `aux_store::migrate_document` / `migrate_folder` now re-key every day
+file, which means `vault::ops` did not have to change at all.
+
+Trashing is the deliberate asymmetry. A star is dropped when a row is trashed
+(PARITY row 4) because a star points at something you want to open. A
+session entry points at something that *happened*, and a Tuesday that quietly
+loses four hundred words because a chapter was cut on Friday would be a lie
+about the past. History is history.
+
+### 21d. The goal became real in the same change
+
+`goals.dailyWords` had been in `workflow.json` since Stage 2, read by the ring
+and written by nothing — in both apps. A ring measured against a number the
+writer cannot change is the same pretend as a ring measured against sample
+data, so the "/ 1,000" beside the day's count is now an in-place editor
+(`vault_set_daily_goal` → `ops::save_workflow`). Every session file records
+the goal that was in force **on the day it describes**, so changing the goal
+today does not rewrite what last week was measured against.
+
+### 21e. Where the numbers surface
+
+- **Today (⌘T / the sidebar quick view)** — the same layout as before, now
+  fed by `sessionsStore`: ring, streak, per-document list (top five, real),
+  and the fortnight. It refreshes when it opens, because an MCP client may
+  have been writing while it was shut.
+- **Empty states**, two of them, because a fresh vault is the first thing
+  anyone sees: *"nothing written today yet"* under the ring, and a sentence
+  where the sparkline or the document list would be. No shrug, no blank
+  rectangle.
+- **`writing_stats` on MCP** — read-only, today plus the last fourteen days
+  plus the streak. Swift has no equivalent, which makes this the second thing
+  (after the conflict guard's auto-snapshot) where the port is ahead on
+  behaviour rather than on platform.
+
+### 21f. Two things this did not do
+
+- **No idle-time tracking.** HANDOFF §4's session entry had `startedAt` /
+  `endedAt`. Wall-clock time in an editor measures how long a window was open,
+  not how long anyone wrote, and the format has room to add it later without
+  breaking a reader — which is the point of `extra`.
+- **The watcher was already right.** `.aquarius/` is excluded by
+  `paths::is_metadata`, so writing a session file cannot look like an external
+  edit and no self-write ledger entry was needed. The conflict-guard save path
+  is untouched: the session note happens *after* a successful write, off the
+  result, and a refused save records nothing.

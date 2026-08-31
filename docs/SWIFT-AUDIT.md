@@ -258,8 +258,11 @@ and the port looks like a text field.
 - Command palette (⌘P) — includes "Reference: <note>" entries that open a
   doc in the reference pane.
 - Today (⌘T) — goal ring, streak flame, 14-day sparkline, per-doc deltas.
-  **Still sample data in Swift too** (labeled "Sample data — live writing
-  stats are coming soon"). The port's fake Today is at parity, not behind.
+  **Still sample data in Swift** (labeled "Sample data — live writing stats
+  are coming soon"). This was parity-in-fakeness until 2026-08-31; the port
+  now runs on real `.aquarius/sessions/` data and is **ahead** here. The
+  format is written out in PARITY.md as a contract Swift can adopt unchanged —
+  same folder, same filenames, same keys, unknown keys preserved.
 - Graph (⌘G), Cheat sheet (⌘?), Settings (⌘,) — parity.
 - Welcome screen: AppMark logo + radial accent glow, three cards, **recent
   workflows list**, **drag a folder anywhere onto the window to open it**,

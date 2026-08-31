@@ -14,6 +14,7 @@
 //!   comments.json                      ← { "Drafts/Ch_03.md": [ … ] }
 //!   searches.json                      ← recent find queries
 //!   favorites.json                     ← [ "Drafts/Ch_03.md", … ] starred rows
+//!   sessions/2026-08-31.json           ← words written that day (`crate::sessions`)
 //! ```
 //!
 //! The version *bodies* are plain markdown on purpose: a writer who loses the
@@ -499,6 +500,7 @@ pub fn migrate_document(root: &Path, from_rel: &str, to_rel: &str) -> std::io::R
         write_comments(root, &all)?;
     }
     migrate_favorites(root, from_rel, to_rel, false)?;
+    crate::sessions::migrate_document(root, from_rel, to_rel)?;
     Ok(())
 }
 
@@ -528,6 +530,7 @@ pub fn migrate_folder(root: &Path, from_rel: &str, to_rel: &str) -> std::io::Res
         write_comments(root, &next)?;
     }
     migrate_favorites(root, from_rel, to_rel, true)?;
+    crate::sessions::migrate_folder(root, from_rel, to_rel)?;
     Ok(())
 }
 

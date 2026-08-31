@@ -4,6 +4,8 @@ import type { VaultService } from "./service";
 import type {
   EntryReport,
   FileRead,
+  Goals,
+  ReorderReport,
   VaultNode,
   Workflow,
   WorkflowSummary,
@@ -111,6 +113,20 @@ export function createTauriVaultService(): VaultService {
 
     async softDelete(workflowId, relPath) {
       await invoke("vault_soft_delete", { workflowId, relPath });
+    },
+
+    async reorderChapters(workflowId, order, manuscriptId) {
+      // The same `vault::ops::reorder_chapters` the MCP tool calls — one
+      // function, two doors (docs/PARITY.md row 10).
+      return invoke<ReorderReport>("vault_reorder_chapters", {
+        workflowId,
+        order,
+        manuscriptId: manuscriptId ?? null,
+      });
+    },
+
+    async setDailyGoal(workflowId, dailyWords) {
+      return invoke<Goals>("vault_set_daily_goal", { workflowId, dailyWords });
     },
 
     watch(workflowId, onChange) {

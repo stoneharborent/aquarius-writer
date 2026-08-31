@@ -420,6 +420,96 @@ pub fn vault_list_stars(state: State<'_, AppState>, workflow_id: String) -> R<Ve
     Ok(vault::ops::list_stars(&root))
 }
 
+// ── chapter order ────────────────────────────────────────────────────────
+
+/// Persist a manuscript's chapter order — the drag in the chapter rail and the
+/// outline, landing in the same `vault::ops::reorder_chapters` the MCP
+/// `reorder_chapters` tool calls. `order` must be a permutation of the order
+/// the manuscript already has; anything else is refused rather than half-done.
+#[tauri::command]
+pub fn vault_reorder_chapters(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    order: Vec<String>,
+    manuscript_id: Option<String>,
+) -> R<vault::ops::ReorderReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::reorder_chapters(&root, manuscript_id.as_deref(), &order, &state.self_writes)
+}
+
+// ── writing sessions (the Today panel) ───────────────────────────────────
+//
+// `.aquarius/sessions/YYYY-MM-DD.json`, one file per calendar day. The
+// renderer notes a document's word count after each successful save — which is
+// already debounced, so this is never per keystroke — and reads the day back
+// for the Today panel. See `crate::sessions`.
+
+/// The workflow's daily word goal, or the default when it has none.
+fn goal_of(root: &Path) -> u32 {
+    workflow::read_or_create(root)
+        .map(|(wf, _)| wf.goals.daily_words)
+        .unwrap_or(crate::sessions::DEFAULT_GOAL)
+}
+
+/// Record where a document's word count stands now. Answers with today, so a
+/// save updates the panel without a second round trip.
+#[tauri::command]
+pub fn session_note(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    rel_path: String,
+    words: usize,
+) -> R<crate::sessions::DaySummary> {
+    let root = root_of(&state, &workflow_id)?;
+    // Refuse a path that could not be a vault document before writing its name
+    // into a session file — the same guard every other door has.
+    paths::resolve_in_root(&root, &rel_path).map_err(|e| e.0)?;
+    crate::sessions::note(&root, &rel_path, words, goal_of(&root), registry::now_ms()).map_err(io)
+}
+
+#[tauri::command]
+pub fn session_today(
+    state: State<'_, AppState>,
+    workflow_id: String,
+) -> R<crate::sessions::DaySummary> {
+    let root = root_of(&state, &workflow_id)?;
+    Ok(crate::sessions::today(&root, goal_of(&root), registry::now_ms()))
+}
+
+/// Today, the last `days` days (oldest first, gaps included) and the streak.
+#[tauri::command]
+pub fn session_range(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    days: Option<usize>,
+) -> R<crate::sessions::SessionsView> {
+    let root = root_of(&state, &workflow_id)?;
+    let days = days.unwrap_or(crate::sessions::SPARK_DAYS);
+    Ok(crate::sessions::view(&root, days, goal_of(&root), registry::now_ms()))
+}
+
+/// Set the daily word goal in `workflow.json` and stamp today's session file
+/// with it. The Today panel's ring is editable, which is what makes
+/// `goals.dailyWords` a real setting rather than a field nothing ever wrote.
+#[tauri::command]
+pub fn vault_set_daily_goal(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    daily_words: u32,
+) -> R<crate::model::Goals> {
+    if daily_words == 0 || daily_words > 1_000_000 {
+        return Err("a daily goal has to be between 1 and 1,000,000 words".into());
+    }
+    let root = root_of(&state, &workflow_id)?;
+    let (mut wf, _) = workflow::read_or_create(&root).map_err(io)?;
+    wf.goals.daily_words = daily_words;
+    vault::ops::save_workflow(&root, &wf, &state.self_writes)?;
+    // Best effort: the goal is saved either way, and a session file that could
+    // not be written is not worth failing the setting over.
+    let _ = crate::sessions::set_goal(&root, daily_words, registry::now_ms());
+    Ok(wf.goals)
+}
+
 // ── watching ─────────────────────────────────────────────────────────────
 
 #[tauri::command]

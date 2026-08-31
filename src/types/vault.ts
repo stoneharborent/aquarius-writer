@@ -85,6 +85,16 @@ export interface VaultNode {
 /** The two document kinds the sidebar's add menu offers. */
 export type NewFileKind = "markdown" | "fountain";
 
+/**
+ * A manuscript's chapter order after it was rearranged — `ReorderReport` in
+ * `src-tauri/src/vault/ops.rs`, the answer to both the rail's drag and the MCP
+ * `reorder_chapters` tool.
+ */
+export interface ReorderReport {
+  manuscriptId: string;
+  order: string[];
+}
+
 // ── the conflict contract (PARITY row 9) ─────────────────────────────────
 //
 // Mirrors `FileStamp` / `FileRead` / `WriteResult` in `src-tauri/src/model.rs`,

@@ -21,6 +21,7 @@ mod compile;
 mod fs_ops;
 mod mcp;
 mod model;
+mod sessions;
 mod state;
 mod testutil;
 mod updater;
@@ -78,6 +79,11 @@ pub fn run() {
             commands::vault_soft_delete,
             commands::vault_set_star,
             commands::vault_list_stars,
+            commands::vault_reorder_chapters,
+            commands::vault_set_daily_goal,
+            commands::session_note,
+            commands::session_today,
+            commands::session_range,
             commands::vault_watch_start,
             commands::vault_watch_stop,
             commands::app_log,

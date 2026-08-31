@@ -1776,4 +1776,44 @@ mod tests {
         assert!(reorder_chapters(t.path(), None, &invented, &writes).is_err());
         assert!(reorder_chapters(t.path(), Some("nope"), &next, &writes).is_err());
     }
+
+    #[test]
+    fn a_reordered_manuscript_survives_the_next_open() {
+        // What the chapter rail's drag actually has to guarantee (PARITY row
+        // 10). Persisting the order is only half of it: `vault_load_workflow`
+        // reconciles the manifest against the disk on every open, and if that
+        // pass disagreed with what was just written the rail would snap back to
+        // alphabetical the next time the vault opened.
+        let t = TempDir::new("ops-reorder-reopen");
+        t.write("Drafts/Ch_01.md", "a");
+        t.write("Drafts/Ch_02.md", "b");
+        t.write("Drafts/Ch_03.md", "c");
+        let writes = sw();
+
+        let next = vec![
+            "Drafts/Ch_03.md".to_string(),
+            "Drafts/Ch_01.md".to_string(),
+            "Drafts/Ch_02.md".to_string(),
+        ];
+        reorder_chapters(t.path(), None, &next, &writes).unwrap();
+
+        let (mut reopened, created) = workflow::read_or_create(t.path()).unwrap();
+        assert!(!created);
+        assert!(
+            !workflow::reconcile_chapter_order(t.path(), &mut reopened),
+            "the open-time reconcile must not disturb an order the writer chose"
+        );
+        assert_eq!(reopened.manuscripts[0].chapter_order, next);
+        assert_eq!(reopened.drafts[0].chapter_order, next);
+
+        // And a chapter added outside the app lands at the end rather than
+        // re-sorting the writer's arrangement.
+        t.write("Drafts/Ch_04.md", "d");
+        let (mut later, _) = workflow::read_or_create(t.path()).unwrap();
+        assert!(workflow::reconcile_chapter_order(t.path(), &mut later));
+        assert_eq!(
+            later.manuscripts[0].chapter_order,
+            ["Drafts/Ch_03.md", "Drafts/Ch_01.md", "Drafts/Ch_02.md", "Drafts/Ch_04.md"],
+        );
+    }
 }
