@@ -14,6 +14,7 @@ import { notices } from "@/state/noticeStore";
 import { logToShell } from "@/lib/logging";
 import { useEditor } from "@/state/editorStore";
 import { useSplit } from "@/state/splitStore";
+import { useFavorites } from "@/state/favoritesStore";
 
 export type EditorView = "editor" | "outline" | "corkboard";
 
@@ -256,6 +257,7 @@ async function applyRelocation(
     if (to === path) return path;
 
     useEditor.getState().remapPath(path, to);
+    void useFavorites.getState().remap(path, to);
 
     const split = useSplit.getState();
     const secondary = followed(split.secondaryPath, path, to);
@@ -419,6 +421,9 @@ export const useVault = create<VaultState>((set, get) => ({
       } catch (e) {
         console.error("aux state failed to load:", e);
       }
+      // After the hydration, never before it: the starred list arrives with the
+      // rest of the aux snapshot.
+      useFavorites.getState().load(workflow.id);
       set({
         current: workflow,
         tree,
@@ -443,6 +448,7 @@ export const useVault = create<VaultState>((set, get) => ({
   closeWorkflow() {
     stopWatching();
     writeLastWorkflow(null);
+    useFavorites.getState().clear();
     set({ current: null, tree: null, selectedPath: null });
   },
 
@@ -454,6 +460,9 @@ export const useVault = create<VaultState>((set, get) => ({
       // Deliberately narrow: the selection, the view mode and the open editors
       // all survive an external edit. Only the tree and the metadata change.
       set({ current: workflow, tree });
+      // The tree reloading is also how an MCP client's `toggle_star` reaches
+      // the sidebar — the tool emits the same change event a file edit does.
+      void useFavorites.getState().refresh();
     } catch (e) {
       console.error("tree refresh failed:", e);
     }

@@ -656,6 +656,71 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+// ── stars and soft delete ────────────────────────────────────────────────
+//
+// Wave 1 row 4 of docs/PARITY.md. A star is metadata about a tree row, not a
+// property of the file, so it lives in `.aquarius/favorites.json` and never
+// touches the document's bytes — the same reasoning that keeps snapshots and
+// comments out of the file.
+
+/// A row's star after it was flipped.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StarReport {
+    pub path: String,
+    pub starred: bool,
+}
+
+/// Star, unstar, or flip a file or folder.
+///
+/// `starred` is `None` for a toggle. The path has to exist: a star on a row
+/// that isn't in the tree would sit in the Starred quick view as something the
+/// writer cannot open, and is almost always a caller's typo.
+pub fn set_star(root: &Path, rel: &str, starred: Option<bool>) -> OpResult<StarReport> {
+    if rel.is_empty() {
+        return Err("the vault root itself cannot be starred".into());
+    }
+    let target = resolve(root, rel)?;
+    guard_not_metadata(root, &target)?;
+    if !target.exists() {
+        return Err(format!("nothing at {rel}"));
+    }
+    let next = match starred {
+        Some(want) => aux_store::set_favorite(root, rel, want),
+        None => aux_store::toggle_favorite(root, rel),
+    }
+    .map_err(|e| format!("{rel}: could not save the star: {e}"))?;
+    Ok(StarReport { path: rel.to_string(), starred: next })
+}
+
+/// The starred rows in this vault, sorted.
+pub fn list_stars(root: &Path) -> Vec<String> {
+    aux_store::read_favorites(root)
+}
+
+/// Move a file or folder into `.aquarius/trash/`.
+///
+/// Both doors go through here so that the star bookkeeping cannot be forgotten
+/// on one of them: a trashed row loses its star (and, for a folder, so does
+/// everything inside it) in the same call.
+pub fn trash_entry(
+    root: &Path,
+    rel: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<crate::fs_ops::trash::TrashRecord> {
+    let target = resolve(root, rel)?;
+    guard_not_metadata(root, &target)?;
+    self_writes.record(&target);
+    let record = crate::fs_ops::trash::soft_delete(root, rel, crate::vault::registry::now_ms())
+        .map_err(|e| format!("{rel}: {e}"))?;
+    // The file is already in the trash; a star left behind is untidy, not
+    // dangerous, so this is reported rather than fatal.
+    if let Err(e) = aux_store::forget_favorite(root, rel) {
+        eprintln!("[vault] {rel}: could not drop its star: {e}");
+    }
+    Ok(record)
+}
+
 /// Set (or add) one frontmatter key on a document.
 ///
 /// Everything else in the file survives byte for byte — see
@@ -1143,6 +1208,111 @@ mod tests {
         let restored = crate::fs_ops::trash::restore(t.path(), &rec.id).unwrap();
         assert_eq!(restored.as_deref(), Some("Drafts/gone.md"));
         assert_eq!(std::fs::read_to_string(t.path().join("Drafts/gone.md")).unwrap(), "gone");
+    }
+
+    // ── stars ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn starring_a_row_never_touches_the_document() {
+        let t = TempDir::new("ops-star");
+        let plain = "---\ntitle: One\n---\n\nbody\n";
+        t.write("Drafts/Ch_01.md", plain);
+
+        let on = set_star(t.path(), "Drafts/Ch_01.md", None).unwrap();
+        assert!(on.starred);
+        assert_eq!(on.path, "Drafts/Ch_01.md");
+        assert_eq!(list_stars(t.path()), vec!["Drafts/Ch_01.md"]);
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Drafts/Ch_01.md")).unwrap(),
+            plain,
+            "a star is metadata — the file's bytes are not rewritten"
+        );
+
+        assert!(!set_star(t.path(), "Drafts/Ch_01.md", None).unwrap().starred);
+        assert!(list_stars(t.path()).is_empty());
+
+        // Explicit set is idempotent in both directions.
+        assert!(set_star(t.path(), "Drafts/Ch_01.md", Some(true)).unwrap().starred);
+        assert!(set_star(t.path(), "Drafts/Ch_01.md", Some(true)).unwrap().starred);
+        assert_eq!(list_stars(t.path()).len(), 1);
+    }
+
+    #[test]
+    fn a_folder_can_be_starred_but_nothing_outside_the_vault_can() {
+        let t = TempDir::new("ops-star-guards");
+        t.write("Drafts/Ch_01.md", "one");
+        assert!(set_star(t.path(), "Drafts", None).unwrap().starred);
+
+        assert!(set_star(t.path(), "", None).is_err(), "the vault root is not a row");
+        assert!(set_star(t.path(), "../outside.md", None).is_err());
+        assert!(set_star(t.path(), ".aquarius", None).is_err());
+        assert!(set_star(t.path(), "Drafts/missing.md", None).is_err());
+    }
+
+    #[test]
+    fn a_starred_document_keeps_its_star_through_a_rename_and_a_move() {
+        let t = TempDir::new("ops-star-follows");
+        let writes = sw();
+        t.write("Drafts/Ch_03.md", "rain");
+        std::fs::create_dir_all(t.path().join("Archive")).unwrap();
+        set_star(t.path(), "Drafts/Ch_03.md", Some(true)).unwrap();
+
+        rename_entry(t.path(), "Drafts/Ch_03.md", "Helmreach in Rain", &writes).unwrap();
+        assert_eq!(list_stars(t.path()), vec!["Drafts/Helmreach in Rain.md"]);
+
+        move_entry(t.path(), "Drafts/Helmreach in Rain.md", "Archive", &writes).unwrap();
+        assert_eq!(list_stars(t.path()), vec!["Archive/Helmreach in Rain.md"]);
+    }
+
+    #[test]
+    fn moving_a_folder_carries_the_stars_inside_it() {
+        let t = TempDir::new("ops-star-folder-move");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "one");
+        t.write("Drafts/Deep/Ch_02.md", "two");
+        std::fs::create_dir_all(t.path().join("Archive")).unwrap();
+        set_star(t.path(), "Drafts/Ch_01.md", Some(true)).unwrap();
+        set_star(t.path(), "Drafts/Deep/Ch_02.md", Some(true)).unwrap();
+
+        move_entry(t.path(), "Drafts", "Archive", &writes).unwrap();
+
+        assert_eq!(
+            list_stars(t.path()),
+            vec!["Archive/Drafts/Ch_01.md", "Archive/Drafts/Deep/Ch_02.md"]
+        );
+    }
+
+    #[test]
+    fn trashing_a_row_takes_its_star_with_it() {
+        let t = TempDir::new("ops-trash-star");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "one");
+        t.write("Drafts/Ch_02.md", "two");
+        set_star(t.path(), "Drafts/Ch_01.md", Some(true)).unwrap();
+        set_star(t.path(), "Drafts/Ch_02.md", Some(true)).unwrap();
+
+        let record = trash_entry(t.path(), "Drafts/Ch_01.md", &writes).unwrap();
+        assert_eq!(record.path, "Drafts/Ch_01.md");
+        assert!(!t.path().join("Drafts/Ch_01.md").exists());
+        assert_eq!(
+            list_stars(t.path()),
+            vec!["Drafts/Ch_02.md"],
+            "a star on a trashed row would be a quick-view entry that cannot be opened"
+        );
+        assert!(
+            writes.is_own(&t.path().join("Drafts/Ch_01.md")),
+            "the delete is stamped, or the watcher reloads the tree for our own delete"
+        );
+
+        // A starred folder loses its subtree's stars too.
+        t.write("Notes/a.md", "a");
+        set_star(t.path(), "Notes/a.md", Some(true)).unwrap();
+        set_star(t.path(), "Notes", Some(true)).unwrap();
+        trash_entry(t.path(), "Notes", &writes).unwrap();
+        assert_eq!(list_stars(t.path()), vec!["Drafts/Ch_02.md"]);
+
+        assert!(trash_entry(t.path(), "Drafts/nothing.md", &writes).is_err());
+        assert!(trash_entry(t.path(), "../outside.md", &writes).is_err());
     }
 
     #[test]

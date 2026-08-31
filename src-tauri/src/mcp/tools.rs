@@ -30,7 +30,7 @@ use crate::aux_store;
 use crate::fs_ops::trash;
 use crate::mcp::McpState;
 use crate::state::AppState;
-use crate::vault::{self, ops, registry};
+use crate::vault::{self, ops};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router, ErrorData};
 use schemars::JsonSchema;
@@ -223,6 +223,17 @@ pub struct RestoreParam {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct StarParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// The file or folder to star, relative to the vault root.
+    pub path: String,
+    /// true to star, false to unstar. Omit to flip whatever it is now.
+    #[serde(default)]
+    pub starred: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct SnapshotParam {
     /// Workflow id, from `list_workflows`.
     pub workflow_id: String,
@@ -270,7 +281,15 @@ file's frontmatter and word count. Use this to orient yourself before reading an
         let root = self.root(&workflow_id)?;
         let (wf, _) = vault::workflow::read_or_create(&root).map_err(internal)?;
         let (tree, _) = vault::tree::walk(&root, &wf.title).map_err(internal)?;
-        json(serde_json::json!({ "workflow": wf, "tree": tree }))
+        // `starred` rides along here rather than in a tool of its own: it is a
+        // handful of paths, it is only meaningful against the tree beside it,
+        // and orienting yourself is exactly when you want to know which rows
+        // the writer marked.
+        json(serde_json::json!({
+            "workflow": wf,
+            "tree": tree,
+            "starred": ops::list_stars(&root),
+        }))
     }
 
     #[tool(
@@ -456,10 +475,31 @@ that mirrored the manuscript order follow it."
     }
 
     #[tool(
+        name = "toggle_star",
+        description = "Star or unstar a file or folder — the same star the writer flips in the \
+app's sidebar, which puts the row in the Starred quick view at the top of the tree. Pass \
+`starred` to set it explicitly, or leave it out to flip whatever it is now; either way the \
+answer says which state it landed in. A star is metadata (it lives in the vault's \
+.aquarius/favorites.json), so this never rewrites a single byte of the document, and the star \
+follows the file through a rename or a move. Use get_workflow to see which rows are already \
+starred."
+    )]
+    fn toggle_star(
+        &self,
+        Parameters(StarParam { workflow_id, path, starred }): Parameters<StarParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let report = ops::set_star(&root, &path, starred).map_err(invalid)?;
+        self.notify(&workflow_id);
+        json(report)
+    }
+
+    #[tool(
         name = "trash_document",
         description = "Move a document to the vault's Recently Deleted (.aquarius/trash/). \
 This is a soft delete and is reversible with restore_document for 30 days — the file is \
-moved, never unlinked. There is no tool for permanent deletion, on purpose."
+moved, never unlinked. If the row was starred the star is dropped with it. There is no tool \
+for permanent deletion, on purpose."
     )]
     fn trash_document(
         &self,
@@ -467,10 +507,7 @@ moved, never unlinked. There is no tool for permanent deletion, on purpose."
     ) -> Result<String, ErrorData> {
         let root = self.root(&workflow_id)?;
         let state = self.state();
-        let target = vault::paths::resolve_in_root(&root, &path).map_err(|e| invalid(e.0))?;
-        state.note_self_write(&target);
-        let record = trash::soft_delete(&root, &path, registry::now_ms())
-            .map_err(|e| invalid(format!("{path}: {e}")))?;
+        let record = ops::trash_entry(&root, &path, &state.self_writes).map_err(invalid)?;
         self.notify(&workflow_id);
         json(record)
     }
@@ -611,6 +648,9 @@ never rewrite a file's bytes, and they carry its version history and margin comm
 A name that is already taken produces a numbered variant (\"Chapter One 2\") — nothing here \
 overwrites an existing file.
 
+toggle_star marks a file or folder as a favourite; get_workflow lists the starred paths \
+alongside the tree. Stars are metadata in the vault, never a change to the document.
+
 The writer may have this same vault open in the app while you work. Your writes reach the UI \
 immediately, but a document they are actively editing holds unsaved text that will win the \
 next time they save — so tell them what you changed rather than assuming they watched it \
@@ -654,6 +694,7 @@ mod tests {
         "search",
         "server_info",
         "set_frontmatter_status",
+        "toggle_star",
         "trash_document",
         "write_document",
     ];
@@ -723,7 +764,7 @@ mod tests {
         let router = AquariusMcp::tool_router();
         for name in [
             "read_document", "write_document", "create_document", "list_folder",
-            "create_folder", "rename_document", "move_document",
+            "create_folder", "rename_document", "move_document", "toggle_star",
         ] {
             let schema = serde_json::to_string(&router.get(name).unwrap().input_schema).unwrap();
             assert!(

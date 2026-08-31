@@ -11,14 +11,23 @@ import {
 } from "@/theme/theme";
 import { useTheme } from "@/state/themeStore";
 import { useVault } from "@/state/vaultStore";
+import { useOverlay } from "@/state/overlayStore";
 import { PROVIDERS, useSync } from "@/state/syncStore";
 import { useUpdates } from "@/state/updateStore";
 import "./Settings.css";
 
 type Tab = "appearance" | "sync" | "workflows" | "mcp" | "about";
 
+const TABS: Tab[] = ["appearance", "sync", "workflows", "mcp", "about"];
+
 export function Settings() {
-  const [tab, setTab] = useState<Tab>("appearance");
+  // The caller may name the tab it wants — the sidebar's "Manage workflows…"
+  // opens straight onto Workflows. Read once, as the initial value, so the
+  // writer can then move around freely.
+  const wanted = useOverlay((s) => s.payload.tab);
+  const [tab, setTab] = useState<Tab>(
+    TABS.includes(wanted as Tab) ? (wanted as Tab) : "appearance",
+  );
   const { theme, accent, setTheme, setAccent } = useTheme();
   const [fontSize, setFontSize] = useState(17);
   const [lineHeight, setLineHeight] = useState(1.65);
@@ -29,7 +38,7 @@ export function Settings() {
     <Overlay title="Settings" width={720}>
       <div className="st">
         <nav className="st-nav">
-          {(["appearance", "sync", "workflows", "mcp", "about"] as Tab[]).map((t) => (
+          {TABS.map((t) => (
             <button
               key={t}
               className={`st-nav-btn${tab === t ? " active" : ""}`}

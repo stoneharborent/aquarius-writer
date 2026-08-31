@@ -389,6 +389,11 @@ Two consequences for later stages:
   and a per-row menu with Rename and Move to…. A rename or move carries the
   document's snapshot folder and `comments.json` key with it, repoints
   `workflow.json`'s chapter order, and never rewrites the file's bytes.
+  Wave 1 row 4 added **stars** on the same seam: `.aquarius/favorites.json`,
+  `ops::set_star` / `ops::trash_entry`, `vault_set_star` / `vault_list_stars`,
+  the MCP `toggle_star`, and `starred` in `get_workflow`'s answer. A star
+  follows a rename or move (`aux_store::migrate_favorites`) and is dropped
+  when the row is trashed.
 - **`macOSPrivateApi`** (§6) is still unset and transparency still inactive. It
   now matters to Stage 3/4, which own the window chrome.
 

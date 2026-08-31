@@ -17,6 +17,11 @@ export type OverlayKind =
 export interface OverlayPayload {
   path?: string;
   versionId?: string;
+  /**
+   * Which tab a multi-tab overlay should land on. Settings uses it so
+   * "Manage workflows…" opens on Workflows instead of on Appearance.
+   */
+  tab?: string;
 }
 
 interface OverlayState {

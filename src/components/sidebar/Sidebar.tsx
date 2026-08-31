@@ -1,11 +1,15 @@
 import {
+  BookIcon,
   Caret,
+  CheckIcon,
   FileIcon,
   FolderIcon,
   ImageIcon,
   PdfIcon,
   PlusIcon,
   ScreenplayIcon,
+  SparkleIcon,
+  StarIcon,
 } from "@/icons";
 import {
   createContext,
@@ -18,6 +22,7 @@ import {
 import type { ChapterStatus, NewFileKind, NodeKind, VaultNode } from "@/types/vault";
 import { useVault } from "@/state/vaultStore";
 import { useOverlay } from "@/state/overlayStore";
+import { useFavorites } from "@/state/favoritesStore";
 import { trashFile } from "@/lib/vault/aux";
 import { useEditor } from "@/state/editorStore";
 import "./Sidebar.css";
@@ -75,6 +80,22 @@ function collectFolders(node: VaultNode, out: string[] = []): string[] {
 const parentOf = (path: string) =>
   path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 
+/** The node at `path`, or null when the tree no longer has one. */
+function findNode(node: VaultNode, path: string): VaultNode | null {
+  if (node.path === path) return node;
+  for (const child of node.children ?? []) {
+    const hit = findNode(child, path);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Every ancestor folder of `path`, so the tree can be opened down to it. */
+function ancestorsOf(path: string): string[] {
+  const segments = path.split("/").slice(0, -1);
+  return segments.map((_, i) => segments.slice(0, i + 1).join("/"));
+}
+
 export function Sidebar() {
   const { current, tree, expanded, toggleExpanded, selectedPath, selectPath } = useVault();
   const overlay = useOverlay();
@@ -94,7 +115,15 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <WorkflowSwitcher />
+      {/* Just a title now. Switching workflows is the chip at the bottom of
+          the sidebar, which is where the Swift app puts it (SWIFT-AUDIT §1.4)
+          and where it reads as a control rather than as a heading. */}
+      <header className="sb-title">
+        <span className="sb-name">Aquarius</span>
+        <span className="sb-kind">Writer</span>
+      </header>
+
+      <QuickViews />
 
       <div className="sb-eyebrow">
         <span className="sb-eyebrow-label">Workflow</span>
@@ -132,7 +161,104 @@ export function Sidebar() {
         <button className="sb-rail-btn" onClick={() => overlay.open("find")}>Find</button>
         <button className="sb-rail-btn" onClick={() => overlay.open("trash")}>Trash</button>
       </div>
+
+      <WorkflowChip />
     </aside>
+  );
+}
+
+/**
+ * Starred · Today · Manuscript — the three shortcuts that sit above the
+ * WORKFLOW eyebrow in the Swift app (SWIFT-AUDIT §1.4).
+ *
+ * They use the tree's own row shape on purpose: these are places in the vault,
+ * and giving them a second visual language would make the top of the sidebar
+ * look like a toolbar someone bolted on.
+ */
+function QuickViews() {
+  const { tree, view, setView, selectPath, toggleExpanded, expandAll, expanded } = useVault();
+  const overlay = useOverlay();
+  const starred = useFavorites((s) => s.starred);
+  const [showStarred, setShowStarred] = useState(false);
+
+  // Sorted by the name the tree paints, not by path, so the list reads the way
+  // the writer's eye expects rather than grouping by folder.
+  const rows = useMemo(() => {
+    if (!tree) return [];
+    return [...starred]
+      .map((path) => ({ path, node: findNode(tree, path) }))
+      .filter((r): r is { path: string; node: VaultNode } => r.node !== null)
+      .sort((a, b) => a.node.name.toLowerCase().localeCompare(b.node.name.toLowerCase()));
+  }, [tree, starred]);
+
+  function openStarredRow(node: VaultNode) {
+    // A starred folder can't go in the editor; opening the tree to it is the
+    // useful thing instead.
+    expandAll(ancestorsOf(node.path));
+    if (node.kind === "folder") {
+      if (!expanded.has(node.path)) toggleExpanded(node.path);
+      return;
+    }
+    selectPath(node.path);
+    setView("editor");
+  }
+
+  return (
+    <div className="sb-quick">
+      <button
+        className={`sb-row sb-quick-row${showStarred ? " open" : ""}`}
+        onClick={() => setShowStarred((o) => !o)}
+        aria-expanded={showStarred}
+      >
+        <span className="sb-caret">
+          <Caret open={showStarred} color="var(--ink-soft)" />
+        </span>
+        <StarIcon size={12} filled color="var(--starred)" />
+        <span className="sb-label">Starred</span>
+        {rows.length > 0 && <span className="sb-count">{rows.length}</span>}
+      </button>
+
+      {showStarred && (
+        rows.length === 0 ? (
+          <p className="sb-quick-empty">
+            Nothing starred yet — star a row from its ⋯ menu.
+          </p>
+        ) : (
+          rows.map(({ node }) => (
+            <button
+              key={node.path}
+              className="sb-row sb-file sb-quick-starred"
+              title={node.path}
+              onClick={() => openStarredRow(node)}
+            >
+              {node.kind === "folder"
+                ? <FolderIcon size={12} color="var(--ink-soft)" />
+                : <FileGlyph kind={node.kind} />}
+              <span className="sb-label">{node.name}</span>
+            </button>
+          ))
+        )
+      )}
+
+      <button className="sb-row sb-quick-row" onClick={() => overlay.open("today")}>
+        <span className="sb-caret" />
+        <SparkleIcon size={12} color="var(--ink-soft)" />
+        <span className="sb-label">Today</span>
+        <span className="sb-quick-key">⌘T</span>
+      </button>
+
+      {/* Outline and Corkboard are two faces of the same manuscript surface,
+          so the row reads as active in both. */}
+      <button
+        className={`sb-row sb-quick-row${view !== "editor" ? " selected" : ""}`}
+        onClick={() => setView("outline")}
+      >
+        <span className="sb-caret" />
+        <BookIcon size={12} color="var(--ink-soft)" />
+        <span className="sb-label">Manuscript</span>
+        <span className="sb-quick-key">⌘2</span>
+      </button>
+    </div>
   );
 }
 
@@ -288,6 +414,7 @@ function TreeBranch({
             <FolderIcon size={12} color="var(--ink-soft)" />
             <span className="sb-label">{node.name}</span>
             <span className="sb-count">{node.children?.length ?? 0}</span>
+            <StarAffordance path={node.path} />
             <MoreAffordance path={node.path} />
           </button>
           <RowMenu node={node} />
@@ -327,6 +454,7 @@ function TreeBranch({
             aria-label={status}
           />
         )}
+        <StarAffordance path={node.path} />
         <MoreAffordance path={node.path} />
         <DeleteAffordance path={node.path} />
       </button>
@@ -378,11 +506,13 @@ function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
   );
 }
 
-/** Rename / Move to… — the row's context menu, also on the "⋯" button. */
+/** Star / Rename / Move to… — the row's context menu, also on the "⋯" button. */
 function RowMenu({ node }: { node: VaultNode }) {
   const ops = useTreeOps();
   const { moveEntry } = useVault();
+  const favorites = useFavorites();
   const [picking, setPicking] = useState(false);
+  const starred = favorites.starred.has(node.path);
 
   useEffect(() => { if (ops.menuFor !== node.path) setPicking(false); }, [ops.menuFor, node.path]);
 
@@ -408,6 +538,10 @@ function RowMenu({ node }: { node: VaultNode }) {
         <>
           <button
             className="sb-menu-item"
+            onClick={() => { ops.setMenuFor(null); void favorites.toggle(node.path); }}
+          >{starred ? "Unstar" : "Star"}</button>
+          <button
+            className="sb-menu-item"
             onClick={() => { ops.setMenuFor(null); ops.setRenaming(node.path); }}
           >Rename</button>
           <button
@@ -431,6 +565,37 @@ function RowMenu({ node }: { node: VaultNode }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The star on a tree row.
+ *
+ * Always visible once the row is starred — that is the whole point of it — and
+ * revealed on hover otherwise, so an unstarred tree stays quiet. The same flip
+ * is in the row's ⋯ menu and in the command palette, because a hover-only
+ * control is not a control on a trackpad-less machine.
+ */
+function StarAffordance({ path }: { path: string }) {
+  const starred = useFavorites((s) => s.starred.has(path));
+  const toggle = useFavorites((s) => s.toggle);
+  return (
+    <span
+      className={`sb-star${starred ? " on" : ""}`}
+      role="button"
+      aria-pressed={starred}
+      title={starred ? "Unstar" : "Star"}
+      onClick={(e) => {
+        e.stopPropagation();
+        void toggle(path);
+      }}
+    >
+      <StarIcon
+        size={11}
+        filled={starred}
+        color={starred ? "var(--starred)" : "var(--ink-mute)"}
+      />
+    </span>
   );
 }
 
@@ -463,7 +628,12 @@ function DeleteAffordance({ path }: { path: string }) {
         if (!window.confirm(`Move "${path}" to Recently Deleted?`)) return;
         // Evict first: a pending debounced save would resurrect the file.
         useEditor.getState().evict(path);
-        void trashFile(current.id, path).then(() => removeFromTree(path));
+        void trashFile(current.id, path).then(() => {
+          removeFromTree(path);
+          // The backend already dropped the star (`ops::trash_entry`); this is
+          // the sidebar catching up without another round trip.
+          useFavorites.getState().forget(path);
+        });
       }}
     >×</span>
   );
@@ -478,42 +648,99 @@ function FileGlyph({ kind }: { kind: NodeKind }) {
   return <FileIcon size={size} color={color} />;
 }
 
-/** Sidebar-header workflow switcher — web mirror of WorkflowSwitcher.swift.
- * Click the workflow name to switch to any other connected workflow or go
- * back to the picker. */
-function WorkflowSwitcher() {
-  const { current, workflows, fetchWorkflows, openWorkflow, closeWorkflow } = useVault();
+/**
+ * The workflow switcher, as a chip pinned to the bottom of the sidebar — the
+ * Swift app's shape (SWIFT-AUDIT §1.4), and the fix for the port's own version
+ * of it, which was the sidebar *title* with a 10px caret: a control nobody
+ * could find because it did not look like one ("I cannot switch workflows",
+ * PARITY §3).
+ *
+ * The popover opens upward, since the chip is at the bottom of the column.
+ */
+function WorkflowChip() {
+  const {
+    current, workflows, workflowsLoading, pending,
+    fetchWorkflows, openWorkflow, closeWorkflow, addWorkflowFromFolder,
+  } = useVault();
+  const overlay = useOverlay();
   const [open, setOpen] = useState(false);
 
+  // Fetched when the popover opens rather than on mount: the list is only ever
+  // read here, and the boot path already has enough to do.
   useEffect(() => {
-    if (open && workflows.length === 0) void fetchWorkflows();
-  }, [open, workflows.length, fetchWorkflows]);
+    if (open) void fetchWorkflows();
+  }, [open, fetchWorkflows]);
 
   if (!current) return null;
+
+  const alone = !workflowsLoading && workflows.filter((w) => w.id !== current.id).length === 0;
+
   return (
-    <header className="sb-header sb-switcher">
-      <button className="sb-switch-btn" onClick={() => setOpen((o) => !o)}
-        title="Switch workflow">
-        <span className="sb-name">{current.title}</span>
-        <span className="sb-kind">{current.kind}</span>
+    <div className="sb-foot">
+      <button
+        className={`sb-chip${open ? " open" : ""}`}
+        title="Switch workflow"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="sb-chip-text">
+          <span className="sb-chip-name">{current.title}</span>
+          <span className="sb-chip-kind">{current.kind}</span>
+        </span>
         <Caret open={open} color="var(--ink-mute)" />
       </button>
+
       {open && (
-        <div className="sb-switch-menu" onMouseLeave={() => setOpen(false)}>
+        <div className="sb-switch-menu sb-switch-up" onMouseLeave={() => setOpen(false)}>
           {workflows.map((w) => (
-            <button key={w.id}
+            <button
+              key={w.id}
               className={`sb-switch-item${w.id === current.id ? " on" : ""}`}
-              onClick={() => { setOpen(false); void openWorkflow(w.id); }}>
-              {w.name}
+              onClick={() => {
+                setOpen(false);
+                if (w.id !== current.id) void openWorkflow(w.id);
+              }}
+            >
+              <span className="sb-switch-tick">
+                {w.id === current.id && <CheckIcon size={11} color="var(--accent)" />}
+              </span>
+              <span className="sb-label">{w.name}</span>
               <span className="sb-switch-meta">{w.items} items</span>
             </button>
           ))}
-          <button className="sb-switch-item sb-switch-all"
-            onClick={() => { setOpen(false); closeWorkflow(); }}>
-            ← All workflows
+
+          {/* Honest rather than hidden: one workflow is a normal state, and a
+              menu that silently listed a single row would look broken. */}
+          {alone && (
+            <p className="sb-switch-note">
+              This is the only workflow you have connected.
+            </p>
+          )}
+
+          <div className="sb-switch-sep" />
+
+          <button
+            className="sb-switch-item sb-switch-action"
+            disabled={pending !== null}
+            onClick={() => { setOpen(false); void addWorkflowFromFolder(); }}
+          >
+            {pending === "picking" ? "Choosing a folder…" : "Add workflow…"}
+          </button>
+          <button
+            className="sb-switch-item sb-switch-action"
+            onClick={() => { setOpen(false); closeWorkflow(); }}
+          >
+            All workflows
+          </button>
+          <button
+            className="sb-switch-item sb-switch-action"
+            onClick={() => { setOpen(false); overlay.open("settings", { tab: "workflows" }); }}
+          >
+            Manage workflows…
           </button>
         </div>
       )}
-    </header>
+    </div>
   );
 }

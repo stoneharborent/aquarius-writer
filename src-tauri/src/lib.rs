@@ -75,6 +75,8 @@ pub fn run() {
             commands::vault_rename,
             commands::vault_move,
             commands::vault_soft_delete,
+            commands::vault_set_star,
+            commands::vault_list_stars,
             commands::vault_watch_start,
             commands::vault_watch_stop,
             commands::app_log,

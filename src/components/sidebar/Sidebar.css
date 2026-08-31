@@ -12,9 +12,11 @@
  * which is the right failure. Both prefixes are tested because Safari and older
  * WebKit only advertise the `-webkit-` one.
  */
+/* Title · quick views · WORKFLOW eyebrow · tree · rail · switcher chip.
+ * Only the tree scrolls; everything else keeps its place. */
 .sidebar {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto auto;
   background: var(--sidebar-solid);
   border-right: 1px solid var(--line);
   min-width: 0;
@@ -28,11 +30,11 @@
   }
 }
 
-.sb-header {
+.sb-title {
   padding: 14px 16px 10px;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 6px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -324,22 +326,114 @@
 .sb-row:hover .sb-del { display: inline-block; }
 .sb-del:hover { color: var(--danger, #c8463b); background: var(--bg-soft); }
 
-/* workflow switcher */
-.sb-switcher { position: relative; }
-.sb-switch-btn {
+/* ── the star on a tree row ─────────────────────────────────────────────── */
+
+/* Hidden until the row is hovered, *unless* it is starred — a star the writer
+ * has to hover to see would not be a star. */
+.sb-star {
+  display: none;
+  place-items: center;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 4px;
+  flex: none;
+}
+.sb-row:hover .sb-star { display: inline-grid; }
+.sb-star.on { display: inline-grid; }
+.sb-star:hover { background: var(--bg-soft); }
+
+/* ── quick views: Starred · Today · Manuscript ──────────────────────────── */
+
+.sb-quick {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sb-quick-row { padding-left: 10px; }
+.sb-quick-row.open .sb-label { color: var(--ink); }
+
+/* Starred documents hang under the Starred row, indented like tree children. */
+.sb-quick-starred { padding-left: 36px; }
+
+.sb-quick-empty {
+  margin: 2px 12px 4px 36px;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--ink-mute);
+}
+
+.sb-quick-key {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  flex: none;
+}
+
+/* ── the workflow switcher chip, pinned to the sidebar footer ───────────── */
+
+.sb-foot {
+  position: relative;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+
+.sb-chip {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  background: none;
-  border: none;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
   cursor: pointer;
-  padding: 0;
   text-align: left;
   color: inherit;
   font: inherit;
+  transition: background 120ms ease, border-color 120ms ease;
 }
-.sb-switch-btn:hover .sb-name { color: var(--accent); }
+
+.sb-chip:hover,
+.sb-chip.open {
+  background: var(--bg);
+  border-color: var(--line-strong);
+}
+.sb-chip:hover .sb-chip-name,
+.sb-chip.open .sb-chip-name { color: var(--accent); }
+
+.sb-chip-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sb-chip-name {
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-chip-kind {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
 .sb-switch-menu {
   position: absolute;
   top: calc(100% + 4px);
@@ -371,5 +465,38 @@
 }
 .sb-switch-item:hover { background: var(--bg-soft); }
 .sb-switch-item.on { color: var(--accent); font-weight: 600; }
-.sb-switch-meta { font-size: 10px; color: var(--ink-mute); }
-.sb-switch-all { border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; color: var(--ink-soft); }
+.sb-switch-item:disabled { color: var(--ink-mute); cursor: default; background: none; }
+.sb-switch-meta { font-size: 10px; color: var(--ink-mute); flex: none; }
+
+/* The chip's popover opens upward — it lives at the bottom of the column. */
+.sb-switch-up {
+  top: auto;
+  bottom: calc(100% - 4px);
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+}
+
+/* A fixed gutter so the checked row's name lines up with the unchecked ones. */
+.sb-switch-tick {
+  width: 12px;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+
+.sb-switch-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 2px;
+}
+
+.sb-switch-action { color: var(--ink-soft); }
+
+.sb-switch-note {
+  margin: 2px 8px 4px;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-mute);
+  white-space: normal;
+}

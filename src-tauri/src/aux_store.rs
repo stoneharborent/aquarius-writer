@@ -13,6 +13,7 @@
 //!       2026-08-25T17-42-03.md         ← the text of that version
 //!   comments.json                      ← { "Drafts/Ch_03.md": [ … ] }
 //!   searches.json                      ← recent find queries
+//!   favorites.json                     ← [ "Drafts/Ch_03.md", … ] starred rows
 //! ```
 //!
 //! The version *bodies* are plain markdown on purpose: a writer who loses the
@@ -79,6 +80,8 @@ pub struct AuxSnapshot {
     pub comments: BTreeMap<String, Vec<CommentEntry>>,
     pub trash: Vec<TrashEntry>,
     pub searches: Vec<String>,
+    /// Vault-relative paths the writer has starred, sorted.
+    pub favorites: Vec<String>,
 }
 
 /// Ceiling on how much version text one hydration will carry into the
@@ -124,6 +127,10 @@ fn comments_path(root: &Path) -> PathBuf {
 
 fn searches_path(root: &Path) -> PathBuf {
     aq_dir(root).join("searches.json")
+}
+
+fn favorites_path(root: &Path) -> PathBuf {
+    aq_dir(root).join("favorites.json")
 }
 
 // ── versions ─────────────────────────────────────────────────────────────
@@ -261,6 +268,121 @@ fn write_comments(root: &Path, all: &BTreeMap<String, Vec<CommentEntry>>) -> std
     Ok(())
 }
 
+// ── favorites ────────────────────────────────────────────────────────────
+//
+// A flat array of vault-relative paths in `.aquarius/favorites.json`, the same
+// shape and the same neighbourhood as `searches.json`. Kept sorted and
+// duplicate-free so the file reads like a list rather than a log, and so two
+// stars added in a different order produce the same bytes.
+//
+// Folders can be starred as well as documents — the Swift app stars any tree
+// row (SWIFT-AUDIT §1.4) — which is why `forget` drops a whole subtree and the
+// migrations rewrite prefixes as well as exact keys.
+
+/// The starred paths for this vault, sorted.
+pub fn read_favorites(root: &Path) -> Vec<String> {
+    let mut list: Vec<String> = fs::read_to_string(favorites_path(root))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .unwrap_or_default();
+    list.sort();
+    list.dedup();
+    list
+}
+
+/// Replace the starred list. Sorted and de-duplicated on the way in.
+pub fn save_favorites(root: &Path, list: &[String]) -> std::io::Result<()> {
+    let mut sorted: Vec<String> =
+        list.iter().filter(|p| !p.is_empty()).cloned().collect();
+    sorted.sort();
+    sorted.dedup();
+    fs::create_dir_all(aq_dir(root))?;
+    let json = serde_json::to_string_pretty(&sorted).map_err(std::io::Error::other)?;
+    write_atomic(&favorites_path(root), format!("{json}\n").as_bytes())?;
+    Ok(())
+}
+
+pub fn is_favorite(root: &Path, rel: &str) -> bool {
+    read_favorites(root).iter().any(|p| p == rel)
+}
+
+/// Star or unstar one path. Returns the state it ended in, so a caller that
+/// asked for a toggle does not have to read the file again to find out.
+pub fn set_favorite(root: &Path, rel: &str, starred: bool) -> std::io::Result<bool> {
+    let mut list = read_favorites(root);
+    let already = list.iter().any(|p| p == rel);
+    if already == starred {
+        return Ok(starred);
+    }
+    if starred {
+        list.push(rel.to_string());
+    } else {
+        list.retain(|p| p != rel);
+    }
+    save_favorites(root, &list)?;
+    Ok(starred)
+}
+
+/// Flip one path's star. Returns its new state.
+pub fn toggle_favorite(root: &Path, rel: &str) -> std::io::Result<bool> {
+    let next = !is_favorite(root, rel);
+    set_favorite(root, rel, next)
+}
+
+/// Drop `rel` — and, if it is a folder, everything under it — from the starred
+/// list. Called when something is trashed: a star pointing at a file that is no
+/// longer in the tree would show up in the Starred quick view as a row that
+/// cannot be opened.
+pub fn forget_favorite(root: &Path, rel: &str) -> std::io::Result<()> {
+    let prefix = format!("{rel}/");
+    let list = read_favorites(root);
+    let next: Vec<String> = list
+        .iter()
+        .filter(|p| p.as_str() != rel && !p.starts_with(&prefix))
+        .cloned()
+        .collect();
+    if next.len() == list.len() {
+        return Ok(());
+    }
+    save_favorites(root, &next)
+}
+
+/// Rewrite starred paths after a rename or move. `folder` widens the match to
+/// everything inside the moved path as well as the path itself.
+fn migrate_favorites(
+    root: &Path,
+    from_rel: &str,
+    to_rel: &str,
+    folder: bool,
+) -> std::io::Result<()> {
+    let prefix = format!("{from_rel}/");
+    let list = read_favorites(root);
+    let mut changed = false;
+    let next: Vec<String> = list
+        .iter()
+        .map(|p| {
+            if p == from_rel {
+                changed = true;
+                to_rel.to_string()
+            } else if folder {
+                match p.strip_prefix(&prefix) {
+                    Some(rest) => {
+                        changed = true;
+                        format!("{to_rel}/{rest}")
+                    }
+                    None => p.clone(),
+                }
+            } else {
+                p.clone()
+            }
+        })
+        .collect();
+    if changed {
+        save_favorites(root, &next)?;
+    }
+    Ok(())
+}
+
 // ── following a file when it is renamed or moved ─────────────────────────
 //
 // Both stores are keyed by the document's *relative path*, so a rename that
@@ -270,7 +392,7 @@ fn write_comments(root: &Path, all: &BTreeMap<String, Vec<CommentEntry>>) -> std
 // name it happened to have, so `vault::ops` calls these in the same operation
 // as the rename — see the aux-migration note there.
 
-/// Move one document's snapshot folder and comment key to a new path.
+/// Move one document's snapshot folder, comment key and star to a new path.
 pub fn migrate_document(root: &Path, from_rel: &str, to_rel: &str) -> std::io::Result<()> {
     if from_rel == to_rel {
         return Ok(());
@@ -281,6 +403,7 @@ pub fn migrate_document(root: &Path, from_rel: &str, to_rel: &str) -> std::io::R
         all.insert(to_rel.to_string(), entries);
         write_comments(root, &all)?;
     }
+    migrate_favorites(root, from_rel, to_rel, false)?;
     Ok(())
 }
 
@@ -309,6 +432,7 @@ pub fn migrate_folder(root: &Path, from_rel: &str, to_rel: &str) -> std::io::Res
     if changed {
         write_comments(root, &next)?;
     }
+    migrate_favorites(root, from_rel, to_rel, true)?;
     Ok(())
 }
 
@@ -379,6 +503,7 @@ pub fn hydrate(root: &Path) -> AuxSnapshot {
         comments: read_comments(root),
         trash: trash_entries(root),
         searches: read_searches(root),
+        favorites: read_favorites(root),
     }
 }
 
@@ -557,6 +682,112 @@ mod tests {
         );
     }
 
+    // ── favorites ────────────────────────────────────────────────────────
+
+    #[test]
+    fn stars_persist_sorted_and_never_twice() {
+        let t = TempDir::new("aux-favorites");
+        assert!(read_favorites(t.path()).is_empty(), "a fresh vault has no stars");
+
+        assert!(set_favorite(t.path(), "Drafts/Ch_03.md", true).unwrap());
+        assert!(set_favorite(t.path(), "Characters/Imogen.md", true).unwrap());
+        // Starring the same path again is not an error and does not duplicate.
+        assert!(set_favorite(t.path(), "Drafts/Ch_03.md", true).unwrap());
+
+        assert_eq!(
+            read_favorites(t.path()),
+            vec!["Characters/Imogen.md", "Drafts/Ch_03.md"],
+            "the file is a sorted set, not an append log"
+        );
+        assert!(is_favorite(t.path(), "Drafts/Ch_03.md"));
+        assert!(!is_favorite(t.path(), "Drafts/Ch_04.md"));
+
+        // The bytes on disk are plain JSON anyone can read.
+        let raw = fs::read_to_string(t.path().join(".aquarius/favorites.json")).unwrap();
+        assert!(raw.contains("Drafts/Ch_03.md"), "got {raw}");
+
+        assert!(!set_favorite(t.path(), "Drafts/Ch_03.md", false).unwrap());
+        assert_eq!(read_favorites(t.path()), vec!["Characters/Imogen.md"]);
+    }
+
+    #[test]
+    fn toggling_a_star_reports_the_state_it_landed_in() {
+        let t = TempDir::new("aux-favorites-toggle");
+        assert!(toggle_favorite(t.path(), "note.md").unwrap());
+        assert!(!toggle_favorite(t.path(), "note.md").unwrap());
+        assert!(read_favorites(t.path()).is_empty());
+    }
+
+    #[test]
+    fn trashing_something_drops_it_and_its_children_from_the_stars() {
+        let t = TempDir::new("aux-favorites-forget");
+        save_favorites(
+            t.path(),
+            &[
+                "Drafts/Ch_01.md".into(),
+                "Drafts/Deep/Ch_02.md".into(),
+                "Characters/Imogen.md".into(),
+            ],
+        )
+        .unwrap();
+
+        forget_favorite(t.path(), "Drafts/Ch_01.md").unwrap();
+        assert_eq!(
+            read_favorites(t.path()),
+            vec!["Characters/Imogen.md", "Drafts/Deep/Ch_02.md"]
+        );
+
+        // A folder takes everything under it.
+        forget_favorite(t.path(), "Drafts").unwrap();
+        assert_eq!(read_favorites(t.path()), vec!["Characters/Imogen.md"]);
+    }
+
+    #[test]
+    fn a_renamed_document_keeps_its_star() {
+        let t = TempDir::new("aux-favorites-rename");
+        save_favorites(
+            t.path(),
+            &["Drafts/Ch_03.md".into(), "Drafts/Ch_03.md.bak".into()],
+        )
+        .unwrap();
+
+        migrate_document(t.path(), "Drafts/Ch_03.md", "Drafts/Helmreach in Rain.md").unwrap();
+
+        assert_eq!(
+            read_favorites(t.path()),
+            vec!["Drafts/Ch_03.md.bak", "Drafts/Helmreach in Rain.md"],
+            "only the exact key moves — a path that merely starts the same is left alone"
+        );
+    }
+
+    #[test]
+    fn a_moved_folder_takes_every_star_underneath_it() {
+        let t = TempDir::new("aux-favorites-move-folder");
+        save_favorites(
+            t.path(),
+            &[
+                "Drafts".into(),
+                "Drafts/Ch_01.md".into(),
+                "Drafts/Deep/Ch_02.md".into(),
+                "Characters/Imogen.md".into(),
+            ],
+        )
+        .unwrap();
+
+        migrate_folder(t.path(), "Drafts", "Archive/Drafts").unwrap();
+
+        assert_eq!(
+            read_favorites(t.path()),
+            vec![
+                "Archive/Drafts",
+                "Archive/Drafts/Ch_01.md",
+                "Archive/Drafts/Deep/Ch_02.md",
+                "Characters/Imogen.md",
+            ],
+            "the starred folder and everything starred inside it followed the move"
+        );
+    }
+
     #[test]
     fn hydration_finds_every_document_and_the_trash() {
         let t = TempDir::new("aux-hydrate");
@@ -565,8 +796,10 @@ mod tests {
         save_versions(t.path(), "Drafts/Ch_01.md", &[entry("v1", "Auto", false, "chapter one")]).unwrap();
         save_versions(t.path(), "Characters/Imogen.md", &[entry("v9", "Auto", false, "imogen")]).unwrap();
         crate::fs_ops::trash::soft_delete(t.path(), "Characters/Imogen.md", crate::vault::registry::now_ms()).unwrap();
+        set_favorite(t.path(), "Drafts/Ch_01.md", true).unwrap();
 
         let snap = hydrate(t.path());
+        assert_eq!(snap.favorites, vec!["Drafts/Ch_01.md"], "stars ride along in the hydration");
         assert_eq!(snap.versions.len(), 2, "both documents' trails hydrate: {:?}", snap.versions.keys());
         assert_eq!(snap.versions.get("Drafts/Ch_01.md").unwrap()[0].body, "chapter one");
         assert_eq!(snap.trash.len(), 1);

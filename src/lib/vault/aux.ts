@@ -93,6 +93,32 @@ export function deleteComment(wf: string, path: string, id: string) {
   auxBackend().saveComments(wf, path, listComments(wf, path).filter((c) => c.id !== id));
 }
 
+// ── favorites ────────────────────────────────────────────────────────────
+//
+// Thin by design: unlike versions there is no rule to apply here — a star is
+// on or it is off. The *reactive* copy lives in `state/favoritesStore.ts`,
+// which is what the sidebar reads; these are the plumbing it calls.
+
+/** Starred paths for this workflow, sorted. */
+export function listFavorites(wf: string): string[] {
+  return auxBackend().listFavorites(wf);
+}
+
+/** Re-read the starred list — an MCP client may have changed it. */
+export function refreshFavorites(wf: string): Promise<string[]> {
+  return auxBackend().refreshFavorites(wf);
+}
+
+/** Star, unstar (`starred`), or flip (omit it). Resolves to the new state. */
+export function setFavorite(wf: string, path: string, starred?: boolean): Promise<boolean> {
+  return auxBackend().setFavorite(wf, path, starred);
+}
+
+/** Carry stars across a rename or move. Resolves to the list as it now is. */
+export function migrateFavorites(wf: string, from: string, to: string): Promise<string[]> {
+  return auxBackend().migrateFavorites(wf, from, to);
+}
+
 // ── trash ────────────────────────────────────────────────────────────────
 
 export function listTrash(wf: string): TrashEntry[] {

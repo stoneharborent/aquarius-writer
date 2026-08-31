@@ -14,9 +14,11 @@ import {
   SearchIcon,
   SettingsIcon,
   SparkleIcon,
+  StarIcon,
 } from "@/icons";
 import { ACCENTS, ACCENT_LABEL, THEMES, THEME_LABEL, themeLocksAccent } from "@/theme/theme";
 import { useTheme } from "@/state/themeStore";
+import { useFavorites } from "@/state/favoritesStore";
 import "./CommandPalette.css";
 
 interface PaletteItem {
@@ -33,9 +35,11 @@ export function CommandPalette() {
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const { tree, selectPath, setView } = useVault();
+  const { tree, selectPath, setView, selectedPath } = useVault();
   const { open: openOv, close } = useOverlay();
   const { theme, setTheme, setAccent } = useTheme();
+  const starred = useFavorites((s) => s.starred);
+  const toggleStar = useFavorites((s) => s.toggle);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
@@ -50,6 +54,20 @@ export function CommandPalette() {
       icon: <BookIcon size={13} color="var(--ink-soft)" />, run: view("outline") });
     out.push({ id: "v:cards", group: "View", label: "Switch to Corkboard", hint: "⌘3",
       icon: <BookIcon size={13} color="var(--ink-soft)" />, run: view("corkboard") });
+
+    // The star for whatever is open. The sidebar's row star needs a hover and
+    // a mouse; this is the same flip from the keyboard.
+    if (selectedPath) {
+      const on = starred.has(selectedPath);
+      out.push({
+        id: "star:current",
+        group: "Action",
+        label: on ? "Unstar this document" : "Star this document",
+        hint: selectedPath,
+        icon: <StarIcon size={13} filled={on} color={on ? "var(--starred)" : "var(--ink-soft)"} />,
+        run: () => { void toggleStar(selectedPath); close(); },
+      });
+    }
 
     out.push({ id: "ov:compile", group: "Action", label: "Compile / Export…", hint: "⌘E",
       icon: <SparkleIcon size={13} color="var(--ink-soft)" />, run: () => { openOv("compile"); } });
@@ -102,7 +120,8 @@ export function CommandPalette() {
     }
 
     return out;
-  }, [tree, selectPath, setView, openOv, close, theme, setTheme, setAccent]);
+  }, [tree, selectPath, setView, openOv, close, theme, setTheme, setAccent,
+      selectedPath, starred, toggleStar]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return items;

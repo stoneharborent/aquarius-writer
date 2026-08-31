@@ -373,11 +373,30 @@ pub fn vault_soft_delete(
     rel_path: String,
 ) -> R<()> {
     let root = root_of(&state, &workflow_id)?;
-    let path = paths::resolve_in_root(&root, &rel_path).map_err(|e| e.0)?;
-    state.note_self_write(&path);
-    trash::soft_delete(&root, &rel_path, registry::now_ms())
-        .map(|_| ())
-        .map_err(|e| format!("{rel_path}: {e}"))
+    vault::ops::trash_entry(&root, &rel_path, &state.self_writes).map(|_| ())
+}
+
+// ── stars ────────────────────────────────────────────────────────────────
+
+/// Star or unstar a tree row. `starred` is null for a toggle; the answer is
+/// the state it landed in, which is what the sidebar paints.
+#[tauri::command]
+pub fn vault_set_star(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    rel_path: String,
+    starred: Option<bool>,
+) -> R<vault::ops::StarReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::set_star(&root, &rel_path, starred)
+}
+
+/// The starred rows in a vault. Cheap enough to re-read whenever the tree
+/// reloads, so an MCP client's `toggle_star` shows up in the sidebar.
+#[tauri::command]
+pub fn vault_list_stars(state: State<'_, AppState>, workflow_id: String) -> R<Vec<String>> {
+    let root = root_of(&state, &workflow_id)?;
+    Ok(vault::ops::list_stars(&root))
 }
 
 // ── watching ─────────────────────────────────────────────────────────────
