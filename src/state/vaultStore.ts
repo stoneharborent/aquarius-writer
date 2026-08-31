@@ -78,8 +78,17 @@ interface VaultState {
    * Make a document inside `parent` ("" for the vault root) and open it.
    * Resolves to its path, or null when it could not be made (the reason is
    * already on screen as a notice).
+   *
+   * `content` replaces the seeded frontmatter with text of your own, and
+   * `open: false` leaves the writer where they are — the two things the
+   * conflict dialog's "Save mine as a copy" needs, and nothing else uses.
    */
-  createFile: (parent: string, name: string, kind: NewFileKind) => Promise<string | null>;
+  createFile: (
+    parent: string,
+    name: string,
+    kind: NewFileKind,
+    opts?: { content?: string; open?: boolean },
+  ) => Promise<string | null>;
   /** Make an empty folder inside `parent` ("" for the vault root). */
   createFolder: (parent: string, name: string) => Promise<string | null>;
   /** Rename a tree row in place. `newName` is one name, never a path. */
@@ -127,6 +136,11 @@ function startWatching(id: string) {
   stopWatching();
   unwatch = vault().watch(id, () => {
     void useVault.getState().refreshTree();
+    // The tree is only half of what changed. Every open buffer now has to
+    // check itself against the file it came from: a clean one quietly takes
+    // the new text, a dirty one raises the conflict dialog rather than
+    // waiting to discover the problem at save time (docs/PARITY.md row 9).
+    void useEditor.getState().reconcile(id);
   });
 }
 
@@ -516,17 +530,23 @@ export const useVault = create<VaultState>((set, get) => ({
     set({ tree: root });
   },
 
-  async createFile(parent, name, kind) {
+  async createFile(parent, name, kind, opts) {
     const wf = get().current;
     const tree = get().tree;
     if (!wf || !tree) return null;
     try {
       const report = await vault().createFile(wf.id, parent, name, kind);
+      // Given text of its own, the file is written over the seed the backend
+      // laid down. Unguarded on purpose: it was created a line ago and there
+      // is nothing there yet to disagree with.
+      if (opts?.content !== undefined) {
+        await vault().writeFile(wf.id, report.path, opts.content, null);
+      }
       set({ tree: applyEntry(tree, report) });
       get().expandAll(ancestorsOf(report.path));
       // A new document opens in the editor — making a file and then having to
       // find it in the tree would be a strange way to start writing.
-      set({ selectedPath: report.path, view: "editor" });
+      if (opts?.open !== false) set({ selectedPath: report.path, view: "editor" });
       if (report.renamed) {
         notices.say(`Created "${report.name}"`, "a file of that name was already there");
       }

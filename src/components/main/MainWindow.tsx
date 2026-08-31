@@ -468,6 +468,9 @@ function SaveBadge({ status }: { status: string }) {
     : status === "saving" ? "saving…"
     : status === "saved" ? "saved"
     : status === "error" ? "save failed"
+    // Not a failure: the file changed underneath and the save was held back
+    // on purpose, with every character still in the buffer.
+    : status === "conflict" ? "changed on disk"
     : "clean";
   return <span className={`mw-save mw-save-${status}`}>{label}</span>;
 }

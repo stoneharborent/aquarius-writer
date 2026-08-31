@@ -130,7 +130,12 @@
   color: var(--ink);
 }
 
-.cf-cancel:hover, .cf-take:hover { background: var(--bg-soft); }
+.cf-cancel:hover:not(:disabled), .cf-take:hover:not(:disabled) { background: var(--bg-soft); }
+
+.cf-cancel:disabled, .cf-take:disabled, .cf-keep:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 
 .cf-keep {
   background: var(--accent);
@@ -138,4 +143,4 @@
   border-color: transparent;
 }
 
-.cf-keep:hover { filter: brightness(1.05); }
+.cf-keep:hover:not(:disabled) { filter: brightness(1.05); }

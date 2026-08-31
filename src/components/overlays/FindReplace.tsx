@@ -42,12 +42,11 @@ export function FindReplace() {
     const res = await replaceInFile(current.id, hit.path, query, replace);
     if (!res) return;
     setNote(`Replaced ${res.replaced} in ${hit.path}`);
-    // Drop any open editor copy so it reloads the rewritten file.
-    useEditor.setState((s) => {
-      const docs = { ...s.docs };
-      delete docs[hit.path];
-      return { docs };
-    });
+    // Drop any open editor copy so it reloads the rewritten file. `evict`
+    // rather than deleting the key by hand: it also cancels the buffer's
+    // debounced save, which would otherwise land on a file this replace just
+    // rewrote and raise a conflict for a document nobody is looking at.
+    useEditor.getState().evict(hit.path);
     if (tree) setHits(await searchWorkflow(current.id, tree, query.trim()));
   };
 

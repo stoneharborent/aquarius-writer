@@ -1,10 +1,13 @@
 import type {
   EntryReport,
+  FileRead,
+  FileStamp,
   NewFileKind,
   VaultNode,
   Workflow,
   WorkflowKind,
   WorkflowSummary,
+  WriteResult,
 } from "@/types/vault";
 
 /** Vault service contract — implemented twice: browser-mock and tauri-fs. */
@@ -29,14 +32,40 @@ export interface VaultService {
   createWorkflow(name: string, kind: WorkflowKind): Promise<WorkflowSummary | null>;
   /** Write the sample workflow to disk (or reopen it) and register it. */
   createSampleWorkflow(): Promise<WorkflowSummary>;
-  /** Read a markdown / fountain / text file. */
+  /**
+   * Read a markdown / fountain / text file.
+   *
+   * For everything that only wants the words: search, backlinks, the graph,
+   * the HTML viewer. A buffer the writer is going to *edit* wants
+   * `readFileStamped` instead, so it has a baseline to save against.
+   */
   readFile(workflowId: string, relPath: string): Promise<string>;
+  /**
+   * The same read, plus the stamp of the bytes it came from.
+   *
+   * Hand that stamp back to `writeFile` and the save is refused rather than
+   * overwriting an edit that landed while the document was open.
+   */
+  readFileStamped(workflowId: string, relPath: string): Promise<FileRead>;
   /** Resolve a binary asset (image, PDF, etc) to a renderable URL. */
   resolveAssetUrl(workflowId: string, relPath: string): Promise<string>;
   /** Read a binary asset's raw bytes (for PDF.js etc). */
   readBinary(workflowId: string, relPath: string): Promise<Uint8Array>;
-  /** Write a file. */
-  writeFile(workflowId: string, relPath: string, content: string): Promise<void>;
+  /**
+   * Write a file.
+   *
+   * Pass `expected` — the stamp the buffer was opened (or last saved) at — and
+   * the write is guarded: it comes back `{ status: "conflict" }` with the text
+   * that is on disk instead of overwriting it. Omit it and this is the
+   * force-write it has always been, which is what a restore, a find-and-replace
+   * and "Keep mine" all want.
+   */
+  writeFile(
+    workflowId: string,
+    relPath: string,
+    content: string,
+    expected?: FileStamp | null,
+  ): Promise<WriteResult>;
   /**
    * Create a document inside `parent` (`""` for the vault root), seeded with
    * the frontmatter or title page its kind expects. A name that is already

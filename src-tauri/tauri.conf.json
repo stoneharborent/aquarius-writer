@@ -50,7 +50,8 @@
     ],
     "linux": {
       "deb": {
-        "desktopTemplate": "linux/aquarius-writer.desktop"
+        "desktopTemplate": "linux/aquarius-writer.desktop",
+        "recommends": ["pandoc", "texlive-xetex"]
       }
     }
   }

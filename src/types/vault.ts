@@ -85,6 +85,58 @@ export interface VaultNode {
 /** The two document kinds the sidebar's add menu offers. */
 export type NewFileKind = "markdown" | "fountain";
 
+// ── the conflict contract (PARITY row 9) ─────────────────────────────────
+//
+// Mirrors `FileStamp` / `FileRead` / `WriteResult` in `src-tauri/src/model.rs`,
+// field for field. A read hands back a stamp, the editor keeps it as that
+// buffer's baseline, and a save that carries the baseline is refused when the
+// file on disk has stopped matching it.
+
+/**
+ * What the app last saw of a file on disk.
+ *
+ * `hash` is the only field anything decides on — SHA-256 of the exact bytes.
+ * `mtimeMs` and `bytes` are for diagnostics. The reason is written out in
+ * `src-tauri/src/fs_ops/stamp.rs`, and the short version is that this vault
+ * lives in iCloud, and iCloud re-stamps files whose bytes it never touched.
+ */
+export interface FileStamp {
+  hash: string;
+  /** Epoch milliseconds, or 0 when the filesystem would not say. */
+  mtimeMs: number;
+  bytes: number;
+}
+
+/** A document's text plus the stamp of the bytes it was read from. */
+export interface FileRead {
+  path: string;
+  content: string;
+  stamp: FileStamp;
+}
+
+/**
+ * What came of a write.
+ *
+ * A refusal is a `conflict` **result**, not a thrown error: the caller needs
+ * the on-disk text to show a diff, and an exception cannot carry it usefully.
+ * Real failures (a path outside the vault, a permission problem) still reject.
+ */
+export type WriteResult =
+  | {
+      status: "written";
+      path: string;
+      /** False when the bytes were already identical and the file was not touched. */
+      changed: boolean;
+      stamp: FileStamp;
+    }
+  | {
+      status: "conflict";
+      path: string;
+      /** The text that is on disk right now. */
+      theirs: string;
+      stamp: FileStamp;
+    };
+
 /**
  * A file or folder after it was created, renamed or moved — the answer from
  * `vault_create_file` / `vault_create_folder` / `vault_rename` / `vault_move`

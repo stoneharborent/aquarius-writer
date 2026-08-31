@@ -1,7 +1,14 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { VaultService } from "./service";
-import type { EntryReport, VaultNode, Workflow, WorkflowSummary } from "@/types/vault";
+import type {
+  EntryReport,
+  FileRead,
+  VaultNode,
+  Workflow,
+  WorkflowSummary,
+  WriteResult,
+} from "@/types/vault";
 
 // The real backend: every call lands in a Rust command in `src-tauri/src/`.
 // Nothing here does filesystem work itself — path safety, atomic writes and
@@ -53,7 +60,11 @@ export function createTauriVaultService(): VaultService {
     },
 
     async readFile(workflowId, relPath) {
-      return invoke<string>("vault_read_file", { workflowId, relPath });
+      return (await invoke<FileRead>("vault_read_file", { workflowId, relPath })).content;
+    },
+
+    async readFileStamped(workflowId, relPath) {
+      return invoke<FileRead>("vault_read_file", { workflowId, relPath });
     },
 
     async resolveAssetUrl(workflowId, relPath) {
@@ -70,8 +81,16 @@ export function createTauriVaultService(): VaultService {
       return new Uint8Array(buf);
     },
 
-    async writeFile(workflowId, relPath, content) {
-      await invoke("vault_write_file", { workflowId, relPath, content });
+    async writeFile(workflowId, relPath, content, expected) {
+      // `expected: null` is "no baseline, write regardless" — the shape Rust's
+      // `Option<FileStamp>` wants, and what every caller but the editor's save
+      // path sends.
+      return invoke<WriteResult>("vault_write_file", {
+        workflowId,
+        relPath,
+        content,
+        expected: expected ?? null,
+      });
     },
 
     async createFile(workflowId, parent, name, kind) {

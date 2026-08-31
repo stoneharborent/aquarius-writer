@@ -17,6 +17,7 @@
 
 mod aux_store;
 mod commands;
+mod compile;
 mod fs_ops;
 mod mcp;
 mod model;
@@ -91,6 +92,9 @@ pub fn run() {
             commands::aux_trash_list,
             commands::trash_restore,
             commands::trash_purge,
+            commands::compile_probe,
+            commands::compile_run,
+            commands::compile_reveal,
             commands::mcp_status,
             commands::mcp_set_enabled,
             commands::mcp_set_port,

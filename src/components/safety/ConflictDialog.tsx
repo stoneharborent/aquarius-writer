@@ -1,13 +1,28 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Overlay } from "@/components/overlays/Overlay";
 import { useConflict } from "@/state/conflictStore";
-import { useEditor } from "@/state/editorStore";
+import { useEditor, type Resolution } from "@/state/editorStore";
+import { notices } from "@/state/noticeStore";
 import { WarnIcon } from "@/icons";
 import "./ConflictDialog.css";
 
+/**
+ * "This file changed while you were editing it. Which version wins?"
+ *
+ * Three answers, matching the Swift app (SWIFT-AUDIT §2.3), and **nothing is
+ * ever lost by any of them**: whichever version a choice discards is written
+ * into the document's version history first, so it is one click away in the
+ * Versions panel. The work is `editorStore.resolveConflict` — this component
+ * shows the two texts and takes the answer.
+ *
+ * "Decide later" is a real option too. Closing the dialog leaves the buffer
+ * dirty and unsaved with every character intact; the next save will raise this
+ * again rather than quietly overwriting anything.
+ */
 export function ConflictDialog() {
   const { pending, resolve } = useConflict();
-  const flushSave = useEditor((s) => s.flushSave);
+  const resolveConflict = useEditor((s) => s.resolveConflict);
+  const [busy, setBusy] = useState<Resolution | null>(null);
 
   const diff = useMemo(
     () => (pending ? lineDiff(pending.mine, pending.theirs) : []),
@@ -15,25 +30,16 @@ export function ConflictDialog() {
   );
   if (!pending) return null;
 
-  function keepMine() {
-    void flushSave(pending!.path).then(resolve);
-  }
-  function takeTheirs() {
-    // Replace editor body with disk version; will mark dirty=false since
-    // editorStore needs an explicit reload — we simulate via flushSave after
-    // editing back to theirs.
-    useEditor.setState((s) => ({
-      docs: {
-        ...s.docs,
-        [pending!.path]: {
-          ...s.docs[pending!.path],
-          body: pending!.theirs,
-          status: "saved",
-        },
-      },
-    }));
-    resolve();
-  }
+  const choose = (choice: Resolution) => {
+    if (busy) return;
+    setBusy(choice);
+    void resolveConflict(pending.path, choice)
+      .catch((e) => notices.fail("Could not resolve the conflict", e))
+      .finally(() => {
+        setBusy(null);
+        resolve();
+      });
+  };
 
   return (
     <Overlay title="" width={720} onClose={resolve}>
@@ -43,8 +49,10 @@ export function ConflictDialog() {
           <div>
             <div className="cf-title">{pending.path} changed on disk</div>
             <div className="cf-sub">
-              Another writer or your sync provider modified this file while you were editing.
-              Pick which version to keep — Aquarius will save the choice and clear the conflict.
+              Another program — a sync client, a script, an AI assistant — changed this file
+              while you were editing it. Nothing has been written yet. Whichever version you
+              don’t keep is saved into this document’s version history first, so you can get
+              it back.
             </div>
           </div>
         </header>
@@ -74,10 +82,26 @@ export function ConflictDialog() {
         </div>
 
         <footer className="cf-foot">
-          <button className="cf-cancel" onClick={resolve}>Decide later</button>
+          <button className="cf-cancel" onClick={resolve} disabled={!!busy}>Decide later</button>
           <span className="cf-spacer" />
-          <button className="cf-take" onClick={takeTheirs}>Take disk version</button>
-          <button className="cf-keep" onClick={keepMine}>Keep mine</button>
+          <button
+            className="cf-take"
+            disabled={!!busy}
+            title="Save your version as a separate file beside this one, then open the disk version here"
+            onClick={() => choose("saveMineAsCopy")}
+          >{busy === "saveMineAsCopy" ? "Saving…" : "Save mine as a copy"}</button>
+          <button
+            className="cf-take"
+            disabled={!!busy}
+            title="Discard your unsaved edits and open what is on disk"
+            onClick={() => choose("takeTheirs")}
+          >{busy === "takeTheirs" ? "Loading…" : "Take disk version"}</button>
+          <button
+            className="cf-keep"
+            disabled={!!busy}
+            title="Overwrite the file with your version"
+            onClick={() => choose("keepMine")}
+          >{busy === "keepMine" ? "Saving…" : "Keep mine"}</button>
         </footer>
       </div>
     </Overlay>

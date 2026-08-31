@@ -118,6 +118,65 @@ pub struct LoadedWorkflow {
     pub tree: VaultNode,
 }
 
+// ── optimistic concurrency on the save path (PARITY row 9) ───────────────
+//
+// Three shapes, mirrored in `src/types/vault.ts`. Together they are the whole
+// conflict contract: a read hands back a `FileStamp` alongside the text, the
+// editor keeps it as that buffer's baseline, and a write that carries the
+// baseline is refused if the file on disk has stopped matching it.
+
+/// What the app last saw of a file on disk.
+///
+/// `hash` is the decision-maker — lowercase hex SHA-256 of the exact bytes.
+/// `mtimeMs` and `bytes` are along for diagnostics and display; nothing is ever
+/// refused because of them. `fs_ops::stamp` explains why at length (short
+/// version: filesystems disagree about timestamp precision and iCloud re-stamps
+/// files it did not rewrite).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileStamp {
+    pub hash: String,
+    /// Epoch milliseconds, or 0 when the filesystem would not say.
+    pub mtime_ms: i64,
+    pub bytes: usize,
+}
+
+/// A document's text plus the stamp of the bytes it was read from.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FileRead {
+    pub path: String,
+    /// The file as it sits on disk, frontmatter included. Lossy UTF-8 — the
+    /// stamp beside it describes the *real* bytes.
+    pub content: String,
+    pub stamp: FileStamp,
+}
+
+/// What came of a write.
+///
+/// A refused write is a `conflict` **result**, not a thrown error: the caller
+/// needs the on-disk text to show a diff, and an error string cannot carry it.
+/// Errors stay errors — a path outside the vault, a permission problem — and
+/// still come back as `Err(String)`.
+#[derive(Serialize, Clone, Debug)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum WriteResult {
+    /// The bytes are on disk. `changed` is false when they were already
+    /// identical and the file was not touched at all (mtime included).
+    Written { path: String, changed: bool, stamp: FileStamp },
+    /// Refused. The file no longer matches the stamp the caller was holding,
+    /// so writing would have thrown away whatever changed it. `theirs` is the
+    /// text that is on disk right now.
+    Conflict { path: String, theirs: String, stamp: FileStamp },
+}
+
+impl WriteResult {
+    /// True when the write was refused because the file had moved on.
+    pub fn is_conflict(&self) -> bool {
+        matches!(self, WriteResult::Conflict { .. })
+    }
+}
+
 /// How the renderer should turn a binary asset into a URL.
 ///
 /// `File` means "run this absolute path through `convertFileSrc`" — the

@@ -166,12 +166,40 @@ pub fn list_versions(root: &Path, rel: &str, budget: &mut usize) -> Vec<VersionE
         .collect()
 }
 
-/// Replace the version list for one document.
+/// Replace the version list for one document, **keeping named rows the caller
+/// has not seen**.
 ///
 /// The renderer always sends the complete desired list (it coalesces and
 /// prunes on its side), so this is a set operation: write bodies for rows we
 /// don't have yet, drop bodies for rows that are gone, rewrite the index.
+///
+/// The one exception is the reason this door and `replace_versions` are
+/// different functions. The renderer is no longer the only writer of a version
+/// trail: an MCP client's `write_document` takes a snapshot of the previous
+/// text before it overwrites (docs/NOTES.md §13j), and it does so against a
+/// cache the renderer hydrated when the vault opened. Without this, the
+/// writer's very next autosave would send back the list it still remembers and
+/// silently delete the snapshot that was protecting the AI's overwrite. So a
+/// **named** row that is on disk and absent from `entries` is left alone.
+/// Unnamed rows still obey the renderer's retention rules — that is how the
+/// 25-autosave cap prunes anything at all.
 pub fn save_versions(root: &Path, rel: &str, entries: &[VersionEntry]) -> std::io::Result<()> {
+    write_versions(root, rel, entries, true)
+}
+
+/// A true replace: every row is exactly what was passed, named or not. The
+/// backend's own door, used where the caller has just read the list it is
+/// rewriting and is therefore not at risk of erasing something it never saw.
+fn replace_versions(root: &Path, rel: &str, entries: &[VersionEntry]) -> std::io::Result<()> {
+    write_versions(root, rel, entries, false)
+}
+
+fn write_versions(
+    root: &Path,
+    rel: &str,
+    entries: &[VersionEntry],
+    keep_unseen_named: bool,
+) -> std::io::Result<()> {
     let dir = doc_dir(root, rel);
     fs::create_dir_all(&dir)?;
     let existing = read_rows(&dir);
@@ -197,6 +225,19 @@ pub fn save_versions(root: &Path, rel: &str, entries: &[VersionEntry]) -> std::i
         });
     }
 
+    // Named rows the caller's list never mentioned: kept, body untouched, and
+    // slotted in by timestamp so the trail stays newest-first. The caller's
+    // own ordering is never rearranged — it is the renderer's list and the
+    // panels paint it in the order it arrives.
+    if keep_unseen_named {
+        for old in &existing {
+            if old.named && !rows.iter().any(|r| r.id == old.id) {
+                let at = rows.iter().position(|r| r.at < old.at).unwrap_or(rows.len());
+                rows.insert(at, old.clone());
+            }
+        }
+    }
+
     // Bodies whose row was pruned by the renderer's retention rules.
     for old in &existing {
         if !rows.iter().any(|r| r.id == old.id) {
@@ -207,6 +248,60 @@ pub fn save_versions(root: &Path, rel: &str, entries: &[VersionEntry]) -> std::i
     let json = serde_json::to_string_pretty(&rows).map_err(std::io::Error::other)?;
     write_atomic(&dir.join("index.json"), format!("{json}\n").as_bytes())?;
     Ok(())
+}
+
+/// The label every snapshot an MCP client's write leaves behind carries.
+///
+/// Named (so the renderer's 25-autosave retention never prunes it, and so
+/// `save_versions` protects it), and recognisable in the Versions panel: the
+/// row a writer looks for when they want yesterday's paragraph back after an
+/// agent rewrote the chapter.
+pub const AGENT_SNAPSHOT_LABEL: &str = "Before AI write";
+
+/// How many of those to keep per document. Named rows are never pruned by the
+/// renderer, so if nothing capped these a chatty agent would fill `.aquarius/`
+/// with one copy of the chapter per tool call.
+pub const MAX_AGENT_SNAPSHOTS: usize = 25;
+
+/// Record one version of a document from the backend side.
+///
+/// The renderer's own trail is written by `save_versions` from a list it holds
+/// in memory; this is for writers that have no such list — the MCP server,
+/// which reads what is on disk, prepends, and saves. Returns the row it added.
+pub fn snapshot_document(
+    root: &Path,
+    rel: &str,
+    label: &str,
+    body: &str,
+    at_ms: i64,
+) -> std::io::Result<VersionEntry> {
+    let mut budget = usize::MAX;
+    let mut all = list_versions(root, rel, &mut budget);
+    let entry = VersionEntry {
+        // `s` for snapshot, matching the renderer's `takeSnapshot` ids, plus a
+        // short random tail so two writes in the same millisecond stay distinct.
+        id: format!("s{:x}{}", at_ms.max(0), short(&uuid::Uuid::new_v4().simple().to_string())),
+        at: at_ms,
+        label: label.to_string(),
+        named: true,
+        words: body.split_whitespace().count(),
+        body: body.to_string(),
+    };
+    all.insert(0, entry.clone());
+
+    // Cap this label's rows, oldest dropped first. Only this label: a
+    // snapshot the writer named themselves is theirs to delete.
+    let mut kept = 0usize;
+    all.retain(|v| {
+        if v.label != label {
+            return true;
+        }
+        kept += 1;
+        kept <= MAX_AGENT_SNAPSHOTS
+    });
+
+    replace_versions(root, rel, &all)?;
+    Ok(entry)
 }
 
 /// Every document that has a version trail, as vault-relative paths.
@@ -597,6 +692,87 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().ends_with(".md"))
             .count();
         assert_eq!(bodies, 1, "the dropped version's text is deleted too");
+    }
+
+    // ── snapshots taken from the backend side ────────────────────────────
+
+    fn bodies(root: &Path, rel: &str) -> Vec<String> {
+        let mut budget = usize::MAX;
+        list_versions(root, rel, &mut budget).into_iter().map(|v| v.body).collect()
+    }
+
+    #[test]
+    fn a_backend_snapshot_lands_at_the_top_of_the_trail() {
+        let t = TempDir::new("aux-snapshot");
+        let rel = "Drafts/Ch_01.md";
+        save_versions(t.path(), rel, &[entry("v1", "Auto", false, "yesterday")]).unwrap();
+
+        let taken = snapshot_document(t.path(), rel, AGENT_SNAPSHOT_LABEL, "today", 9_000).unwrap();
+        assert_eq!(taken.label, AGENT_SNAPSHOT_LABEL);
+        assert!(taken.named);
+        assert_eq!(taken.words, 1);
+
+        let all = bodies(t.path(), rel);
+        assert_eq!(all, vec!["today", "yesterday"], "newest first, and the old trail is intact");
+    }
+
+    #[test]
+    fn backend_snapshots_are_capped_so_a_chatty_agent_cannot_fill_the_vault() {
+        let t = TempDir::new("aux-snapshot-cap");
+        let rel = "note.md";
+        // One the writer named themselves, which must survive the capping.
+        save_versions(t.path(), rel, &[entry("mine", "Before the rewrite", true, "keep me")])
+            .unwrap();
+
+        for i in 0..(MAX_AGENT_SNAPSHOTS + 5) {
+            snapshot_document(t.path(), rel, AGENT_SNAPSHOT_LABEL, &format!("pass {i}"), 100 + i as i64)
+                .unwrap();
+        }
+
+        let mut budget = usize::MAX;
+        let all = list_versions(t.path(), rel, &mut budget);
+        let agent: Vec<&VersionEntry> =
+            all.iter().filter(|v| v.label == AGENT_SNAPSHOT_LABEL).collect();
+        assert_eq!(agent.len(), MAX_AGENT_SNAPSHOTS, "the oldest agent snapshots are dropped");
+        assert_eq!(agent[0].body, format!("pass {}", MAX_AGENT_SNAPSHOTS + 4), "newest kept");
+        assert!(
+            all.iter().any(|v| v.label == "Before the rewrite"),
+            "a snapshot the writer named is theirs, and the cap does not touch it"
+        );
+    }
+
+    #[test]
+    fn the_renderers_save_cannot_erase_a_snapshot_it_never_saw() {
+        // The sequence this protects against, in order: the app opens a vault
+        // and hydrates the version trail; an MCP client writes and snapshots
+        // what it replaced; the writer types one word and autosaves, sending
+        // back the list it hydrated. Without the rule the third step deletes
+        // the second's safety net.
+        let t = TempDir::new("aux-save-preserves");
+        let rel = "Drafts/Ch_01.md";
+        let hydrated = vec![entry("auto-1", "Auto", false, "what the editor had")];
+        save_versions(t.path(), rel, &hydrated).unwrap();
+
+        snapshot_document(t.path(), rel, AGENT_SNAPSHOT_LABEL, "what the agent replaced", 5_000)
+            .unwrap();
+
+        // The renderer autosaves, knowing nothing about the snapshot.
+        let mut next = hydrated.clone();
+        next.insert(0, entry("auto-2", "Auto", false, "one more word"));
+        save_versions(t.path(), rel, &next).unwrap();
+
+        let all = bodies(t.path(), rel);
+        assert!(
+            all.contains(&"what the agent replaced".to_string()),
+            "the agent's snapshot survived the renderer's next save: {all:?}"
+        );
+        assert!(all.contains(&"one more word".to_string()));
+
+        // Unnamed rows still obey the renderer — that is how pruning works.
+        save_versions(t.path(), rel, &[entry("auto-2", "Auto", false, "one more word")]).unwrap();
+        let pruned = bodies(t.path(), rel);
+        assert!(!pruned.contains(&"what the editor had".to_string()), "autos still prune");
+        assert!(pruned.contains(&"what the agent replaced".to_string()));
     }
 
     #[test]

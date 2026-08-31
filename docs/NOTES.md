@@ -393,11 +393,15 @@ Two consequences for later stages:
 
 - **`sessions/` and the Today panel** — see §3 above. Nothing writes per-day
   word-delta logs yet.
-- **Conflict detection.** `safety/ConflictDialog.tsx` exists in the UI, but
+- ~~**Conflict detection.** `safety/ConflictDialog.tsx` exists in the UI, but
   nothing raises it: a save currently wins over an external edit made while the
   document was open (the editor's copy is written; the version trail holds the
   previous text). Doing this properly means carrying the mtime read at open time
-  into `vault_write_file` and refusing the write when it moved.
+  into `vault_write_file` and refusing the write when it moved.~~ **Closed**
+  2026-08-31 (Wave 2, row 9 of PARITY.md) — see **§20**, which is also where
+  the one deviation from the plan above is argued: it carries a **content
+  hash**, not an mtime, because this vault lives in iCloud and the File
+  Provider re-stamps files it never rewrote.
 - ~~**Renaming and creating *files*** are not in the `VaultService` interface at
   all — nine methods, none of them create or rename.~~ **Closed** (Wave 1, rows
   5–6 of PARITY.md). `createFile` / `createFolder` / `rename` / `move` are on
@@ -777,13 +781,24 @@ UI-only operation. Everything a client can destroy, it can also restore.
 
 - **The Terminal pane** (§13b) — not built, by instruction.
 - **The UI's chapter drag does not persist** (§13h).
-- **Snapshots are read-only over MCP, and a client's write does not take one.**
+- ~~**Snapshots are read-only over MCP, and a client's write does not take one.**
   The version trail is written by the editor's autosave; a `write_document` call
   replaces a file without recording what was there first. A client can read the
   old text and say so, but "undo the AI's edit" is not one click. Taking a
   snapshot inside `ops::write_document` would fix it and would also start
   recording versions for the UI's own path in a way it does not expect — worth
-  designing rather than bolting on.
+  designing rather than bolting on.~~ **Closed** 2026-08-31, alongside row 9.
+  The design the note asked for: the snapshot went into a *separate* door
+  (`ops::agent_write_document`) rather than into `ops::write_document`, so the
+  UI's own save path is untouched and still records exactly what it always did.
+  A client's overwrite now leaves a named **"Before AI write"** version behind,
+  capped at 25 per document. Making that survive took one more change than it
+  looks — `aux_store::save_versions` now keeps named rows the renderer's list
+  never mentioned, because the renderer sends the whole list from a cache it
+  hydrated when the vault opened and would otherwise delete a snapshot taken
+  after that. See §20d. Snapshots are still *read*-only over MCP: there is no
+  `take_snapshot` tool, and `write_document` takes one whether the client
+  thinks to or not.
 - **`claude mcp add` was not actually run.** The `initialize` result was checked
   against the spec shape by hand (`protocolVersion`, `capabilities.tools`,
   `serverInfo`, `instructions`) and all fifteen tools were driven end-to-end
@@ -1426,3 +1441,296 @@ harmless.
   folders-then-name to match the backend's order, and manuscript order is the
   chapter rail's job (PARITY row 10). Two different orderings of the same files
   in two panes would be a bug, not a feature.
+
+---
+
+## 19. Compile is real now, and pandoc is a dependency we do not hide
+
+PARITY row 7 was the largest thing in the app that was pretending to work: six
+format cards, a path field, and a Compile button with **no click handler**. The
+footer said *"Pandoc bundled; exports run locally."* Half of that was true.
+Pandoc was never bundled and is not bundled now.
+
+### 19a. What actually ships
+
+`src-tauri/src/compile/`, three files with three different jobs:
+
+| File | Job | Runs a process? |
+|---|---|---|
+| `assembler.rs` | Selection → ordered chapters → one markdown document. All the ordering, frontmatter and include-option rules. | no |
+| `pandoc.rs` | Finding pandoc and a PDF engine; running them; turning stderr into a sentence. | yes |
+| `mod.rs` | Policy: the five formats, the eight profiles, where the file lands, what the writer is told. | no |
+
+The split is not decoration. `assembler.rs` is pure, so the part with all the
+rules in it has 18 unit tests that run on a machine with nothing installed —
+which is exactly what this machine was when the module was written.
+
+**Two of the five formats need nothing at all.** Markdown (combined) and the
+Fountain round-trip are written directly, because they are text and a round
+trip through pandoc's parser could only lose something. EPUB, Word and PDF go
+through pandoc; PDF additionally needs a PDF engine.
+
+### 19b. Finding pandoc: PATH, then the places a package manager uses
+
+`pandoc::find_program` walks `$PATH` first and then a fixed list —
+`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/opt/local/bin`,
+the TeX bin directories, the Nix profile, the Flatpak export dir.
+
+That fallback is not belt-and-braces, it is the actual bug class. A `tauri dev`
+process inherits the shell's PATH; an app launched from Finder or from a
+`.desktop` entry frequently does not. "It works in my terminal" is how that
+failure always presents, and a PATH-only lookup would have shipped it.
+
+PDF engines are tried in order: **xelatex**, lualatex, pdflatex, tectonic,
+typst, weasyprint, wkhtmltopdf. xelatex is first because it is the one the
+Swift app uses and the only common engine that accepts a `mainfont` name — the
+profiles are written for it. If a *non-LaTeX* engine is what is installed, the
+LaTeX layout variables are **not sent** (typst would refuse them), and the
+report says which engine rendered the file so the writer knows why the margins
+are not what the profile promised.
+
+### 19c. Never a shell string
+
+Every pandoc argument goes into `Command::arg`. Nothing is interpolated into a
+string that something else parses, and two tests hold that line: one proves a
+failing program's own stderr comes back, and one proves an argument containing
+`;` is one argument rather than a second command. A chapter called
+`Ch 01; rm -rf ~.md` is a file name.
+
+### 19d. What a missing pandoc looks like
+
+Not a stack trace and not a shrug. The sheet asks `compile_probe` when it
+opens, so EPUB / Word / PDF cards carry a quiet **"needs pandoc"** (or "needs a
+PDF engine", when pandoc is there and the engine is not) *before* they are
+clicked, and the opening selection falls back to Markdown rather than landing
+on a dead card. If one is clicked anyway, `CompileError` comes back with a
+`code` the renderer can branch on and a `hint` naming the actual command:
+
+- macOS → `brew install pandoc` (and `brew install --cask basictex` for PDF)
+- Linux → `sudo apt install pandoc` / `sudo dnf install pandoc` /
+  `rpm-ostree install pandoc`, "on AquariusOS it ships with the image"
+
+The footer no longer claims anything is bundled. With pandoc present it names
+the version it found; without it, it says which two formats always work.
+
+### 19e. Profiles, and what they actually change
+
+Eight, split by format exactly as Swift splits them. Prose (`pdf`/`epub`/`docx`):
+**standard-submission** (12pt Courier, double spaced, 1" margins, US Letter —
+the default, and the shape submission guidelines ask for), **trade-paperback**
+(5.5 × 8.5in, 11pt, 0.75"), **reader-proof** (Letter, 12pt, 1.5). Markdown:
+**clean** (default), **web-ready**, **plain**. Screenplay: **industry-standard**
+(WGA margins — 1.5" left, 1" elsewhere, 12pt Courier) and **reader-copy**
+(notes, boneyards and scene numbers removed).
+
+They become `--variable=` flags for PDF and assembler options everywhere else.
+A profile asked for with the wrong format is refused with a message that names
+the ones that would work — the same shape as every other refusal in the app.
+
+### 19f. The screenplay PDF is honest about what it is not
+
+Pandoc has no Fountain reader, and this repo does not have a Rust one. So a
+screenplay bound for PDF is **escaped into markdown** — every `*`, `#`, `>` and
+`[` that means something different in a screenplay gets a backslash — and
+rendered with `hard_line_breaks`, smart quotes off, 12pt Courier and WGA
+margins.
+
+That produces a **Courier reader PDF at screenplay margins**. It is not
+industry pagination: no dialogue indents, no MORE/CONT'D, no page-break rules.
+Real screenplay pagination is PARITY row 12 (screenplay depth) and belongs with
+the paged canvas, not here. The `.fountain` round-trip is the export a
+screenwriting app should be given, and it is exact: no headings, no page
+breaks, no escaping, ever.
+
+### 19g. Nothing is overwritten, and a missing chapter is not fatal
+
+Output names de-duplicate " 2" / " 3" through `vault::ops::dedupe` — the same
+function the sidebar's "New document" uses, now `pub(crate)` for this. The
+report says `renamed: true` and the sheet says so in words.
+
+A chapter in `chapterOrder` that is no longer on disk **drops out and is
+listed** in `missing`. A writer pressing Compile at 2am wants the other
+nineteen chapters, not a refusal. Only reading *nothing* is an error.
+
+### 19h. `compile_reveal` adds no capability
+
+"Show in folder" is a Rust command that spawns `open` / `xdg-open` with an
+argument array. It is not the shell plugin's JS API, which would need
+`shell:allow-open` — a blanket "open anything" permission for the whole
+renderer. `capabilities/default.json` is **unchanged by this entire feature**;
+the output folder comes from `vault_pick_folder`, the same native dialog the
+welcome screen already uses.
+
+### 19i. The MCP tool writes inside the vault only
+
+`compile_document` mirrors `compile_run` — same formats, same profiles, same
+assembler — with one deliberate narrowing: its `output_folder` is
+**vault-relative** (default `Exports`), not an absolute path.
+
+The UI can write anywhere because the writer chose the folder by hand in a
+native dialog; that click *is* the consent. A tool call carries no such
+consent, and every other MCP path in this server is already vault-relative and
+`resolve_in_root`-checked. Making compile the one exception would have been a
+new class of capability smuggled in behind a feature. The tool surface is now
+**20 tools**.
+
+### 19j. Deferred, on purpose
+
+- **FDX.** Dropped from the sheet rather than gated. It is a friendly stub in
+  the Swift app too (SWIFT-AUDIT §2.4), and a card that can never work is the
+  same lie the footer used to tell. The fine print points at Fountain, which
+  Final Draft imports.
+- **Industry screenplay pagination** — §19f. Row 12's job.
+- **A reference .docx / custom EPUB CSS.** Profiles shape the PDF; DOCX and
+  EPUB get metadata and a table of contents, not typography. A `--reference-doc`
+  is the obvious next step and needs a designed template, not more code.
+- **Compiling a folder or a selection of arbitrary files.** The sources are the
+  manuscript (or one of its drafts) and the open document, which is what the
+  Swift sheet offers.
+
+---
+
+## 20. Conflict detection: a hash, not a timestamp
+
+PARITY row 9. The dialog had been sitting in `src/components/safety/` since the
+port was copied out, complete and unreachable — `conflictStore.raise()` had no
+callers. Underneath it, a save always won: open a chapter, let anything else
+edit the file, and the next autosave wrote the editor's copy straight over it.
+The version trail held the previous text, so nothing was *unrecoverable*, but
+nobody was ever told.
+
+### 20a. Why the plan changed on the way in
+
+§8 and the PARITY row both said the same thing: carry the mtime read at open
+time into `vault_write_file` and refuse the write when it moved. That would
+have worked on a filesystem nobody else touches.
+
+This one is not that filesystem. The repo — and Royce's vaults — live in iCloud
+Drive, and the File Provider **re-stamps files whose bytes it never rewrote**
+(the same daemon that has been resurrecting deleted files and breaking
+`codesign` all week; see the project CLAUDE.md). On top of that, mtime
+precision is per-filesystem: whole seconds on HFS+, nanoseconds on APFS,
+nanoseconds-only-with-big-inodes on ext4, which matters the moment a vault is
+opened on AquariusOS instead of a Mac.
+
+An mtime guard on that setup raises the dialog at the sync daemon rather than
+at a real edit, and a dialog the writer learns to dismiss protects nothing. So
+the baseline is a **SHA-256 of the exact bytes** (`src-tauri/src/fs_ops/stamp.rs`).
+Same bytes, same answer, on every filesystem and after any number of sync round
+trips. `sha2` was already a dependency — the updater checks downloads against
+`SHA256SUMS.txt` — so this cost nothing.
+
+The mtime is still carried in the stamp and is still *reported*; it is simply
+never *decided on*. The one place it is consulted is `stamp::mtime_moved`,
+which turns "the clock jumped but the bytes are identical" into a line in the
+log instead of a refusal. `MTIME_TOLERANCE_MS` is 2 s — enough to clear
+whole-second filesystems — and exists only for that diagnostic.
+
+Hashing **bytes and not the string** matters more than it looks: `read_text` is
+lossy UTF-8, so a file with one stray `0xff` in it would hash differently going
+out than coming in, and every single save of that file would look like somebody
+else's edit. `fs_ops::stamp` has the test.
+
+### 20b. The contract
+
+Three wire types, mirrored field-for-field between `src-tauri/src/model.rs` and
+`src/types/vault.ts`:
+
+- `FileStamp { hash, mtimeMs, bytes }` — what the app last saw of a file.
+- `FileRead { path, content, stamp }` — what `vault_read_file` now answers with.
+- `WriteResult` — a tagged union: `{ status: "written", changed, stamp }` or
+  `{ status: "conflict", theirs, stamp }`.
+
+**A refusal is a result, not an error.** The frontend needs the on-disk text to
+draw a diff, and an error string cannot carry it. Real failures — a path
+outside the vault, a permission problem — still come back as `Err(String)` and
+still reject the promise, so nothing that already handled those changed.
+
+The guard is `ops::write_document_checked`, and it refuses exactly one thing: a
+write whose `expected.hash` no longer matches what is on disk. Three cases it
+deliberately lets through:
+
+1. **No baseline at all.** Every pre-existing caller — a version restore, a
+   find-and-replace, `set_frontmatter_status`, the trash restore — passes
+   `None` and behaves precisely as it did before. Opting in is what made this
+   safe to land in one change.
+2. **A file that is gone.** Deleted underneath an open editor, the write
+   recreates it. There is nothing on disk to lose, and refusing would strand
+   the writer's paragraph in a buffer with nowhere to put it.
+3. **Somebody else having written the identical bytes.** Two routes to the same
+   text is agreement, reported as an unchanged write.
+
+The byte-for-byte rule survives untouched: a guarded save of identical content
+still does not open the file, and a document with no frontmatter still cannot
+gain one.
+
+### 20c. Two ways in, and the one that matters
+
+The save path is the obvious one: `editorStore` keeps a `baseline` per open
+buffer, set on open and after every successful save, and hands it to
+`writeFile`. A refusal parks the buffer in a new `conflict` status — every
+character intact, nothing written — and raises the dialog.
+
+The one that matters more is the **watcher**. Swift's trigger is "the file
+changed on disk while the document was dirty", not "the save failed", and
+waiting for the next save means the writer types for another minute into a
+document that is already in disagreement. So `vaultStore`'s watch callback now
+calls `editorStore.reconcile()` alongside `refreshTree()`: every open buffer
+re-reads its file's stamp, and
+
+- a **clean** buffer takes the new text silently — which is what an MCP
+  client's edit is supposed to look like from the writer's side, and is the
+  behaviour that was already there;
+- a **dirty** one raises the dialog immediately.
+
+Two guards keep `reconcile` from arguing with itself: a buffer whose status is
+`saving` is skipped (its baseline is about to move, and reading disk underneath
+it would compare new bytes against an old stamp), and only one conflict is
+raised at a time. The self-write ledger (§3c) is untouched and still does its
+job — the app's own saves never reach the watcher at all, so a save can never
+raise a conflict against itself.
+
+### 20d. Nothing is lost by any of the three answers
+
+Swift offers Keep Mine / Take Theirs / Save Mine As Copy. All three are wired,
+and each one **snapshots whatever it is about to discard**:
+
+| Answer | What happens | What is snapshotted |
+|---|---|---|
+| **Keep mine** | force-write (no baseline), buffer re-baselines on what it wrote | *theirs*, as "Theirs, before keeping mine" |
+| **Take disk version** | buffer reloads from disk, marked clean | *mine*, as "Mine, before taking the disk version" |
+| **Save mine as a copy** | mine → `<name>.conflict.md` beside the original, then theirs loads into the buffer | nothing — the copy *is* the record |
+| **Decide later** | dialog closes, buffer stays dirty and unsaved | nothing — nothing happened |
+
+The copy goes through the same `vault().createFile` the sidebar's add menu
+uses, so it de-duplicates (`Ch_03.conflict 2.md`) and patches the tree like any
+other new file. It keeps the document's *own* extension rather than always
+`.md`, because a `.fountain` renamed to `.md` stops opening in the screenplay
+editor. `vaultStore.createFile` grew two options for this — `content` and
+`open: false` — and nothing else uses them.
+
+The MCP snapshot ("Before AI write", named, capped at 25 per document) needed
+one non-obvious supporting change. The renderer's aux cache is hydrated when a
+vault opens and `saveVersions` sends the **whole list** back, so the writer's
+next autosave would have deleted a snapshot taken after that hydration. So
+`aux_store::save_versions` now keeps named rows it was not told about;
+unnamed rows still obey the renderer's retention, which is how the 25-autosave
+cap prunes anything at all. `replace_versions` is the unguarded door, used
+where the caller just read the list it is rewriting.
+
+### 20e. What this did not do
+
+- **No merge.** The dialog shows a line-level diff and takes a decision; it
+  does not offer to combine the two versions. Swift does not either.
+- **The browser preview implements the same contract** in memory (FNV-1a, not
+  SHA-256 — it is comparing its own strings against each other, and
+  `crypto.subtle` is async and secure-context-only). Nothing external can edit
+  a preview file, so a conflict there means the app argued with itself, which
+  is exactly the bug worth catching in `npm run dev`.
+- **`expected_hash` is opt-in on MCP.** A client that omits it writes
+  regardless, which keeps every existing caller working. The tool description
+  is where a model learns to send it, so that wording is load-bearing and has a
+  test.
+- **The `conflict` save status is not a failure state.** It renders as "changed
+  on disk" in `--warn`, not "save failed" in `--danger`, because nothing failed
+  — a write was held back on purpose.

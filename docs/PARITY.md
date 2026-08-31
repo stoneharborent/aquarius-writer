@@ -88,9 +88,9 @@ throughout (SWIFT-AUDIT.md has file names).
 | ~~4~~ | ~~**Favorites / Starred** + quick views (Starred · Today · Manuscript)~~ | verified | ✅ **done** — row star + ⋯ menu + palette, Starred quick view, `favorites.json`, `toggle_star` | **M** | `aux_store::{read,save,set,toggle,forget}_favorite` + migration, `ops::set_star` / `ops::trash_entry`, `vault_set_star` / `vault_list_stars`, `favoritesStore`. Quick views: Starred (collapsible), Today (⌘T overlay), Manuscript (⌘2 outline). |
 | ~~5~~ | ~~**Create file / folder from the UI**~~ | verified — add menu with MD/Screenplay picker | ✅ **done** — WORKFLOW eyebrow + "+" add menu, inline name field, segmented Markdown/Screenplay picker; the new file opens in the editor | **M** | `ops::create_file` / `create_folder`, `vault_create_file` / `vault_create_folder`, MCP `create_folder` (`create_document` already existed). |
 | ~~6~~ | ~~**Rename / move files in the tree**~~ | verified — plus drag-in/out of the file manager | ✅ **done** — row menu (right-click or "⋯") with Rename (inline) and Move to… (folder picker), **plus drag a row onto a folder** (2026-08-31) | **M** | `ops::rename_entry` / `move_entry`, `vault_rename` / `vault_move`, MCP `rename_document` / `move_document`. Names de-duplicate " 2"/" 3"; snapshots, comments and chapter order follow the file; bytes are never rewritten. Drag-to-move is `useTreeDrag` in `Sidebar.tsx` and goes through the *same* `moveEntry` the menu calls — folders spring open after 700ms, a drop into the current parent is a no-op, and a folder cannot be dropped into itself or a descendant (the UI refuses what `ops::move_entry` refuses). **Still open: drag in and out of the OS file manager.** Manual ordering *within* a folder is deliberately not this row's job — the tree sorts folders-then-name, and chapter order belongs to the manuscript rail (row 10). |
-| 7 | **Compile / Export** | **fully real**: Pandoc + xelatex; EPUB, PDF, DOCX, MD, Fountain; profiles; include options | **mock — Compile button has no click handler**, no Pandoc anywhere | **L** | On Linux pandoc is a package dependency — easier than macOS. FDX is a stub in Swift too; skip it. |
+| ~~7~~ | ~~**Compile / Export**~~ | **fully real**: Pandoc + xelatex; EPUB, PDF, DOCX, MD, Fountain; profiles; include options | ✅ **done 2026-08-31** — five real formats, eight profiles, a pure assembler, pandoc located and run for EPUB/Word/PDF, `compile_document` on MCP | **L** | `src-tauri/src/compile/{mod,assembler,pandoc}.rs` + `compile_probe` / `compile_run` / `compile_reveal` + `src/lib/compile.ts`. **Markdown and Fountain need nothing installed**; EPUB/Word/PDF need pandoc, PDF also a TeX engine, and the cards say "needs pandoc" *before* they are clicked instead of dying on it. Nothing is overwritten (" 2" de-dup); a chapter missing from disk is skipped and reported, never fatal. **Deferred:** FDX (dropped — a stub in Swift too), industry screenplay *pagination* (the screenplay PDF is a Courier reader PDF at WGA margins, not paginated — that is row 12), a reference .docx / EPUB CSS. NOTES §19. |
 | 8 | **Manuscript management** (mark folder as manuscript, ManuscriptHome grid, status filter chips, front-matter section) | verified | outline/corkboard exist but no marking UI, no home, no filters | **M** | `manuscriptFolders`/`draftFolders` in `workflow.json` is the shared contract. |
-| 9 | **Conflict dialog reachable** | verified — Keep Mine / Take Theirs / Save As Copy | dialog built, `raise()` never called | **M** | Carry open-time mtime into `vault_write_file`; refuse a moved write. |
+| ~~9~~ | ~~**Conflict dialog reachable**~~ | verified — Keep Mine / Take Theirs / Save As Copy | ✅ **done 2026-08-31** — optimistic concurrency on the save path: every read carries a `FileStamp`, every save carries the baseline, a moved file is **refused** and raises the dialog. All three Swift answers wired, and each one snapshots what it discards | **M** | The plan said "carry the open-time mtime"; the implementation carries a **SHA-256 of the bytes** instead — this vault lives in iCloud and the File Provider re-stamps files it never rewrote, so an mtime guard would have raised the dialog at the sync daemon rather than at a real edit (`src-tauri/src/fs_ops/stamp.rs`, NOTES §8). New: `fs_ops/stamp.rs`, `model::{FileStamp,FileRead,WriteResult}`, `ops::{read_file,write_document_checked,agent_write_document}`, `readFileStamped` on the service seam, `baseline` per open buffer, `editorStore.{reconcile,resolveConflict}`. The **watcher** raises it too — a dirty buffer is told the moment the file moves, not at its next save (the Swift trigger). MCP `write_document` got the same guard (`expected_hash`, opt-in) **and** an auto-snapshot before every overwrite, which closes the NOTES §13j gap in the same change. NOTES §20. |
 | 10 | **Chapter reorder persists** | verified (rail Move up/down writes) | UI drag is in-memory; the MCP tool persists | **S** | `vaultStore.ts:356`. |
 | 11 | **Editable split editor** | verified — two live documents, independent undo/save | split is read-only reference only | **M** | Keep the read-only reference pane too (Swift has both). |
 | 12 | **Screenplay depth**: paged canvas with real page breaks, Title Page editor tab, scene drag-reorder, dual dialogue, revision marks, smart-type | verified | element buttons, scenes rail, page estimate, preview overlay | **L** | Industry page geometry is in SWIFT-AUDIT §2.1 in points. |
@@ -98,7 +98,7 @@ throughout (SWIFT-AUDIT.md has file names).
 | 14 | **Per-document editor zoom** ⌘+/−/0, persisted per path | verified | global body-size slider only | **S** | |
 | 15 | **Welcome screen: recents list + drag-a-folder-to-open + AppMark glow** | verified | three cards only | **S** | |
 | 16 | **Popouts in the real shell** (⌃⌘O) | verified (ghost-slot design) | works in browser preview; blocked by missing Tauri capability | **S** | `core:webview:allow-create-webview-window` + window scope. NOTES §15d. |
-| 17 | **MCP tool catch-up** | **33 tools + a browser Web UI** — v1 of this doc wrongly assumed Swift had no MCP | 19 tools | **M** | Rename and move landed with row 6; `toggle_star` with row 4. Still missing: manuscript/draft toggles, scene tools, set_synopsis, insert/replace-lines, diff_version, take_snapshot, export. Web UI optional. |
+| 17 | **MCP tool catch-up** | **33 tools + a browser Web UI** — v1 of this doc wrongly assumed Swift had no MCP | 20 tools | **M** | Rename and move landed with row 6; `toggle_star` with row 4; `compile_document` with row 7 (vault-relative output only — NOTES §19i). Still missing: manuscript/draft toggles, scene tools, set_synopsis, insert/replace-lines, diff_version, take_snapshot. Web UI optional. |
 | 18 | **Terminal pane** | verified — multi-session tabs, agent config, drag-file-for-path | deliberately deferred | **M** | Still deferred; Swift sets the bar for when it lands. |
 | 19 | **Semantic search toggle in Find** | verified (on-device embeddings) | keyword only | research | Needs a Linux embedding story first — not a copy-paste. |
 | ~~20~~ | ~~macOS window buttons~~ | n/a (native) | ✅ **done** (2026-08-31) — **native traffic lights**, top-left, like the Swift original | **S** | Decision taken: re-enable decorations on macOS rather than draw our own. `src-tauri/tauri.macos.conf.json` sets `decorations: true` + `titleBarStyle: "Overlay"` + `hiddenTitle: true`; the base config keeps `decorations: false` so Linux still uses the app-drawn `WindowControls`. The title bar insets its content 78px on macOS so the lights have their space. NOTES §15c. |
@@ -111,7 +111,7 @@ throughout (SWIFT-AUDIT.md has file names).
 |---|---|
 | Prose / note / screenplay editors, three configs on one host | **parity** (CodeMirror vs NSTextView; Fountain via `fountain-js` vs Swift's in-house parser) |
 | Toolbar, footer stats, ⌘1–⌘7 element keys | **parity** |
-| Versions: auto + named snapshots, diff, restore | **parity** (Swift adds a "Current Version" header button — nice-to-have; MCP writes still don't snapshot first, NOTES §13j) |
+| Versions: auto + named snapshots, diff, restore | **parity** (Swift adds a "Current Version" header button — nice-to-have). **Port ahead since 2026-08-31:** an MCP write snapshots what it replaces ("Before AI write"), and a conflict resolution snapshots whichever version it discards — Swift does neither. NOTES §13j, §20. |
 | Margin comments | **parity** (storage differs: port one `comments.json`, Swift per-file — cosmetic) |
 | Find & Replace (⇧⌘F) | **parity** |
 | Graph, palette, cheat sheet, settings | **parity** |
@@ -125,12 +125,13 @@ throughout (SWIFT-AUDIT.md has file names).
 | **Pricing / unlock dialog** | **absent by decision.** Swift still has $50 Studio tiers; that's a Swift cleanup question, not a port task. |
 | AquariusOS theme, Linux packaging, self-updater | **port ahead** — the reason this build exists |
 
-**Counts.** 16 open rows. Everything closed on 2026-08-30, in order: the
+**Counts.** 14 open rows. Everything closed on 2026-08-30, in order: the
 workflow-switcher item from §3, then rows 4, 5 and 6 (favourites, create,
 rename/move), then row 2 (Ice / Midnight / Aqua accents), and finally rows 1
-and 3 (shell layout, page canvas) — which finishes Wave 1. What is left:
-1 large-and-structural (screenplay depth), 1 large (Compile), 5 medium,
-8 small, 1 research. Spark and pricing stay closed. The v1 claim that the port
+and 3 (shell layout, page canvas) — which finishes Wave 1. Wave 2 opened on
+2026-08-31 with row 7 (Compile) and row 9 (conflict detection). What is left:
+1 large-and-structural (screenplay depth), 4 medium, 8 small, 1 research.
+Spark and pricing stay closed. The v1 claim that the port
 was "ahead" on MCP was wrong — Swift has 33 tools and a Web UI.
 
 ---
@@ -165,9 +166,16 @@ open: sidebar navigator zoom (A−/A+), a collapse for the editor pane itself
 
 ### Wave 2 — the features that are pretending to work
 
-7. **Compile / Export** (row 7, L) — pandoc as a Linux package dependency;
-   EPUB/PDF/DOCX/MD/Fountain; skip FDX (a stub in Swift too).
-8. **Conflict detection** (row 9, M).
+7. ~~**Compile / Export** (row 7, L)~~ ✅ **done 2026-08-31** — pandoc as a
+   Linux package dependency; EPUB/PDF/DOCX/MD/Fountain; FDX dropped (a stub in
+   Swift too). Shipped with its MCP tool (`compile_document`) in the same
+   change, per the rule below. NOTES §19.
+8. ~~**Conflict detection** (row 9, M)~~ ✅ **done 2026-08-31** — a content
+   hash, not an mtime, carried as a per-buffer baseline; the save path refuses
+   a moved write and the watcher raises the dialog the moment a *dirty*
+   document changes underneath. Shipped with its MCP counterpart
+   (`write_document`'s opt-in `expected_hash`) in the same change, per the rule
+   below, and with the auto-snapshot that closes NOTES §13j. NOTES §20.
 9. **Chapter reorder persists** (row 10, S).
 10. **Today on real data** (M) — build `.aquarius/sessions/`; the port would
     actually *pass* Swift here, and the session format should be proposed as
@@ -200,6 +208,10 @@ the MCP client could do things the human could not. Row 5 is closed, and row
 6 closed it in both directions at once — the sidebar's add menu, the row
 menu, and `create_folder` / `rename_document` / `move_document` are the same
 four functions in `vault::ops`. Row 4 held to it in one motion: the row star,
-the palette command and `toggle_star` are all `ops::set_star`. Row 10 is still
-open. Row 17 shows the Swift
-app holds itself to the same rule with nearly double the tool surface.
+the palette command and `toggle_star` are all `ops::set_star`. Row 7 held to it
+in the same motion: the Compile sheet and `compile_document` are the same
+`compile::run` — with one deliberate narrowing on the MCP side, which writes
+inside the vault only (NOTES §19i). That is a *smaller* capability for the
+tool, not a bigger one, and it is written down rather than silent. Row 10 is
+still open. Row 17 shows the Swift app holds itself to the same rule with
+nearly double the tool surface.

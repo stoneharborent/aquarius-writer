@@ -1,12 +1,14 @@
 import type { VaultService } from "./service";
 import type {
   EntryReport,
+  FileStamp,
   NewFileKind,
   NodeKind,
   VaultNode,
   Workflow,
   WorkflowKind,
   WorkflowSummary,
+  WriteResult,
 } from "@/types/vault";
 
 // Sample data — drawn from HANDOFF.md §3 sketch. Lets the browser preview
@@ -361,6 +363,10 @@ function repath(node: VaultNode, from: string, to: string) {
     if (node.kind !== "folder" && node.path in FILE_CONTENTS) {
       FILE_CONTENTS[next] = FILE_CONTENTS[node.path];
       delete FILE_CONTENTS[node.path];
+      if (node.path in MTIMES) {
+        MTIMES[next] = MTIMES[node.path];
+        delete MTIMES[node.path];
+      }
     }
     node.path = next;
   }
@@ -410,6 +416,44 @@ function relocate(path: string, destFolder: string, newName?: string): EntryRepo
   return { path: to, name: node.name, kind: node.kind, from: path, renamed: finalName !== wantedName };
 }
 
+// ── stamps, in memory ────────────────────────────────────────────────────
+//
+// The same conflict contract the Tauri service implements, so the seam has one
+// shape and `editorStore` does not have to know which backend it is talking
+// to. Nothing external can edit these files — there is no filesystem here — so
+// a conflict can only arise if the app argues with itself, which is exactly
+// the bug this machinery exists to catch. Keeping the guard live in the
+// preview means that bug shows up in `npm run dev` rather than in a shipped
+// build.
+//
+// The fingerprint is FNV-1a, not SHA-256: it is comparing the preview's own
+// strings against each other, never against bytes some other program wrote,
+// and `crypto.subtle` is both async and unavailable outside a secure context.
+
+const MTIMES: Record<string, number> = {};
+
+function fingerprint(text: string): string {
+  // 32-bit FNV-1a over UTF-16 code units, twice with different offsets, so a
+  // one-character change is very unlikely to collide.
+  const pass = (offset: number) => {
+    let h = offset;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(16).padStart(8, "0");
+  };
+  return pass(0x811c9dc5) + pass(0x9e3779b1);
+}
+
+function stampFor(relPath: string, content: string): FileStamp {
+  return {
+    hash: fingerprint(content),
+    mtimeMs: MTIMES[relPath] ?? 0,
+    bytes: new TextEncoder().encode(content).length,
+  };
+}
+
 /** A picker row for a workflow the preview cannot actually make on disk. */
 function stubSummary(name: string, path: string, kind: WorkflowKind): WorkflowSummary {
   return { id: `wf-${Date.now()}`, name, path, kind, items: 0, color: "blue", updated: "now" };
@@ -443,6 +487,10 @@ export function createBrowserVaultService(): VaultService {
     async readFile(_workflowId, relPath) {
       return FILE_CONTENTS[relPath] ?? "";
     },
+    async readFileStamped(_workflowId, relPath) {
+      const content = FILE_CONTENTS[relPath] ?? "";
+      return { path: relPath, content, stamp: stampFor(relPath, content) };
+    },
     async resolveAssetUrl(_workflowId, relPath) {
       const url = ASSET_URLS[relPath];
       if (url) return url;
@@ -453,8 +501,23 @@ export function createBrowserVaultService(): VaultService {
       if (bytes) return bytes;
       throw new Error(`Binary not found: ${relPath}`);
     },
-    async writeFile(_workflowId, relPath, content) {
-      FILE_CONTENTS[relPath] = content;
+    async writeFile(_workflowId, relPath, content, expected): Promise<WriteResult> {
+      const current = FILE_CONTENTS[relPath];
+      // Same three rules as `vault::ops::write_guarded`: no baseline is a
+      // force-write, a file that isn't there loses nothing, and arriving at
+      // the same text by two routes is agreement rather than a conflict.
+      if (expected && current !== undefined) {
+        const onDisk = stampFor(relPath, current);
+        if (onDisk.hash !== expected.hash && current !== content) {
+          return { status: "conflict", path: relPath, theirs: current, stamp: onDisk };
+        }
+      }
+      const changed = current !== content;
+      if (changed) {
+        FILE_CONTENTS[relPath] = content;
+        MTIMES[relPath] = Date.now();
+      }
+      return { status: "written", path: relPath, changed, stamp: stampFor(relPath, content) };
     },
     async createFile(_workflowId, parent, name, kind) {
       const folder = folderAt(parent);

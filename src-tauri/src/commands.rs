@@ -15,7 +15,7 @@ use crate::fs_ops::{self, trash, watcher::WorkflowWatch};
 use crate::model::{AssetRef, LoadedWorkflow, WorkflowSummary};
 use crate::state::AppState;
 use crate::vault::{self, paths, registry, scaffold, tree, workflow};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
@@ -246,26 +246,47 @@ pub fn vault_load_workflow(
 
 // ── documents ────────────────────────────────────────────────────────────
 
+/// Read a document, with the stamp of the bytes it came from.
+///
+/// The stamp is the whole point: the renderer keeps it as that buffer's
+/// baseline and hands it back on the next save, which is what lets
+/// `vault_write_file` tell an ordinary save apart from one that would
+/// overwrite somebody else's edit.
 #[tauri::command]
-pub fn vault_read_file(state: State<'_, AppState>, workflow_id: String, rel_path: String) -> R<String> {
-    let path = file_in(&state, &workflow_id, &rel_path)?;
-    fs_ops::read_text(&path).map_err(|e| format!("{rel_path}: {e}"))
+pub fn vault_read_file(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    rel_path: String,
+) -> R<crate::model::FileRead> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::read_file(&root, &rel_path)
 }
 
+/// Save a document, optionally guarded by the baseline the caller is holding.
+///
+/// Omit `expected` (or send null) and this is the force-write it always was.
+/// Send the stamp the buffer was opened at and the write is *refused* — as a
+/// `conflict` result carrying the on-disk text, not as an error — when the file
+/// no longer matches it. See `vault::ops::write_document_checked`.
 #[tauri::command]
 pub fn vault_write_file(
     state: State<'_, AppState>,
     workflow_id: String,
     rel_path: String,
     content: String,
-) -> R<()> {
-    let path = file_in(&state, &workflow_id, &rel_path)?;
-    // Stamp the ledger *before* the write, so the watcher can't win the race
-    // and report our own save as an external edit.
-    state.note_self_write(&path);
-    fs_ops::atomic::write_atomic(&path, content.as_bytes())
-        .map(|_| ())
-        .map_err(|e| format!("{rel_path}: {e}"))
+    expected: Option<crate::model::FileStamp>,
+) -> R<crate::model::WriteResult> {
+    let root = root_of(&state, &workflow_id)?;
+    // The ledger is stamped inside `write_document_checked`, before the write,
+    // so the watcher can't win the race and report our own save as an
+    // external edit (docs/NOTES.md §3c).
+    vault::ops::write_document_checked(
+        &root,
+        &rel_path,
+        &content,
+        expected.as_ref(),
+        &state.self_writes,
+    )
 }
 
 /// Raw bytes for pdf.js and friends. Returns an ArrayBuffer to the renderer
@@ -498,6 +519,81 @@ pub fn trash_restore(
 pub fn trash_purge(state: State<'_, AppState>, workflow_id: String, id: String) -> R<()> {
     let root = root_of(&state, &workflow_id)?;
     trash::purge(&root, &id).map_err(io)
+}
+
+// ── compile / export ─────────────────────────────────────────────────────
+//
+// Three commands behind the Compile sheet (⌘E). `compile_probe` is asked when
+// the sheet opens, so a format that cannot work on this machine says so on the
+// card rather than failing on click. `compile_run` does the work — its error
+// type is a *structured* `CompileError`, not a string, because the renderer
+// has to tell "pandoc is missing, here is how to install it" apart from
+// "chapter 4 has gone".
+//
+// The output folder comes from `vault_pick_folder`, the same native dialog the
+// welcome screen uses, so nothing new is granted in capabilities/default.json.
+
+/// What Compile can do on this machine: pandoc, a PDF engine, the profile
+/// table, and the folder to offer by default. `workflow_id` is optional — the
+/// browser preview and a cold sheet can ask without one.
+#[tauri::command]
+pub fn compile_probe(
+    state: State<'_, AppState>,
+    workflow_id: Option<String>,
+) -> crate::compile::CompileProbe {
+    let root = workflow_id.and_then(|id| root_of(&state, &id).ok());
+    crate::compile::probe(root.as_deref())
+}
+
+#[tauri::command]
+pub fn compile_run(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    request: crate::compile::CompileRequest,
+) -> Result<crate::compile::CompileReport, crate::compile::CompileError> {
+    let root = root_of(&state, &workflow_id)
+        .map_err(|e| crate::compile::CompileError::bad_request(e))?;
+    let (wf, _) = workflow::read_or_create(&root)
+        .map_err(|e| crate::compile::CompileError::io(e.to_string()))?;
+    let report = crate::compile::run(&root, &wf, &request)?;
+    eprintln!(
+        "[compile] wrote {} ({} chapter(s), {} words)",
+        report.path, report.chapters, report.words
+    );
+    Ok(report)
+}
+
+/// Show a compiled file in the desktop's file manager.
+///
+/// Deliberately a Rust command rather than the shell plugin's JS API: that
+/// would need `shell:allow-open` in `capabilities/default.json`, which is a
+/// blanket "open anything" permission for the whole renderer. This opens one
+/// folder that this process itself just wrote to, and grants the renderer
+/// nothing — the capability file is unchanged by the whole Compile feature.
+///
+/// The platform opener is spawned with an argument array, never a shell
+/// string, for the same reason `compile::pandoc` is.
+#[tauri::command]
+pub fn compile_reveal(path: String) -> R<()> {
+    let p = PathBuf::from(&path);
+    // A file's *folder*, not the file — opening the file itself would launch
+    // whatever application claims .epub, which is not what "show me" means.
+    let target = if p.is_dir() { p.clone() } else { p.parent().map(Path::to_path_buf).unwrap_or(p) };
+    if !target.is_dir() {
+        return Err(format!("no such folder: {}", target.display()));
+    }
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(opener)
+        .arg(target.as_os_str())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("could not open {}: {e}", target.display()))
 }
 
 // ── the MCP server ───────────────────────────────────────────────────────

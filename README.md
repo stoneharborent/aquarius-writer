@@ -151,12 +151,60 @@ This can only ever build the *Mac* app. For the Linux one, see below.
 - The **MCP server** is in and switched off until you want it (Settings → MCP).
   On, an AI app on this machine can drive the vault.
 
+- **Compile / Export works** (⌘E). Markdown and Fountain need nothing installed
+  and always work. EPUB, Word (.docx) and PDF are produced by **pandoc**, which
+  the app looks for rather than bundles — see "One thing you may need to
+  install" below. PDF needs a TeX engine as well. Final Draft (.fdx) is not
+  exported; compile Fountain, which Final Draft imports.
+
 It **has** now run on Linux, on AquariusOS. The first boot (2026-08-28) launched
 cleanly and none of the welcome screen's three buttons worked, which is what
 v0.1.1 fixes — `docs/NOTES.md` §14. The second (2026-08-29) opened workflows
 fine but the window could not be dragged anywhere, which is what v0.1.2 fixes —
 `docs/NOTES.md` §15. §10 is the rest of the checklist, most of which still
 wants walking on a real bench.
+
+### One thing you may need to install: pandoc
+
+Aquarius Writer does not bundle pandoc. It is a 150 MB program of its own with a
+separate build for every platform, and on Linux it is one line in a package
+list — so the app **looks for it** and tells you plainly when it is not there,
+rather than shipping a copy or pretending.
+
+What that means in practice:
+
+| You want to compile | You need |
+|---|---|
+| **Markdown** (all chapters in one file) | nothing |
+| **Fountain** (screenplay round-trip) | nothing |
+| **EPUB**, **Word (.docx)** | pandoc |
+| **PDF** | pandoc **and** a TeX engine (xelatex is the one to get) |
+
+To install it:
+
+```bash
+# macOS
+brew install pandoc
+brew install --cask basictex     # only if you also want PDF
+
+# Debian / Ubuntu
+sudo apt install pandoc
+sudo apt install texlive-xetex   # only if you also want PDF
+
+# Fedora
+sudo dnf install pandoc texlive-xetex
+```
+
+**On AquariusOS you do not have to do any of this** — pandoc ships with the OS
+image, and the `.deb` this repo builds lists `pandoc` and `texlive-xetex` as
+*Recommends*, so a normal `apt install` pulls them in and a deliberate
+`--no-install-recommends` still leaves you a working app with two of the five
+formats.
+
+You do not have to hunt for the binary afterwards. The app checks your `PATH`
+and then the usual places (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`,
+MacPorts, Nix, Flatpak). Open Compile and the format cards say which ones are
+ready.
 
 ### Starting a workflow
 

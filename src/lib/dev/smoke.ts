@@ -86,6 +86,30 @@ export async function runDevSmoke(workflowId: string): Promise<void> {
       `has frontmatter=${after.startsWith("---")}`,
     );
 
+    // ── the conflict guard, end to end through the real backend ──
+    // A save that carries the baseline it read must win; the same save made
+    // after something else touched the file must be refused with that
+    // something else's text, and must not have written anything.
+    const stamped = await v.readFileStamped(workflowId, plain);
+    const guarded = await v.writeFile(
+      workflowId, plain, `${stamped.content}\nGuarded.\n`, stamped.stamp,
+    );
+    await log(
+      `writeFile(matching baseline) → ${guarded.status}` +
+      `${guarded.status === "written" ? `, changed=${guarded.changed}` : ""}`,
+    );
+
+    // Something else edits the file; our stamp is now stale.
+    const stale = await v.readFileStamped(workflowId, plain);
+    await v.writeFile(workflowId, plain, `${stale.content}\nSomebody else.\n`, null);
+    const refused = await v.writeFile(workflowId, plain, "my unsaved paragraph", stale.stamp);
+    const onDisk = await v.readFile(workflowId, plain);
+    await log(
+      `writeFile(stale baseline) → ${refused.status} ` +
+      `(theirs ends "${refused.status === "conflict" ? refused.theirs.trimEnd().slice(-14) : "—"}"), ` +
+      `disk untouched=${onDisk !== "my unsaved paragraph"}`,
+    );
+
     // ── binary + asset ──
     const bytes = await v.readBinary(workflowId, "Research/Notes.pdf");
     await log(`readBinary("Research/Notes.pdf") → ${bytes.byteLength} bytes, magic "${new TextDecoder().decode(bytes.slice(0, 5))}"`);

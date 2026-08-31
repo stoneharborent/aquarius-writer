@@ -17,8 +17,9 @@
 
 use crate::aux_store;
 use crate::fs_ops::atomic::{write_atomic, WriteOutcome};
+use crate::fs_ops::stamp;
 use crate::fs_ops::watcher::SelfWrites;
-use crate::model::Workflow;
+use crate::model::{FileRead, FileStamp, WriteResult, Workflow};
 use crate::vault::{frontmatter, paths, scaffold, workflow};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -52,21 +53,40 @@ pub struct DocumentRead {
     /// Parsed frontmatter keys, empty when the file has none.
     pub frontmatter: std::collections::BTreeMap<String, serde_json::Value>,
     pub words: usize,
+    /// SHA-256 of the bytes this was read from. Hand it back as
+    /// `expected_hash` on a write and the write is refused if anything else
+    /// changed the file in between.
+    pub hash: String,
 }
 
 pub fn read_document(root: &Path, rel: &str) -> OpResult<DocumentRead> {
+    let read = read_file(root, rel)?;
+    let parsed = frontmatter::parse(&read.content);
+    Ok(DocumentRead {
+        path: read.path,
+        words: frontmatter::count_words(&parsed.body),
+        body: parsed.body,
+        frontmatter: parsed.frontmatter,
+        content: read.content,
+        hash: read.stamp.hash,
+    })
+}
+
+/// A document's text and the stamp of the bytes it came from.
+///
+/// The stamp is computed from the raw bytes, not from `content` — `read_text`
+/// is lossy, and a file with one invalid byte would otherwise hash differently
+/// every time it went past the guard.
+pub fn read_file(root: &Path, rel: &str) -> OpResult<FileRead> {
     let path = resolve(root, rel)?;
     if !path.is_file() {
         return Err(format!("no document at {rel}"));
     }
-    let content = crate::fs_ops::read_text(&path).map_err(|e| format!("{rel}: {e}"))?;
-    let parsed = frontmatter::parse(&content);
-    Ok(DocumentRead {
+    let bytes = crate::fs_ops::read_bytes(&path).map_err(|e| format!("{rel}: {e}"))?;
+    Ok(FileRead {
         path: rel.to_string(),
-        words: frontmatter::count_words(&parsed.body),
-        body: parsed.body,
-        frontmatter: parsed.frontmatter,
-        content,
+        content: String::from_utf8_lossy(&bytes).into_owned(),
+        stamp: stamp::stamp_for(&path, &bytes),
     })
 }
 
@@ -130,6 +150,10 @@ pub struct WriteReport {
 }
 
 /// Replace a document's whole content. Creates parent folders if needed.
+///
+/// **Unguarded.** This is the force-write: it wins over whatever is on disk.
+/// Callers that hold a baseline — the editor's save path, an MCP client that
+/// read the file first — want [`write_document_checked`] instead.
 pub fn write_document(
     root: &Path,
     rel: &str,
@@ -143,6 +167,142 @@ pub fn write_document(
         path: rel.to_string(),
         changed: outcome == WriteOutcome::Written,
         bytes: content.len(),
+    })
+}
+
+// ── the conflict guard (PARITY row 9) ────────────────────────────────────
+//
+// Until now a save always won. Open a chapter, let something else edit it —
+// a sync client, a script, an MCP tool, the writer's own second window — and
+// the next autosave wrote the editor's copy straight over it. The dialog for
+// this existed in the UI from the start and nothing ever raised it
+// (docs/NOTES.md §8).
+//
+// What raises it now is one rule: **a write that carries a baseline is refused
+// when the file on disk has stopped matching it.** The baseline is a content
+// hash, not an mtime — see `fs_ops::stamp` for the full argument, of which the
+// short form is that this vault lives in iCloud and iCloud re-stamps files it
+// did not rewrite.
+//
+// Three things the guard deliberately does *not* refuse:
+//
+// * **A write with no baseline.** Every existing caller (a restore, a
+//   find-and-replace, `set_frontmatter_status`) passes `None` and behaves
+//   exactly as it did before. Opting in is what makes this safe to land.
+// * **A file that is gone.** Deleted underneath an open editor, the write
+//   recreates it. There is nothing on disk to lose, and refusing would strand
+//   the writer's text in a buffer with nowhere to go.
+// * **Someone else having written the identical bytes.** Two routes to the
+//   same text is not a disagreement; it is reported as an unchanged write.
+
+/// Write `content` unless the file has moved out from under `expected`.
+///
+/// `expected` is the stamp from the `FileRead` the caller last saw. `None`
+/// means "no baseline" and is an unconditional write. Only `expected.hash`
+/// decides; a stamp carrying `mtimeMs: 0` (all an MCP client can supply) is
+/// judged on its hash alone.
+pub fn write_document_checked(
+    root: &Path,
+    rel: &str,
+    content: &str,
+    expected: Option<&FileStamp>,
+    self_writes: &SelfWrites,
+) -> OpResult<WriteResult> {
+    write_guarded(root, rel, content, expected, None, self_writes)
+}
+
+/// The MCP server's door onto a write: guard first, then snapshot the text
+/// that is about to be replaced, then write.
+///
+/// The snapshot is the fix for docs/NOTES.md §13j — an agent's overwrite used
+/// to leave nothing behind, so "undo what the AI just did" meant hoping the
+/// editor happened to have autosaved. It is taken only when the write is
+/// actually going to change something: a refused write replaced nothing, and
+/// neither did a byte-identical one.
+pub fn agent_write_document(
+    root: &Path,
+    rel: &str,
+    content: &str,
+    expected_hash: Option<&str>,
+    self_writes: &SelfWrites,
+) -> OpResult<WriteResult> {
+    // A client sends a hash, never a timestamp — it has no business knowing
+    // one. `mtimeMs: 0` is "unknown", which the guard reads as "judge me on
+    // the hash", which is what it does for everybody anyway.
+    let expected =
+        expected_hash.map(|h| FileStamp { hash: h.to_string(), mtime_ms: 0, bytes: 0 });
+    write_guarded(
+        root,
+        rel,
+        content,
+        expected.as_ref(),
+        Some(aux_store::AGENT_SNAPSHOT_LABEL),
+        self_writes,
+    )
+}
+
+fn write_guarded(
+    root: &Path,
+    rel: &str,
+    content: &str,
+    expected: Option<&FileStamp>,
+    snapshot_label: Option<&str>,
+    self_writes: &SelfWrites,
+) -> OpResult<WriteResult> {
+    let path = resolve(root, rel)?;
+    let on_disk = stamp::stamp_of(&path);
+    let next_hash = stamp::hash_bytes(content.as_bytes());
+
+    if let (Some(expected), Some(current)) = (expected, on_disk.as_ref()) {
+        if current.hash != expected.hash {
+            // Already exactly what we were going to write. Somebody got there
+            // first with the same text — nothing to disagree about.
+            if current.hash == next_hash {
+                return Ok(WriteResult::Written {
+                    path: rel.to_string(),
+                    changed: false,
+                    stamp: current.clone(),
+                });
+            }
+            let theirs = crate::fs_ops::read_text(&path).map_err(|e| format!("{rel}: {e}"))?;
+            return Ok(WriteResult::Conflict {
+                path: rel.to_string(),
+                theirs,
+                stamp: current.clone(),
+            });
+        }
+        // Same bytes, different clock: the sync daemon touched the file
+        // without rewriting it. Worth a line in the log for whoever goes
+        // looking; never a reason to refuse the writer's save.
+        if stamp::mtime_moved(current, expected) {
+            eprintln!(
+                "[vault] {rel}: mtime moved ({} → {}) but the bytes did not — writing anyway",
+                expected.mtime_ms, current.mtime_ms
+            );
+        }
+    }
+
+    // Nothing is replaced by a write that changes nothing, so nothing needs
+    // protecting from it.
+    let replacing = on_disk.as_ref().filter(|s| s.hash != next_hash);
+    if let (Some(label), Some(_)) = (snapshot_label, replacing) {
+        let text = crate::fs_ops::read_text(&path).map_err(|e| format!("{rel}: {e}"))?;
+        if let Err(e) =
+            aux_store::snapshot_document(root, rel, label, &text, crate::vault::registry::now_ms())
+        {
+            // The snapshot is a safety net, not the operation. Say so and
+            // carry on rather than refusing a write the caller is entitled
+            // to make.
+            eprintln!("[vault] {rel}: could not snapshot before the write: {e}");
+        }
+    }
+
+    self_writes.record(&path);
+    let outcome = write_atomic(&path, content.as_bytes()).map_err(|e| format!("{rel}: {e}"))?;
+    Ok(WriteResult::Written {
+        path: rel.to_string(),
+        changed: outcome == WriteOutcome::Written,
+        stamp: stamp::stamp_for(&path, content.as_bytes()),
     })
 }
 
@@ -262,7 +422,11 @@ fn display_name(file_name: &str, kind: &str) -> String {
 }
 
 /// `stem` (+ `.ext`), suffixed " 2", " 3", … until nothing is in the way.
-fn dedupe(dir: &Path, stem: &str, ext: Option<&str>) -> String {
+///
+/// `pub(crate)` since Compile: an export lands in a folder the writer chose,
+/// and "never silently overwrite" has to mean the same thing there as it does
+/// in the sidebar's add menu.
+pub(crate) fn dedupe(dir: &Path, stem: &str, ext: Option<&str>) -> String {
     let build = |s: &str| match ext {
         Some(e) => format!("{s}.{e}"),
         None => s.to_string(),
@@ -897,6 +1061,256 @@ mod tests {
         // Byte-identical content is not a write at all.
         let again = write_document(t.path(), "Drafts/Ch_01.md", "after", &writes).unwrap();
         assert!(!again.changed);
+    }
+
+    // ── the conflict guard ───────────────────────────────────────────────
+
+    /// The stamp the guard would accept for what is on disk right now.
+    fn baseline(root: &Path, rel: &str) -> FileStamp {
+        read_file(root, rel).unwrap().stamp
+    }
+
+    fn expect_written(result: &WriteResult) -> (&bool, &FileStamp) {
+        match result {
+            WriteResult::Written { changed, stamp, .. } => (changed, stamp),
+            WriteResult::Conflict { theirs, .. } => {
+                panic!("expected a write, got a conflict against {theirs:?}")
+            }
+        }
+    }
+
+    fn expect_conflict(result: &WriteResult) -> &str {
+        match result {
+            WriteResult::Conflict { theirs, .. } => theirs,
+            WriteResult::Written { .. } => panic!("expected a refusal, the write went through"),
+        }
+    }
+
+    #[test]
+    fn reading_a_document_stamps_the_bytes_it_came_from() {
+        let t = TempDir::new("ops-read-stamp");
+        t.write("Drafts/Ch_01.md", "---\nstatus: drafting\n---\n\nrain");
+
+        let read = read_file(t.path(), "Drafts/Ch_01.md").unwrap();
+        assert_eq!(read.path, "Drafts/Ch_01.md");
+        assert_eq!(read.content, "---\nstatus: drafting\n---\n\nrain");
+        assert_eq!(read.stamp.bytes, read.content.len());
+        assert!(read.stamp.mtime_ms > 0);
+
+        // read_document carries the same fingerprint, so an MCP client can
+        // hand it straight back as expected_hash.
+        assert_eq!(read_document(t.path(), "Drafts/Ch_01.md").unwrap().hash, read.stamp.hash);
+        assert!(read_file(t.path(), "Drafts/nope.md").is_err());
+        assert!(read_file(t.path(), "../escape.md").is_err());
+    }
+
+    #[test]
+    fn a_write_that_matches_its_baseline_goes_through() {
+        let t = TempDir::new("guard-match");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "before");
+        let base = baseline(t.path(), "Drafts/Ch_01.md");
+
+        let result =
+            write_document_checked(t.path(), "Drafts/Ch_01.md", "after", Some(&base), &writes)
+                .unwrap();
+        let (changed, stamp) = expect_written(&result);
+        assert!(*changed);
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Drafts/Ch_01.md")).unwrap(),
+            "after"
+        );
+        assert_eq!(
+            *stamp,
+            baseline(t.path(), "Drafts/Ch_01.md"),
+            "the answer carries the new baseline, so the buffer needs no re-read"
+        );
+        assert!(
+            writes.is_own(&t.path().join("Drafts/Ch_01.md")),
+            "a guarded write is still stamped, or the watcher reports our own save"
+        );
+    }
+
+    #[test]
+    fn a_write_against_a_stale_baseline_is_refused_with_the_text_on_disk() {
+        let t = TempDir::new("guard-mismatch");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "opened as this");
+        let base = baseline(t.path(), "Drafts/Ch_01.md");
+
+        // Somebody else — a sync client, a script, an MCP tool — gets there
+        // while the buffer is dirty.
+        t.write("Drafts/Ch_01.md", "changed underneath");
+
+        let result = write_document_checked(
+            t.path(), "Drafts/Ch_01.md", "my unsaved paragraph", Some(&base), &writes,
+        )
+        .unwrap();
+        assert_eq!(expect_conflict(&result), "changed underneath");
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Drafts/Ch_01.md")).unwrap(),
+            "changed underneath",
+            "a refused write must not have written anything"
+        );
+
+        // Keep Mine: the same call without a baseline is the force-write.
+        let forced =
+            write_document_checked(t.path(), "Drafts/Ch_01.md", "my unsaved paragraph", None, &writes)
+                .unwrap();
+        assert!(*expect_written(&forced).0);
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Drafts/Ch_01.md")).unwrap(),
+            "my unsaved paragraph"
+        );
+    }
+
+    #[test]
+    fn an_mtime_that_moved_on_its_own_is_not_a_conflict() {
+        // The iCloud case (docs/NOTES.md §8): the File Provider re-stamps a
+        // file whose bytes it never touched. An mtime guard would raise a
+        // dialog here; a content hash does not notice.
+        let t = TempDir::new("guard-icloud");
+        let writes = sw();
+        let path = t.write("Drafts/Ch_01.md", "untouched text");
+        let stale = FileStamp {
+            mtime_ms: baseline(t.path(), "Drafts/Ch_01.md").mtime_ms - 600_000,
+            ..baseline(t.path(), "Drafts/Ch_01.md")
+        };
+        assert!(
+            crate::fs_ops::stamp::mtime_moved(&baseline(t.path(), "Drafts/Ch_01.md"), &stale),
+            "the fixture really is outside the tolerance"
+        );
+
+        let result =
+            write_document_checked(t.path(), "Drafts/Ch_01.md", "my edit", Some(&stale), &writes)
+                .unwrap();
+        assert!(*expect_written(&result).0, "ten minutes of clock drift is not an edit");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "my edit");
+    }
+
+    #[test]
+    fn the_guard_lets_through_the_two_cases_that_lose_nothing() {
+        let t = TempDir::new("guard-harmless");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "shared text");
+        let base = baseline(t.path(), "Drafts/Ch_01.md");
+
+        // 1. Somebody else wrote *exactly* what we were about to write. Two
+        //    routes to the same text is not a disagreement.
+        t.write("Drafts/Ch_01.md", "the same conclusion");
+        let agreed = write_document_checked(
+            t.path(), "Drafts/Ch_01.md", "the same conclusion", Some(&base), &writes,
+        )
+        .unwrap();
+        assert!(!*expect_written(&agreed).0, "nothing to do, and nothing to argue about");
+
+        // 2. The file was deleted underneath the editor. Refusing would leave
+        //    the writer's text in a buffer with nowhere to go.
+        std::fs::remove_file(t.path().join("Drafts/Ch_01.md")).unwrap();
+        let recreated = write_document_checked(
+            t.path(), "Drafts/Ch_01.md", "still mine", Some(&base), &writes,
+        )
+        .unwrap();
+        assert!(*expect_written(&recreated).0);
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Drafts/Ch_01.md")).unwrap(),
+            "still mine"
+        );
+    }
+
+    #[test]
+    fn a_guarded_write_of_identical_bytes_still_does_not_touch_the_file() {
+        // The byte-for-byte rule survives the guard: a file with no
+        // frontmatter must never gain one, or even a new mtime.
+        let t = TempDir::new("guard-unchanged");
+        let writes = sw();
+        let plain = "Just prose. No fences, no keys.\n";
+        let path = t.write("note.md", plain);
+        let base = baseline(t.path(), "note.md");
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let result = write_document_checked(t.path(), "note.md", plain, Some(&base), &writes).unwrap();
+
+        assert!(!*expect_written(&result).0);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), plain);
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), before);
+    }
+
+    // ── the MCP door: guarded, and it snapshots first ────────────────────
+
+    fn versions_of(root: &Path, rel: &str) -> Vec<crate::aux_store::VersionEntry> {
+        let mut budget = usize::MAX;
+        crate::aux_store::list_versions(root, rel, &mut budget)
+    }
+
+    #[test]
+    fn an_agent_write_snapshots_what_it_replaces() {
+        // docs/NOTES.md §13j: before this, a client's write replaced a file
+        // with nothing recorded, and "undo the AI's edit" was not one click.
+        let t = TempDir::new("agent-snapshot");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "the writer's paragraph");
+
+        let result =
+            agent_write_document(t.path(), "Drafts/Ch_01.md", "the agent's rewrite", None, &writes)
+                .unwrap();
+        assert!(*expect_written(&result).0);
+
+        let versions = versions_of(t.path(), "Drafts/Ch_01.md");
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].body, "the writer's paragraph", "the previous text is recoverable");
+        assert_eq!(versions[0].label, crate::aux_store::AGENT_SNAPSHOT_LABEL);
+        assert!(versions[0].named, "named, so the renderer's autosave retention never prunes it");
+        assert_eq!(versions[0].words, 3);
+    }
+
+    #[test]
+    fn an_agent_write_that_replaces_nothing_takes_no_snapshot() {
+        let t = TempDir::new("agent-snapshot-noop");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "unchanged");
+
+        // Byte-identical: nothing was replaced, so there is nothing to protect.
+        agent_write_document(t.path(), "Drafts/Ch_01.md", "unchanged", None, &writes).unwrap();
+        assert!(versions_of(t.path(), "Drafts/Ch_01.md").is_empty());
+
+        // A brand-new file replaced nothing either.
+        agent_write_document(t.path(), "Drafts/Ch_99.md", "fresh", None, &writes).unwrap();
+        assert!(versions_of(t.path(), "Drafts/Ch_99.md").is_empty());
+
+        // And a refused write did not get as far as replacing anything.
+        let base = baseline(t.path(), "Drafts/Ch_01.md");
+        t.write("Drafts/Ch_01.md", "moved on");
+        let refused = agent_write_document(
+            t.path(), "Drafts/Ch_01.md", "the agent's rewrite", Some(&base.hash), &writes,
+        )
+        .unwrap();
+        assert_eq!(expect_conflict(&refused), "moved on");
+        assert!(
+            versions_of(t.path(), "Drafts/Ch_01.md").is_empty(),
+            "a refusal is not an overwrite and leaves no snapshot behind"
+        );
+    }
+
+    #[test]
+    fn an_agent_write_honours_the_hash_it_was_given() {
+        let t = TempDir::new("agent-guard");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "as the client read it");
+        let hash = read_document(t.path(), "Drafts/Ch_01.md").unwrap().hash;
+
+        // Nothing moved: the write lands.
+        let ok =
+            agent_write_document(t.path(), "Drafts/Ch_01.md", "v2", Some(&hash), &writes).unwrap();
+        assert!(*expect_written(&ok).0);
+
+        // The client's hash is now stale, and it is refused rather than
+        // overwriting its own previous edit's successor.
+        let stale =
+            agent_write_document(t.path(), "Drafts/Ch_01.md", "v3", Some(&hash), &writes).unwrap();
+        assert_eq!(expect_conflict(&stale), "v2");
+        assert_eq!(std::fs::read_to_string(t.path().join("Drafts/Ch_01.md")).unwrap(), "v2");
     }
 
     #[test]

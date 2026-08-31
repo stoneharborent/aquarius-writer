@@ -1,6 +1,7 @@
 //! Filesystem operations on a vault: reading, writing, binaries, trash, watch.
 
 pub mod atomic;
+pub mod stamp;
 pub mod trash;
 pub mod watcher;
 

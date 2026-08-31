@@ -127,6 +127,12 @@ pub struct WriteParam {
     /// REPLACES the whole document — read it first and send back the full text
     /// with your edit applied, never just the changed part.
     pub content: String,
+    /// The `hash` read_document gave you for this file. Send it and the write
+    /// is refused if anything changed the document in the meantime — you get
+    /// the current text back instead of overwriting it. Omit it to write
+    /// regardless, which is what happens if you leave this out.
+    #[serde(default)]
+    pub expected_hash: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -234,6 +240,43 @@ pub struct StarParam {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct CompileParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// One of: markdown, pdf, epub, docx, fountain. Final Draft (.fdx) is not
+    /// exported — compile fountain, which Final Draft imports.
+    pub format: String,
+    /// Compile one document instead of the manuscript — a vault-relative path,
+    /// e.g. "Script.fountain". Omit to compile the manuscript's chapters.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Which manuscript, from `get_workflow`. Omit for the first (and usually
+    /// only) one. Ignored when `path` is given.
+    #[serde(default)]
+    pub manuscript_id: Option<String>,
+    /// Compile a draft's cut instead of the manuscript's order. Ignored when
+    /// `path` is given.
+    #[serde(default)]
+    pub draft_id: Option<String>,
+    /// A named set of layout defaults. Prose: standard-submission (the
+    /// default), trade-paperback, reader-proof. Markdown: clean (default),
+    /// web-ready, plain. Screenplays: industry-standard (default), reader-copy.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Where to put the file, relative to the vault root. Defaults to
+    /// "Exports"; it is created if it is not there. Absolute paths are refused —
+    /// this tool writes inside the vault only.
+    #[serde(default)]
+    pub output_folder: Option<String>,
+    /// File name without an extension. Defaults to the manuscript's title.
+    #[serde(default)]
+    pub file_name: Option<String>,
+    /// Author, for the EPUB / Word / PDF metadata.
+    #[serde(default)]
+    pub author: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct SnapshotParam {
     /// Workflow id, from `list_workflows`.
     pub workflow_id: String,
@@ -310,8 +353,9 @@ The app's own .aquarius/ metadata folder is never listed."
         name = "read_document",
         description = "Read one document. Returns `content` (the exact bytes on disk, \
 frontmatter included), `body` (the same text with the frontmatter block removed), the parsed \
-`frontmatter` keys, and a word count. Read before you write: write_document replaces the \
-whole file."
+`frontmatter` keys, a word count, and `hash` — a fingerprint of the bytes you just read. \
+Read before you write: write_document replaces the whole file, and passing this `hash` back \
+as its `expected_hash` makes it refuse rather than overwrite an edit that landed in between."
     )]
     fn read_document(
         &self,
@@ -325,21 +369,36 @@ whole file."
         name = "write_document",
         description = "Replace a document's entire contents. THIS OVERWRITES THE WHOLE FILE — \
 send the complete new text, including any frontmatter you want to keep, not a fragment. Call \
-read_document first and edit what it gave you. The save is atomic, and a snapshot of the \
-previous text is NOT taken automatically, so a careless overwrite is not free to undo — \
-the app's version history only records what the editor saved. Writing byte-identical content \
-is a no-op: the file is not touched at all."
+read_document first and edit what it gave you. The save is atomic, and a SNAPSHOT OF THE \
+PREVIOUS TEXT IS TAKEN AUTOMATICALLY before anything is replaced, so the writer can always get \
+back what was there (it appears in the app's version history as \"Before AI write\"). Pass the \
+`hash` read_document gave you as `expected_hash` and the write is REFUSED if the file changed \
+in between: the answer comes back with status \"conflict\" and the current text in `theirs`, so \
+you can re-read, re-apply your change and try again instead of destroying somebody's edit. \
+Without expected_hash the write always wins. Writing byte-identical content is a no-op: the \
+file is not touched at all, and no snapshot is taken."
     )]
     fn write_document(
         &self,
-        Parameters(WriteParam { workflow_id, path, content }): Parameters<WriteParam>,
+        Parameters(WriteParam { workflow_id, path, content, expected_hash }): Parameters<WriteParam>,
     ) -> Result<String, ErrorData> {
         let root = self.root(&workflow_id)?;
         let state = self.state();
-        let report = ops::write_document(&root, &path, &content, &state.self_writes)
-            .map_err(invalid)?;
-        self.notify(&workflow_id);
-        json(report)
+        let result = ops::agent_write_document(
+            &root,
+            &path,
+            &content,
+            expected_hash.as_deref(),
+            &state.self_writes,
+        )
+        .map_err(invalid)?;
+        // A refused write left the vault exactly as it was, so there is
+        // nothing for the UI to reload — and telling it otherwise would send
+        // every open buffer off to re-check itself for no reason.
+        if !result.is_conflict() {
+            self.notify(&workflow_id);
+        }
+        json(result)
     }
 
     #[tool(
@@ -605,6 +664,89 @@ write_document."
     }
 
     #[tool(
+        name = "compile_document",
+        description = "Compile a manuscript (or one document) into a finished file: markdown, \
+pdf, epub, docx or fountain. This is the app's own Compile sheet, so the chapters go in the \
+order workflow.json records, each chapter's YAML frontmatter is stripped, and profiles set the \
+page layout — standard-submission (12pt Courier, double spaced, 1in margins), trade-paperback, \
+reader-proof, clean / web-ready / plain for markdown, industry-standard / reader-copy for \
+screenplays. EPUB, Word and PDF need pandoc installed (PDF also needs a TeX engine); markdown \
+and fountain need nothing and always work. If pandoc is missing the answer says so and how to \
+install it. The file is written inside the vault — `output_folder` is vault-relative and \
+defaults to \"Exports\" — and an existing file is never overwritten: the name gets a \" 2\". \
+Chapters that are no longer on disk are skipped and listed in `missing` rather than failing \
+the compile."
+    )]
+    fn compile_document(
+        &self,
+        Parameters(CompileParam {
+            workflow_id,
+            format,
+            path,
+            manuscript_id,
+            draft_id,
+            profile,
+            output_folder,
+            file_name,
+            author,
+        }): Parameters<CompileParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let (wf, _) = vault::workflow::read_or_create(&root).map_err(internal)?;
+
+        // Vault-relative only. The UI's Compile sheet can write to any folder
+        // the writer picked in a native dialog — that is their consent, given
+        // by hand. A tool call carries no such consent, so this door stays
+        // inside the vault where every other MCP path already lives.
+        let folder = output_folder.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let out_dir = match folder {
+            Some(rel) => vault::paths::resolve_in_root(&root, rel).map_err(|e| invalid(e.0))?,
+            None => crate::compile::default_output_dir(&root),
+        };
+
+        let source = match path {
+            Some(p) => crate::compile::assembler::Source::Document { path: p },
+            None => crate::compile::assembler::Source::Manuscript { manuscript_id, draft_id },
+        };
+        let request = crate::compile::CompileRequest {
+            format,
+            source,
+            profile,
+            options: crate::compile::CompileOptions { author, ..Default::default() },
+            output_directory: out_dir.to_string_lossy().to_string(),
+            file_name,
+        };
+
+        let report = crate::compile::run(&root, &wf, &request).map_err(|e| {
+            // The install instructions are the useful half of a missing-pandoc
+            // failure, so they travel with the message rather than being
+            // dropped into a log the client cannot see.
+            let text = match &e.hint {
+                Some(h) => format!("{} {}", e.message, h),
+                None => e.message.clone(),
+            };
+            match e.code.as_str() {
+                "badRequest" | "noChapters" => invalid(text),
+                _ => internal(text),
+            }
+        })?;
+        // The file landed in the vault, so the tree has a new row in it.
+        self.notify(&workflow_id);
+        json(serde_json::json!({
+            "path": vault::paths::rel_from_root(&root, std::path::Path::new(&report.path)),
+            "absolutePath": report.path,
+            "format": report.format,
+            "profile": report.profile,
+            "bytes": report.bytes,
+            "chapters": report.chapters,
+            "words": report.words,
+            "missing": report.missing,
+            "engine": report.engine,
+            "renamed": report.renamed,
+        }))
+    }
+
+    #[tool(
         name = "server_info",
         description = "What this MCP server is attached to: the app version, the port it is \
 listening on, and how many vaults are registered. Useful as a connectivity check."
@@ -638,9 +780,12 @@ tree. Every path you pass is relative to that vault's root and uses forward slas
 (\"Drafts/Ch_01.md\"); absolute paths and \"..\" are refused.
 
 write_document replaces a file's entire contents, so read_document first and send back the \
-whole text with your change applied. Deleting is soft — trash_document moves the file into \
-the vault's Recently Deleted, where restore_document brings it back for 30 days. There is no \
-permanent delete.
+whole text with your change applied — and pass read_document's `hash` back as `expected_hash`, \
+which makes the write refuse (status \"conflict\", with the current text) rather than overwrite \
+an edit that arrived while you were thinking. Whatever you replace is snapshotted first, so \
+the writer can undo you. Deleting is soft — trash_document moves the file into the vault's \
+Recently Deleted, where restore_document brings it back for 30 days. There is no permanent \
+delete.
 
 Reorganising a vault is create_document / create_folder to add, rename_document to change a \
 name in place, and move_document to put something in a different folder. Renames and moves \
@@ -651,10 +796,15 @@ overwrites an existing file.
 toggle_star marks a file or folder as a favourite; get_workflow lists the starred paths \
 alongside the tree. Stars are metadata in the vault, never a change to the document.
 
+compile_document turns a manuscript into a finished file — markdown, fountain, epub, docx or \
+pdf. Markdown and fountain always work; the other three need pandoc installed on the machine, \
+and the failure tells you how to install it. The output lands inside the vault (a \
+vault-relative output_folder, \"Exports\" by default), never at an absolute path.
+
 The writer may have this same vault open in the app while you work. Your writes reach the UI \
-immediately, but a document they are actively editing holds unsaved text that will win the \
-next time they save — so tell them what you changed rather than assuming they watched it \
-happen.";
+immediately. If they are actively editing the document you changed, the app now stops and asks \
+them which version to keep rather than quietly saving over you — so tell them what you changed \
+rather than assuming they watched it happen.";
 
 #[tool_handler]
 impl rmcp::ServerHandler for AquariusMcp {
@@ -678,6 +828,7 @@ mod tests {
     /// breaking change for anyone who wired the server into Claude Code, so it
     /// should be a deliberate edit here rather than a silent regression.
     const EXPECTED: &[&str] = &[
+        "compile_document",
         "create_document",
         "create_folder",
         "get_workflow",
@@ -740,6 +891,37 @@ mod tests {
 
         let trash = router.get("trash_document").unwrap();
         assert!(trash.description.as_deref().unwrap().contains("reversible"));
+    }
+
+    #[test]
+    fn write_document_offers_the_conflict_guard_and_promises_the_snapshot() {
+        // The two halves of the safety this tool gained. Both are things a
+        // model only knows about because the description says so, which makes
+        // the wording load-bearing rather than decorative.
+        let router = AquariusMcp::tool_router();
+        let write = router.get("write_document").unwrap();
+
+        let schema = serde_json::to_string(&write.input_schema).unwrap();
+        assert!(
+            schema.contains("expected_hash"),
+            "a client cannot ask for the guard if the schema does not offer it: {schema}"
+        );
+        assert!(
+            !serde_json::to_string(&write.input_schema)
+                .unwrap()
+                .contains("\"required\":[\"content\",\"expected_hash\""),
+            "expected_hash is opt-in — every existing caller omits it and must keep working"
+        );
+
+        let d = write.description.as_deref().unwrap();
+        assert!(d.contains("SNAPSHOT OF THE"), "the auto-snapshot must be promised: {d}");
+        assert!(d.contains("expected_hash"), "the guard must be explained: {d}");
+
+        let read = router.get("read_document").unwrap();
+        assert!(
+            read.description.as_deref().unwrap().contains("hash"),
+            "read_document is where the hash comes from, so it has to mention it"
+        );
     }
 
     #[test]

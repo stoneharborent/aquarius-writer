@@ -171,6 +171,8 @@
 .mw-save-saving { color: var(--accent); }
 .mw-save-saved  { color: var(--success); }
 .mw-save-error  { color: var(--danger); }
+/* Held back, not failed — the warn colour the conflict dialog uses. */
+.mw-save-conflict { color: var(--warn); }
 
 .mw-popout-btn {
   background: transparent;
