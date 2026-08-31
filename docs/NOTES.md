@@ -1010,6 +1010,17 @@ Three things about that file are easy to get wrong:
    `tauri.conf.json`, change it in `tauri.macos.conf.json` too**, or macOS
    silently keeps the old value. There is no way to leave a comment saying so in
    the file itself; this paragraph is the comment.
+
+   And a trap found on the bench the same day the file was born: **the config
+   is embedded into the binary at compile time** (`tauri::generate_context!`),
+   and a `tauri.<platform>.conf.json` that did not exist at the last build is
+   not in the build script's rerun-if-changed list — so `tauri dev` happily
+   reuses the cached binary and the new file does nothing, with no warning.
+   The tell was the old "window is set to be transparent" warning still
+   printing after a full dev restart. Fix: `touch src-tauri/tauri.conf.json`
+   (which *is* watched) to force the build script to re-run and re-embed the
+   merged config. This only bites the first build after the platform file
+   appears; afterwards it is tracked like any other config change.
 2. **`transparent` goes back to `false` on macOS.** A transparent window there
    needs the `macos-private-api` Cargo feature (`app.macOSPrivateApi` in the
    config), which this app has never enabled — so `transparent: true` was doing
