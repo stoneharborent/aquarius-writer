@@ -339,6 +339,59 @@
 .sb-row:hover .sb-del { display: inline-block; }
 .sb-del:hover { color: var(--danger, #c8463b); background: var(--bg-soft); }
 
+/* ── dragging a row into a folder ───────────────────────────────────────── */
+
+/* WebKit — and therefore WebKitGTK, the engine Tauri uses on Linux — will not
+ * start a drag on an element whose content it considers unselectable, and
+ * `.sb-tree` sets `user-select: none` for the whole tree. This is the standard
+ * opt-in, and it is on the wrapper because the wrapper is the drag source (the
+ * `<button>` inside it is not — see TreeBranch). */
+.sb-rowwrap[draggable="true"] {
+  -webkit-user-drag: element;
+}
+
+/* The row being carried. Dimmed rather than hidden: the engine already draws a
+ * translucent copy under the cursor, and a row that vanishes makes the tree
+ * jump. */
+.sb-rowwrap.sb-dragging > .sb-row {
+  opacity: 0.45;
+}
+
+/* The folder it would land in. An inset ring rather than a border, so the row
+ * does not change height halfway through a drag. */
+.sb-rowwrap.sb-drop-into > .sb-row {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* The workflow root, offered only while a drag is in flight (Sidebar.tsx). */
+.sb-droproot {
+  margin: 4px 10px 8px;
+  padding: 7px 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 7px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--ink-mute);
+  text-align: center;
+  transition:
+    background var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease);
+}
+
+.sb-droproot.on {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-droproot { transition: none; }
+}
+
 /* ── the star on a tree row ─────────────────────────────────────────────── */
 
 /* Hidden until the row is hovered, *unless* it is starred — a star the writer

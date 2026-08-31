@@ -13,12 +13,14 @@ import {
 } from "@/icons";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import type { ChapterStatus, NewFileKind, NodeKind, VaultNode } from "@/types/vault";
 import { useVault } from "@/state/vaultStore";
 import { useOverlay } from "@/state/overlayStore";
@@ -62,10 +64,138 @@ interface TreeOps {
    * a folder in the editor pane, which has nothing to render for one.
    */
   noteTarget: (folder: string) => void;
+  /** Drag-a-row-into-a-folder. See `useTreeDrag`. */
+  drag: TreeDrag;
 }
 
 const TreeOpsContext = createContext<TreeOps | null>(null);
 const useTreeOps = () => useContext(TreeOpsContext)!;
+
+/**
+ * Dragging a row onto a folder to move it there.
+ *
+ * The same `moveEntry` the row's "Move to…" menu calls, so there is exactly one
+ * move path in the app: `vault_move` → `EntryReport` → `applyRelocation`, with
+ * open buffers, the selection, the split pane, stars and chapter order all
+ * following the file. Nothing here writes to disk itself.
+ *
+ * Deliberately *not* here: reordering rows inside a folder (chapter order is
+ * the manuscript rail's job, and the tree is sorted folders-then-name), and
+ * dragging in or out of the OS file manager (PARITY row 6).
+ */
+interface TreeDrag {
+  /** The row being carried, or null when no drag is in flight. */
+  path: string | null;
+  /** The folder currently accepting the drop — "" is the vault root. */
+  into: string | null;
+  begin: (path: string) => void;
+  end: () => void;
+  /** Hover a folder. False means "not a legal target" — don't accept the drop. */
+  hover: (folder: string) => boolean;
+  leave: (folder: string) => void;
+  commit: (folder: string) => void;
+  /** Whether `folder` is somewhere the in-flight drag could actually land. */
+  allows: (folder: string) => boolean;
+}
+
+/** How long a closed folder has to be hovered before it springs open. */
+const SPRING_MS = 700;
+
+function useTreeDrag(): TreeDrag {
+  const moveEntry = useVault((s) => s.moveEntry);
+  const [path, setPath] = useState<string | null>(null);
+  const [into, setInto] = useState<string | null>(null);
+  // One spring-open timer, because only one folder can be under the pointer.
+  const spring = useRef<{ folder: string; id: number } | null>(null);
+
+  const cancelSpring = useCallback(() => {
+    if (spring.current) {
+      window.clearTimeout(spring.current.id);
+      spring.current = null;
+    }
+  }, []);
+
+  const end = useCallback(() => {
+    cancelSpring();
+    setPath(null);
+    setInto(null);
+  }, [cancelSpring]);
+
+  // Esc cancels. The engine already aborts a native drag on Escape and answers
+  // with `dragend`, which is what really clears this — the listener is the belt
+  // to that braces, because WebKitGTK has not always delivered key events to
+  // the page mid-drag. Both routes end in the same `end()`, so a double fire is
+  // harmless.
+  useEffect(() => {
+    if (path === null) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") end(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [path, end]);
+
+  // Unmounting mid-drag (switching workflows) must not leave a timer running.
+  useEffect(() => cancelSpring, [cancelSpring]);
+
+  /**
+   * The three refusals, in the UI so the writer sees them rather than finding
+   * out from a failure notice. The backend refuses the first two as well —
+   * `ops::move_entry` on the Rust side, `relocate` in the browser mock — this
+   * is the same rule drawn.
+   */
+  const allows = useCallback((folder: string) => {
+    if (path === null) return false;
+    if (folder === path) return false;                    // a folder into itself
+    if (folder.startsWith(`${path}/`)) return false;      // …or into its own descendant
+    if (folder === parentOf(path)) return false;          // already there: a no-op
+    return true;
+  }, [path]);
+
+  const begin = useCallback((p: string) => {
+    cancelSpring();
+    setPath(p);
+    setInto(null);
+  }, [cancelSpring]);
+
+  const hover = useCallback((folder: string) => {
+    if (!allows(folder)) return false;
+    setInto(folder);
+    // Spring-open, so a drag can reach a nested destination without being let
+    // go of first. The root strip ("") has nothing to open.
+    if (spring.current?.folder !== folder) {
+      cancelSpring();
+      if (folder && !useVault.getState().expanded.has(folder)) {
+        spring.current = {
+          folder,
+          id: window.setTimeout(() => {
+            spring.current = null;
+            const vault = useVault.getState();
+            if (!vault.expanded.has(folder)) vault.toggleExpanded(folder);
+          }, SPRING_MS),
+        };
+      }
+    }
+    return true;
+  }, [allows, cancelSpring]);
+
+  const leave = useCallback((folder: string) => {
+    setInto((v) => (v === folder ? null : v));
+    if (spring.current?.folder === folder) cancelSpring();
+  }, [cancelSpring]);
+
+  const commit = useCallback((folder: string) => {
+    const from = path;
+    end();
+    if (from === null || !allows(folder)) return;
+    void moveEntry(from, folder).then((to) => {
+      // Open the tree to where it landed. Dropping a chapter into a folded
+      // folder otherwise reads as "my file vanished" — which is the one thing a
+      // move must never look like.
+      if (to && folder) useVault.getState().expandAll([...ancestorsOf(folder), folder]);
+    });
+  }, [path, allows, end, moveEntry]);
+
+  return { path, into, begin, end, hover, leave, commit, allows };
+}
 
 /** Every folder in the tree, depth-first, as vault-relative paths. */
 function collectFolders(node: VaultNode, out: string[] = []): string[] {
@@ -133,6 +263,7 @@ export function Sidebar() {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [lastFolder, setLastFolder] = useState<string | null>(null);
+  const drag = useTreeDrag();
 
   const folders = useMemo(() => (tree ? collectFolders(tree) : []), [tree]);
 
@@ -189,7 +320,10 @@ export function Sidebar() {
           </p>
         )}
         <TreeOpsContext.Provider
-          value={{ menuFor, setMenuFor, renaming, setRenaming, folders, noteTarget: setLastFolder }}
+          value={{
+            menuFor, setMenuFor, renaming, setRenaming, folders,
+            noteTarget: setLastFolder, drag,
+          }}
         >
           {shown?.children?.map((node) => (
             <TreeBranch
@@ -203,6 +337,27 @@ export function Sidebar() {
             />
           ))}
         </TreeOpsContext.Provider>
+
+        {/* The vault root as a drop target. Only while a drag is in flight, and
+            only when the row is not already at the root — an always-visible
+            strip would be a permanent 30px of chrome for a rare act, and one
+            that refuses the drop is worse than one that is not there. */}
+        {drag.allows("") && (
+          <div
+            className={`sb-droproot${drag.into === "" ? " on" : ""}`}
+            onDragOver={(e) => {
+              if (!drag.hover("")) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }}
+            onDragLeave={() => drag.leave("")}
+            onDrop={(e) => { e.preventDefault(); drag.commit(""); }}
+          >
+            {/* "Vault root" is what the ⋯ menu's own destination list calls it
+                — two names for one place would be two places. */}
+            Move to the vault root
+          </div>
+        )}
       </div>
 
       {/* Six now, not four: Palette and Settings moved here when the status bar
@@ -442,10 +597,61 @@ function TreeBranch({
   onSelect: (path: string) => void;
 }) {
   const ops = useTreeOps();
+  const drag = ops.drag;
   const isFolder = node.kind === "folder";
   const isOpen = expanded.has(node.path);
   const isSelected = selected === node.path;
   const indent = 10 + depth * 14 + (isFolder ? 0 : 14);
+
+  // A row is picked up by its *wrapper*, never by the `<button>` inside it:
+  // WebKit treats a form control as its own drag source, and the wrapper is
+  // also the element that has to carry the drop ring. `.sb-tree` sets
+  // `user-select: none`, which is why the CSS opts back in with
+  // `-webkit-user-drag: element`.
+  const source = {
+    draggable: true,
+    onDragStart: (e: ReactDragEvent<HTMLDivElement>) => {
+      e.dataTransfer.effectAllowed = "move";
+      // Some engines refuse to start a drag with an empty payload, and the
+      // path is the honest thing to carry anyway.
+      e.dataTransfer.setData("text/plain", node.path);
+      drag.begin(node.path);
+    },
+    onDragEnd: () => drag.end(),
+  };
+
+  // Only folders accept a drop. A file row is not a target: "into the folder
+  // this file happens to live in" is a guess, and a guess that moves files is
+  // the wrong kind of convenience.
+  const target = {
+    onDragOver: (e: ReactDragEvent<HTMLDivElement>) => {
+      // No preventDefault when the move is illegal or a no-op — that is how the
+      // engine is told "not here", cursor included.
+      if (!drag.hover(node.path)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    },
+    onDragLeave: (e: ReactDragEvent<HTMLDivElement>) => {
+      // `dragleave` also fires when the pointer crosses from the row into one
+      // of its own children — the label, the caret, the ⋯ — which would make
+      // the ring flicker on and off as the writer moves along the row. Only a
+      // relatedTarget outside the row is a real leave (null means the pointer
+      // left the window entirely, which is one too).
+      const to = e.relatedTarget as Node | null;
+      if (to && e.currentTarget.contains(to)) return;
+      drag.leave(node.path);
+    },
+    onDrop: (e: ReactDragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      drag.commit(node.path);
+    },
+  };
+
+  const wrapClass = [
+    "sb-rowwrap",
+    drag.path === node.path ? "sb-dragging" : "",
+    drag.into === node.path ? "sb-drop-into" : "",
+  ].filter(Boolean).join(" ");
 
   if (ops.renaming === node.path) {
     return (
@@ -462,7 +668,7 @@ function TreeBranch({
   if (isFolder) {
     return (
       <>
-        <div className="sb-rowwrap">
+        <div className={wrapClass} {...source} {...target}>
           <button
             className={`sb-row sb-folder${isSelected ? " selected" : ""}`}
             style={{ paddingLeft: indent }}
@@ -499,7 +705,7 @@ function TreeBranch({
   const status = node.frontmatter?.status as ChapterStatus | undefined;
 
   return (
-    <div className="sb-rowwrap">
+    <div className={wrapClass} {...source}>
       <button
         className={`sb-row sb-file${isSelected ? " selected" : ""}`}
         style={{ paddingLeft: indent }}

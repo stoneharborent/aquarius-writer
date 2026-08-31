@@ -44,6 +44,30 @@
 .vw-title-sep { color: var(--ink-mute); }
 .vw-title-sub { color: var(--ink-soft); }
 
+/* macOS only: the system's traffic lights are drawn over the top-left of this
+   bar (`decorations: true` + `titleBarStyle: "Overlay"` in
+   `src-tauri/tauri.macos.conf.json`). They occupy roughly the first 78px, so
+   the bar's content is inset past them.
+
+   Padded on BOTH sides on purpose: an inset on the left alone would push the
+   centred title ~39px right of the window's true centre, which reads as a
+   mistake rather than as a layout. Linux is untouched — it draws its own
+   controls on the right instead, absolutely positioned (see WindowControls). */
+.vault-window[data-platform="macos"] .vw-titlebar {
+  padding-left: 78px;
+  padding-right: 78px;
+}
+
+.vault-window[data-platform="macos"] .vw-title {
+  min-width: 0;
+}
+
+.vault-window[data-platform="macos"] .vw-title-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Linux only: the title stays centred, but it is not allowed to grow wide
    enough to slide under the window controls. A long workflow name ellipsises
    instead. macOS is untouched — the rule never matches there. */

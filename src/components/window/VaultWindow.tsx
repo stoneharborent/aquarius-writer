@@ -24,9 +24,18 @@ export function VaultWindow({
   subtitle,
   children,
 }: VaultWindowProps) {
-  // On macOS the system draws the traffic lights over our title bar
-  // (`titleBarStyle: "Overlay"`), so we draw nothing. On Linux nothing draws
-  // them, so we do. See WindowControls.tsx.
+  // Who draws the window buttons:
+  //
+  //   macOS — the system does. `src-tauri/tauri.macos.conf.json` turns
+  //     decorations back ON there and asks for `titleBarStyle: "Overlay"`, so
+  //     the real traffic lights float top-LEFT over this bar, where every Mac
+  //     app (including the Swift original) puts them. The CSS insets the bar's
+  //     content past them — see VaultWindow.css `[data-platform="macos"]`.
+  //   Linux — nobody does. The base config keeps `decorations: false` because
+  //     the AquariusOS chrome is ours, so WindowControls draws all three.
+  //
+  // Until 2026-08-31 the base config was undecorated on *both*, which meant the
+  // Mac build had no close / minimise / zoom button at all (NOTES §15c).
   const linux = detectPlatform() === "linux";
 
   return (

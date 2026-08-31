@@ -87,7 +87,7 @@ throughout (SWIFT-AUDIT.md has file names).
 | ~~3~~ | ~~**Prose page canvas** (US-Letter sheet, 1" margins, shadow)~~ | verified | ✅ **done** — 850px sheet on `--bg`, 96px/64px margins, `black @ 22% r14 y1` (lighter on Ice), continuous canvas | **M** | Prose + notes only. The screenplay keeps its current surface: its *paged* canvas with real page breaks is row 12. |
 | ~~4~~ | ~~**Favorites / Starred** + quick views (Starred · Today · Manuscript)~~ | verified | ✅ **done** — row star + ⋯ menu + palette, Starred quick view, `favorites.json`, `toggle_star` | **M** | `aux_store::{read,save,set,toggle,forget}_favorite` + migration, `ops::set_star` / `ops::trash_entry`, `vault_set_star` / `vault_list_stars`, `favoritesStore`. Quick views: Starred (collapsible), Today (⌘T overlay), Manuscript (⌘2 outline). |
 | ~~5~~ | ~~**Create file / folder from the UI**~~ | verified — add menu with MD/Screenplay picker | ✅ **done** — WORKFLOW eyebrow + "+" add menu, inline name field, segmented Markdown/Screenplay picker; the new file opens in the editor | **M** | `ops::create_file` / `create_folder`, `vault_create_file` / `vault_create_folder`, MCP `create_folder` (`create_document` already existed). |
-| ~~6~~ | ~~**Rename / move files in the tree**~~ | verified — plus drag-in/out of the file manager | ✅ **done** — row menu (right-click or "⋯") with Rename (inline) and Move to… (folder picker) | **M** | `ops::rename_entry` / `move_entry`, `vault_rename` / `vault_move`, MCP `rename_document` / `move_document`. Names de-duplicate " 2"/" 3"; snapshots, comments and chapter order follow the file; bytes are never rewritten. **Still open: drag-reorder in the tree, and drag in/out of the file manager.** |
+| ~~6~~ | ~~**Rename / move files in the tree**~~ | verified — plus drag-in/out of the file manager | ✅ **done** — row menu (right-click or "⋯") with Rename (inline) and Move to… (folder picker), **plus drag a row onto a folder** (2026-08-31) | **M** | `ops::rename_entry` / `move_entry`, `vault_rename` / `vault_move`, MCP `rename_document` / `move_document`. Names de-duplicate " 2"/" 3"; snapshots, comments and chapter order follow the file; bytes are never rewritten. Drag-to-move is `useTreeDrag` in `Sidebar.tsx` and goes through the *same* `moveEntry` the menu calls — folders spring open after 700ms, a drop into the current parent is a no-op, and a folder cannot be dropped into itself or a descendant (the UI refuses what `ops::move_entry` refuses). **Still open: drag in and out of the OS file manager.** Manual ordering *within* a folder is deliberately not this row's job — the tree sorts folders-then-name, and chapter order belongs to the manuscript rail (row 10). |
 | 7 | **Compile / Export** | **fully real**: Pandoc + xelatex; EPUB, PDF, DOCX, MD, Fountain; profiles; include options | **mock — Compile button has no click handler**, no Pandoc anywhere | **L** | On Linux pandoc is a package dependency — easier than macOS. FDX is a stub in Swift too; skip it. |
 | 8 | **Manuscript management** (mark folder as manuscript, ManuscriptHome grid, status filter chips, front-matter section) | verified | outline/corkboard exist but no marking UI, no home, no filters | **M** | `manuscriptFolders`/`draftFolders` in `workflow.json` is the shared contract. |
 | 9 | **Conflict dialog reachable** | verified — Keep Mine / Take Theirs / Save As Copy | dialog built, `raise()` never called | **M** | Carry open-time mtime into `vault_write_file`; refuse a moved write. |
@@ -101,7 +101,7 @@ throughout (SWIFT-AUDIT.md has file names).
 | 17 | **MCP tool catch-up** | **33 tools + a browser Web UI** — v1 of this doc wrongly assumed Swift had no MCP | 19 tools | **M** | Rename and move landed with row 6; `toggle_star` with row 4. Still missing: manuscript/draft toggles, scene tools, set_synopsis, insert/replace-lines, diff_version, take_snapshot, export. Web UI optional. |
 | 18 | **Terminal pane** | verified — multi-session tabs, agent config, drag-file-for-path | deliberately deferred | **M** | Still deferred; Swift sets the bar for when it lands. |
 | 19 | **Semantic search toggle in Find** | verified (on-device embeddings) | keyword only | research | Needs a Linux embedding story first — not a copy-paste. |
-| 20 | macOS window buttons | n/a (native) | absent on macOS | **S** | Decision: draw ours or re-enable decorations there. |
+| ~~20~~ | ~~macOS window buttons~~ | n/a (native) | ✅ **done** (2026-08-31) — **native traffic lights**, top-left, like the Swift original | **S** | Decision taken: re-enable decorations on macOS rather than draw our own. `src-tauri/tauri.macos.conf.json` sets `decorations: true` + `titleBarStyle: "Overlay"` + `hiddenTitle: true`; the base config keeps `decorations: false` so Linux still uses the app-drawn `WindowControls`. The title bar insets its content 78px on macOS so the lights have their space. NOTES §15c. |
 | 21 | Per-workflow theme write-back | **Swift's theme is global**, not per-workflow | `settings.theme` read, never written | **S** | May be chasing a behavior Swift doesn't have — decide, then either wire it or drop the field. |
 | 22 | Empty-state illustrations ("never a shrug") | verified — drawn `ZeroIllustration` set | plain text | **S** | |
 
@@ -155,12 +155,13 @@ The three things Royce named, plus the file basics.
    planned.
 6. ~~**Create / rename / move files in the UI** (rows 5–6, M+M)~~ ✅ done —
    shipped with their MCP counterparts (`create_folder`, `rename_document`,
-   `move_document`) in the same change. Tree drag-reorder and drag in/out of
-   the file manager are the part of row 6 still outstanding.
+   `move_document`) in the same change. Drag-a-row-onto-a-folder followed on
+   2026-08-31; drag in and out of the OS file manager is the part of row 6
+   still outstanding.
 
 Wave 1 leftovers, small enough to fold into a later wave rather than hold it
 open: sidebar navigator zoom (A−/A+), a collapse for the editor pane itself
-(⌃⌘E), and tree drag-reorder / drag in and out of the file manager.
+(⌃⌘E), and drag in and out of the OS file manager.
 
 ### Wave 2 — the features that are pretending to work
 

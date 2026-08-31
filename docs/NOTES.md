@@ -257,6 +257,16 @@ lights over our title bar and the renderer draws nothing.
 > `plugin:window|is_decorated` answers `false` on macOS. So macOS has our title
 > bar and nothing else, and — until v0.1.2 — no way to drag the window either.
 > Everything below about *Linux* still holds.
+>
+> **Superseded on macOS, 2026-08-31 (§15c).** `src-tauri/tauri.macos.conf.json`
+> sets `decorations: true` there, which restores the `Titled` bit and with it
+> the real traffic lights, top-left; `titleBarStyle: "Overlay"` now has a title
+> bar to paint and paints it as a full-size content view. The *base* config —
+> and therefore Linux — is exactly as described here and below. One thing this
+> did **not** touch: `popoutStore.ts` still opens detached document windows
+> with `decorations: false`, so a popout on macOS would have no buttons for the
+> same reason the main window used to. That is academic while popouts are still
+> permission-blocked (§15d), and is filed with them.
 
 On Linux that same config left the window with **no close/minimise/maximise
 buttons at all**. Stage 4 fixed it in the renderer:
@@ -348,6 +358,14 @@ an opaque background over the whole window, so there is nothing for transparency
 to reveal. Turning it on would change nothing visible and would cost the App
 Store. The warning stays; it is noise. On Linux `transparent: true` is simply
 inert.
+
+**Resolved on macOS, 2026-08-31.** `src-tauri/tauri.macos.conf.json` now sets
+`transparent: false` there (alongside `decorations: true` — §15c), so the
+warning is gone from the Mac build and nothing had to change about
+`macOSPrivateApi`: the flag stays off, the App Store stays open, and AppKit
+draws the rounded corners and shadow that transparency was reaching for. The
+base `tauri.conf.json` keeps `transparent: true` for Linux, where it is inert
+and where the undecorated window is ours to paint.
 
 ## 7. Capabilities exist now, and are deliberately tiny
 
@@ -964,6 +982,60 @@ and ⌘M still work, so it is awkward rather than fatal. The two honest options
 are to render `WindowControls` on macOS as well, or to turn decorations back on
 there; both change how the Mac app looks and neither belongs in a hotfix.
 
+**Closed 2026-08-31 — the second option, native traffic lights.** Royce, on the
+Mac bench: *"the minimise, close and expand buttons in the top right of the app
+are gone."* They were never there. The fix is decorations, not our own buttons:
+a Mac app's window controls are traffic lights, top-**left**, and the Swift
+original has them because AppKit gives them away for nothing. Drawing three
+Breeze-ish glyphs on the right would have been a Linux app wearing a Mac's
+clothes.
+
+The change is one new file and one CSS block:
+
+```
+src-tauri/tauri.macos.conf.json     decorations: true, titleBarStyle "Overlay",
+                                    hiddenTitle: true, transparent: false
+src/components/window/VaultWindow.css   [data-platform="macos"] insets the bar
+```
+
+Three things about that file are easy to get wrong:
+
+1. **The platform config replaces arrays, it does not merge into them.** Tauri
+   merges `tauri.<platform>.conf.json` over `tauri.conf.json` with **JSON Merge
+   Patch (RFC 7396)** — `tauri-utils/src/config/parse.rs` calls
+   `json_patch::merge`, and RFC 7396 replaces a whole array rather than
+   descending into it. `app.windows` is an array. So the macOS file has to
+   repeat the *entire* window object — title, size, min size, resizable — and
+   not just the two keys that differ. **If you change a window property in
+   `tauri.conf.json`, change it in `tauri.macos.conf.json` too**, or macOS
+   silently keeps the old value. There is no way to leave a comment saying so in
+   the file itself; this paragraph is the comment.
+2. **`transparent` goes back to `false` on macOS.** A transparent window there
+   needs the `macos-private-api` Cargo feature (`app.macOSPrivateApi` in the
+   config), which this app has never enabled — so `transparent: true` was doing
+   nothing on the Mac anyway. With real decorations, AppKit draws the rounded
+   corners and the shadow, which is what the flag was reaching for. Linux keeps
+   `transparent: true` in the base config, untouched.
+3. **The drag region is unaffected.** `titleBarStyle: "Overlay"` is
+   `fullSizeContentView` + a transparent titlebar: the webview still owns the
+   whole window, so `data-tauri-drag-region="deep"` and the
+   `core:window:allow-start-dragging` permission from §15b are still what moves
+   the window on both platforms. Nothing in `capabilities/default.json` changed.
+
+On the frontend, `VaultWindow` still renders `WindowControls` **only** when
+`detectPlatform() === "linux"` — that is now correct rather than merely
+harmless. The 38px bar gets `padding: 0 78px` on macOS: the traffic lights sit
+in roughly the first 78px, and the inset is applied to *both* sides on purpose,
+because padding the left alone would shove the centred title ~39px right of the
+window's true centre and read as a bug.
+
+Bench check on the Mac: quit and restart `tauri dev` — **a platform config file
+is read at build/dev start, so a running dev process will not pick it up from a
+vite hot reload.** Then: three traffic lights top-left; no duplicate system
+title text beside ours; our title still centred; dragging the bar still moves
+the window; double-click still zooms. On Linux nothing should have changed at
+all — the app-drawn controls stay on the right.
+
 ### 15d. Popouts are still permission-blocked
 
 `popoutStore.ts` opens a detached document window with `new WebviewWindow(...)`,
@@ -1173,6 +1245,10 @@ Silicon Mac. Six pixels is not worth a second bench trip. The only change to
 `VaultWindow` is that `footerLeft` / `footerRight` and the `<footer>` are gone
 and the grid is `38px minmax(0, 1fr)`.
 
+(2026-08-31: still 38px. macOS now draws its traffic lights *into* this bar and
+the content is inset 78px each side to clear them — §15c. The height did not
+move, which is the point.)
+
 ### 17d. Splitters, clamps and persistence
 
 The column track list is written in `MainWindow.tsx` from the current state,
@@ -1252,3 +1328,90 @@ scroll container and the editor still grows to its content, which is the exact
 arrangement `ProseEditor.css` and `lib/cm-embed.ts` describe and the reason
 they exist — putting a scroller inside the sheet would reintroduce the
 viewport-virtualisation bug they were written to kill.
+
+---
+
+## 18. Dragging a row in the tree, and the four things it refuses
+
+Royce, on the bench: *"I can't drag or move folders or files."* Half of that was
+already untrue — the row's ⋯ menu has had **Rename** and **Move to…** since
+PARITY row 6 shipped — but the half he reached for first was: the tree looked
+like a tree, so he dragged, and nothing happened.
+
+`useTreeDrag` in `Sidebar.tsx` is the whole feature. It is deliberately thin,
+because **it does not move anything itself**: it calls the same
+`vaultStore.moveEntry` the Move to… menu calls, which is `vault_move` →
+`EntryReport` → `applyRelocation`, with open editor buffers, the selection, the
+split pane, the stars and the manuscript's chapter order all following the file
+in one `set`. One move path, two ways to reach it. If a drag ever moves a file
+that the menu would not have, something has been duplicated that should not be.
+
+### 18a. HTML5 drag, not pointer maths
+
+The codebase already drags with the native events — `ChapterRail` and `Outline`
+both do — so this does too rather than inventing a second idiom. Two WebKit
+details that are not obvious, and that WebKitGTK on the Linux bench shares:
+
+- **The drag source is `.sb-rowwrap`, not the `<button className="sb-row">`
+  inside it.** WebKit treats a form control as its own drag source, and the
+  wrapper is also the element that has to carry the drop ring (the button's
+  background is already spoken for by `:hover` and `.selected`).
+- **`-webkit-user-drag: element` is required.** `.sb-tree` sets
+  `user-select: none`, and WebKit will not start a drag on content it considers
+  unselectable. Without that one line the feature is silently inert on exactly
+  the platform that matters. It is in `Sidebar.css` under
+  `.sb-rowwrap[draggable="true"]`.
+
+`dragleave` also fires when the pointer crosses from the row into one of its own
+children — the label, the caret, the ⋯ — so the handler ignores a
+`relatedTarget` that the row still contains. Without that the drop ring
+flickers on and off as you move along a row.
+
+### 18b. The refusals, and why they are drawn twice
+
+Only **folders** accept a drop, plus one "move to the vault root" strip that
+appears at the bottom of the tree while a drag is in flight (and only when the
+row is not already at the root — a target that refuses the drop is worse than no
+target). A file row is not a target: "into the folder this file happens to live
+in" is a guess, and a guess that moves files is the wrong kind of convenience.
+
+Three rules, in `TreeDrag.allows`:
+
+```
+folder === dragged path            a folder into itself
+folder.startsWith(`${path}/`)      …or into one of its own descendants
+folder === parentOf(dragged path)  already there — a no-op
+```
+
+The first two are also enforced in Rust (`ops::move_entry`) and in the browser
+mock (`relocate`), and the third returns `unchanged_report` there. Drawing them
+in the UI as well is not redundancy for its own sake: an illegal target must
+never `preventDefault()` on `dragover`, because that is the only way to tell the
+engine "not here" and get the no-drop cursor. A UI that accepts the drop and
+then shows a failure notice is a UI that lied for 300ms.
+
+Spring-open: hovering a **closed** folder for 700ms opens it, so a drag can
+reach a nested destination without being let go of first. One timer, because
+only one folder can be under the pointer, cleared on leave, drop, drag-end and
+unmount. It reads `useVault.getState()` rather than a closed-over `expanded`,
+since 700ms is plenty of time for that set to go stale. A completed drop opens
+the tree down to the destination for the same reason: a chapter dropped into a
+folded folder otherwise reads as "my file vanished", which is the one thing a
+move must never look like.
+
+Esc cancels. The engine already aborts a native drag on Escape and answers with
+`dragend`, which is what really clears the state; the `keydown` listener is the
+belt to those braces, because WebKitGTK has not always delivered key events to
+the page mid-drag. Both routes end in the same `end()`, so a double fire is
+harmless.
+
+### 18c. What is still not draggable
+
+- **In and out of the OS file manager.** Still PARITY row 6's leftover, and now
+  the only one. It is a different mechanism entirely — Tauri's own file-drop
+  handler on the way in, a `DownloadURL` / `text/uri-list` payload on the way
+  out — not an extension of this.
+- **Reordering rows inside a folder.** Not a gap. The tree is sorted
+  folders-then-name to match the backend's order, and manuscript order is the
+  chapter rail's job (PARITY row 10). Two different orderings of the same files
+  in two panes would be a bug, not a feature.

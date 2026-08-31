@@ -7,10 +7,15 @@ import "./WindowControls.css";
  * Minimise / maximise / close, drawn by us, for Linux only.
  *
  * Why this has to exist: `tauri.conf.json` sets `decorations: false`, so the
- * window manager draws no title bar and no buttons. On macOS that is fine —
- * `titleBarStyle: "Overlay"` keeps the system traffic lights floating over our
- * chrome. On Linux there is no equivalent: without this component the window
- * genuinely has no way to be closed except a keyboard shortcut.
+ * window manager draws no title bar and no buttons. On Linux there is no way
+ * back from that — without this component the window genuinely cannot be
+ * closed except by a keyboard shortcut.
+ *
+ * macOS does have a way back, and takes it: `tauri.macos.conf.json` re-enables
+ * decorations there with `titleBarStyle: "Overlay"`, so the *system* traffic
+ * lights float top-left over our bar and this component must not render. That
+ * is why the caller checks for Linux specifically rather than "not macOS" —
+ * a Windows build would want its own answer, not these buttons by default.
  *
  * Deliberately *not* here:
  *
