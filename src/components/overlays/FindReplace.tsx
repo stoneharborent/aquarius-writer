@@ -10,7 +10,9 @@ import "./FindReplace.css";
 export function FindReplace() {
   const { current, tree, selectPath, setView } = useVault();
   const close = useOverlay((s) => s.close);
-  const [query, setQuery] = useState("");
+  // Seeded when the top bar's ⌘K capsule handed its words over on Enter.
+  const seed = useOverlay((s) => s.payload.query);
+  const [query, setQuery] = useState(seed ?? "");
   const [replace, setReplace] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(false);

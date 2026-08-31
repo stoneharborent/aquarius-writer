@@ -1,15 +1,13 @@
+/* The pane's left edge is the splitter's hairline now, so it draws no border
+   of its own — two lines a pixel apart is what the old fixed grid looked like.
+   Collapsed, the pane is not this component at all: MainWindow swaps in the
+   shared 28px `Gutter`. */
 .rp {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--line);
   background: var(--bg);
-}
-
-.rp-collapsed {
-  width: 34px;
-  align-items: center;
-  padding-top: 8px;
 }
 
 .rp-tabs {

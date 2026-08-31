@@ -1,0 +1,47 @@
+/* The column divider — SWIFT-AUDIT §1.3: a 0.5px hairline that becomes a 2px
+   accent bar under the pointer, inside a 7px hit area that is wider than what
+   it draws. The track itself is 1px so the grid geometry stays simple; the hit
+   area and the thick state both overhang it. */
+
+.splitter {
+  position: relative;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+  /* The panes either side are the visual edges; this element paints only its
+     ::after, so it must not swallow their background. */
+  background: transparent;
+  z-index: 3;
+}
+
+/* 7px hit area, centred on the 1px track. */
+.splitter::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+
+/* The line. */
+.splitter::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0.5px;
+  background: var(--line);
+  transition:
+    width var(--motion-fast) var(--ease),
+    left var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease);
+}
+
+.splitter:hover::after,
+.splitter[data-dragging]::after {
+  left: -0.5px;
+  width: 2px;
+  background: rgba(var(--accent-rgb), 0.5);
+}

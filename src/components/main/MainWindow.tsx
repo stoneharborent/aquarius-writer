@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChapterRail } from "@/components/rails/ChapterRail";
 import { ScenesRail } from "@/components/rails/ScenesRail";
@@ -6,8 +6,7 @@ import { ProseEditor } from "@/components/editors/prose/ProseEditor";
 import { NoteEditor } from "@/components/editors/note/NoteEditor";
 import { ScreenplayEditor } from "@/components/editors/screenplay/ScreenplayEditor";
 import { TitlePage } from "@/components/editors/screenplay/TitlePage";
-import { EditorToolbar } from "@/components/editors/EditorToolbar";
-import { estimatePages, type FountainElement } from "@/lib/markdown/fountain-smart";
+import { estimatePages } from "@/lib/markdown/fountain-smart";
 import { ImageViewer } from "@/components/viewers/ImageViewer";
 import { PdfViewer } from "@/components/viewers/PdfViewer";
 import { HtmlViewer } from "@/components/viewers/HtmlViewer";
@@ -18,10 +17,20 @@ import { usePopout } from "@/state/popoutStore";
 import { Backlinks } from "@/components/notes/Backlinks";
 import { ManuscriptView } from "@/components/manuscript/ManuscriptView";
 import { RightPane } from "@/components/rightpane/RightPane";
+import { TopBar } from "@/components/shell/TopBar";
+import { Gutter } from "@/components/shell/Gutter";
+import { Splitter } from "@/components/shell/Splitter";
 import { BookIcon } from "@/icons";
 import { useVault } from "@/state/vaultStore";
 import { useEditor } from "@/state/editorStore";
 import { useOverlay } from "@/state/overlayStore";
+import { useToolbar } from "@/state/toolbarStore";
+import {
+  EDITOR_MIN, GUTTER,
+  RIGHT_DEFAULT, RIGHT_MIN,
+  SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
+  useShell,
+} from "@/state/shellStore";
 import { collectScenes, splitTitlePage } from "@/lib/fountain";
 import type { ChapterStatus } from "@/types/vault";
 import "./MainWindow.css";
@@ -30,43 +39,135 @@ export function MainWindow() {
   const { selectedPath, view } = useVault();
   const isPopped = usePopout((s) => (selectedPath ? s.popped.has(selectedPath) : false));
   const split = useSplit();
+  const {
+    sidebarWidth, sidebarCollapsed, setSidebarWidth, setSidebarCollapsed,
+    rightWidth, rightCollapsed, setRightWidth, setRightCollapsed,
+  } = useShell();
+  const host = useRef<HTMLDivElement>(null);
+
+  /**
+   * The editor never shrinks past 320px because the window did (SWIFT-AUDIT
+   * §1.3). When it would, the right pane gives ground first and the sidebar
+   * second — the sidebar is the one you navigate with.
+   */
+  useEffect(() => {
+    const el = host.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const total = el.clientWidth;
+      if (!total) return;
+      const s = useShell.getState();
+      const sw = s.sidebarCollapsed ? GUTTER : s.sidebarWidth;
+      const rw = s.rightCollapsed ? GUTTER : s.rightWidth;
+      const rules = (s.sidebarCollapsed ? 0 : 1) + (s.rightCollapsed ? 0 : 1);
+      let deficit = EDITOR_MIN - (total - sw - rw - rules);
+      if (deficit <= 0) return;
+      if (!s.rightCollapsed) {
+        const next = Math.max(RIGHT_MIN, s.rightWidth - deficit);
+        deficit -= s.rightWidth - next;
+        if (next !== s.rightWidth) s.setRightWidth(next);
+      }
+      if (deficit > 0 && !s.sidebarCollapsed) {
+        const next = Math.max(SIDEBAR_MIN, s.sidebarWidth - deficit);
+        if (next !== s.sidebarWidth) s.setSidebarWidth(next);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // The template is built from what is actually rendered below — a collapsed
+  // pane drops its splitter track as well as its width, so the two stay in
+  // step and a hidden splitter can never be grabbed.
+  const columns = [
+    sidebarCollapsed ? `${GUTTER}px` : `${sidebarWidth}px`,
+    ...(sidebarCollapsed ? [] : ["1px"]),
+    "minmax(0, 1fr)",
+    ...(rightCollapsed ? [] : ["1px"]),
+    rightCollapsed ? `${GUTTER}px` : `${rightWidth}px`,
+  ].join(" ");
+
+  /** Room the sidebar may take before the editor drops below its minimum. */
+  const sidebarCeiling = () => {
+    const total = host.current?.clientWidth ?? 0;
+    const rw = rightCollapsed ? GUTTER : rightWidth;
+    const rules = 1 + (rightCollapsed ? 0 : 1);
+    return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, total - rw - rules - EDITOR_MIN));
+  };
+
+  const rightCeiling = () => {
+    const total = host.current?.clientWidth ?? 0;
+    const sw = sidebarCollapsed ? GUTTER : sidebarWidth;
+    const rules = 1 + (sidebarCollapsed ? 0 : 1);
+    return Math.max(RIGHT_MIN, total - sw - rules - EDITOR_MIN);
+  };
 
   return (
     <div className="main-window">
-      <Sidebar />
+      <TopBar />
 
-      <main className="mw-editor">
-        {view !== "editor" ? (
-          <ManuscriptView />
-        ) : (
-          <div className="mw-split-host">
-            <section className="mw-pane">
-              {selectedPath && isPopped
-                ? <GhostSlot path={selectedPath} />
-                : <DocView path={selectedPath} />}
-            </section>
-            {split.secondaryPath && (
-              <section className="mw-pane mw-pane-secondary">
-                <header className="mw-pane-head">
-                  <span className="mw-pane-crumb">{split.secondaryPath}</span>
-                  <button
-                    className={`mw-mode-btn${split.reference ? " on" : ""}`}
-                    title="Reference mode — read-only"
-                    onClick={() => split.setReference(!split.reference)}
-                  >Reference</button>
-                  <button className="mw-mode-btn" title="Close split"
-                    onClick={split.closeSplit}>✕</button>
-                </header>
-                <div className={split.reference ? "mw-pane-body mw-readonly" : "mw-pane-body"}>
-                  <DocView path={split.secondaryPath} secondary />
-                </div>
-              </section>
-            )}
-          </div>
+      <div className="mw-columns" ref={host} style={{ gridTemplateColumns: columns }}>
+        {sidebarCollapsed
+          ? <Gutter label="Files" side="right" onOpen={() => setSidebarCollapsed(false)} />
+          : <Sidebar />}
+
+        {!sidebarCollapsed && (
+          <Splitter
+            label="Resize the file sidebar"
+            onReset={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+            onDrag={(clientX) => {
+              const left = host.current?.getBoundingClientRect().left ?? 0;
+              setSidebarWidth(Math.min(sidebarCeiling(), clientX - left));
+            }}
+          />
         )}
-      </main>
 
-      <RightPane />
+        <main className="mw-editor">
+          {view !== "editor" ? (
+            <ManuscriptView />
+          ) : (
+            <div className="mw-split-host">
+              <section className="mw-pane">
+                {selectedPath && isPopped
+                  ? <GhostSlot path={selectedPath} />
+                  : <DocView path={selectedPath} />}
+              </section>
+              {split.secondaryPath && (
+                <section className="mw-pane mw-pane-secondary">
+                  <header className="mw-pane-head">
+                    <span className="mw-pane-crumb">{split.secondaryPath}</span>
+                    <button
+                      className={`mw-mode-btn${split.reference ? " on" : ""}`}
+                      title="Reference mode — read-only"
+                      onClick={() => split.setReference(!split.reference)}
+                    >Reference</button>
+                    <button className="mw-mode-btn" title="Close split"
+                      onClick={split.closeSplit}>✕</button>
+                  </header>
+                  <div className={split.reference ? "mw-pane-body mw-readonly" : "mw-pane-body"}>
+                    <DocView path={split.secondaryPath} secondary />
+                  </div>
+                </section>
+              )}
+            </div>
+          )}
+        </main>
+
+        {!rightCollapsed && (
+          <Splitter
+            label="Resize the comments and versions pane"
+            onReset={() => setRightWidth(RIGHT_DEFAULT)}
+            onDrag={(clientX) => {
+              const right = host.current?.getBoundingClientRect().right ?? 0;
+              setRightWidth(Math.min(rightCeiling(), right - clientX));
+            }}
+          />
+        )}
+
+        {rightCollapsed
+          ? <Gutter label="Comments" side="left" onOpen={() => setRightCollapsed(false)} />
+          : <RightPane />}
+      </div>
     </div>
   );
 }
@@ -102,7 +203,7 @@ function DocView({ path, secondary = false }: { path: string | null; secondary?:
               </button>
             </div>
           )}
-          <ProsePane key={path} workflowId={current.id} path={path} />
+          <ProsePane key={path} workflowId={current.id} path={path} secondary={secondary} />
         </div>
       </div>
     );
@@ -120,15 +221,32 @@ function DocView({ path, secondary = false }: { path: string | null; secondary?:
     return <VideoViewer key={path} workflowId={current.id} path={path} />;
   }
   if (path.endsWith(".fountain")) {
-    return <ScreenplayPane key={path} workflowId={current.id} path={path} />;
+    return <ScreenplayPane key={path} workflowId={current.id} path={path} secondary={secondary} />;
   }
   if (path.endsWith(".md")) {
-    return <NotePane key={path} workflowId={current.id} path={path} />;
+    return <NotePane key={path} workflowId={current.id} path={path} secondary={secondary} />;
   }
   return <EditorPlaceholder selectedPath={path} />;
 }
 
-function ProsePane({ workflowId, path }: { workflowId: string; path: string }) {
+/**
+ * Tell the top bar which document its toolbar is driving.
+ *
+ * Only the primary pane speaks: there is one toolbar row for the window, and a
+ * split pane claiming it would swap the toolbar under the writer's hands every
+ * time the split opened.
+ */
+function useToolbarContext(kind: "md" | "fountain", path: string, secondary: boolean) {
+  useEffect(() => {
+    if (secondary) return;
+    useToolbar.getState().setContext(kind, path);
+    return () => useToolbar.getState().clear(path);
+  }, [kind, path, secondary]);
+}
+
+function ProsePane({ workflowId, path, secondary = false }: {
+  workflowId: string; path: string; secondary?: boolean;
+}) {
   const { docs, open, edit } = useEditor();
   const doc = docs[path];
 
@@ -136,11 +254,13 @@ function ProsePane({ workflowId, path }: { workflowId: string; path: string }) {
     void open(workflowId, path);
   }, [workflowId, path, open]);
 
+  useToolbarContext("md", path, secondary);
+
   const status = doc?.status ?? "clean";
   const fmStatus = doc?.frontmatter?.status as ChapterStatus | undefined;
 
   return (
-    <article className="mw-prose">
+    <article className="mw-prose mw-canvas">
       <header className="mw-prose-head">
         <span className="mw-prose-crumb">{path}</span>
         {fmStatus && (
@@ -150,20 +270,21 @@ function ProsePane({ workflowId, path }: { workflowId: string; path: string }) {
         <SplitButton path={path} />
         <PopoutButton path={path} />
       </header>
-      <EditorToolbar kind="md" path={path} />
-      <h1 className="mw-prose-title">
-        {(doc?.frontmatter?.title as string | undefined) ?? path}
-      </h1>
-      <div className="mw-prose-editor">
-        {doc ? (
-          <ProseEditor value={doc.body} onChange={(v) => edit(path, v)} path={path} />
-        ) : (
-          <p className="mw-prose-loading">Loading…</p>
-        )}
+      <div className="mw-sheet">
+        <h1 className="mw-prose-title">
+          {(doc?.frontmatter?.title as string | undefined) ?? path}
+        </h1>
+        <div className="mw-prose-editor">
+          {doc ? (
+            <ProseEditor value={doc.body} onChange={(v) => edit(path, v)} path={path} />
+          ) : (
+            <p className="mw-prose-loading">Loading…</p>
+          )}
+        </div>
+        <footer className="mw-prose-foot">
+          <FooterStats text={doc?.body ?? ""} />
+        </footer>
       </div>
-      <footer className="mw-prose-foot">
-        <FooterStats text={doc?.body ?? ""} />
-      </footer>
     </article>
   );
 }
@@ -183,13 +304,17 @@ function FooterStats({ text, extra }: { text: string; extra?: React.ReactNode })
   );
 }
 
-function ScreenplayPane({ workflowId, path }: { workflowId: string; path: string }) {
+function ScreenplayPane({ workflowId, path, secondary = false }: {
+  workflowId: string; path: string; secondary?: boolean;
+}) {
   const { docs, open, edit } = useEditor();
   const doc = docs[path];
 
   useEffect(() => {
     void open(workflowId, path);
   }, [workflowId, path, open]);
+
+  useToolbarContext("fountain", path, secondary);
 
   const parsed = useMemo(() => {
     if (!doc?.body) return { titlePage: {}, body: "", titleBlockText: "", scenes: [] };
@@ -199,7 +324,6 @@ function ScreenplayPane({ workflowId, path }: { workflowId: string; path: string
   }, [doc?.body]);
 
   const [activeScene, setActiveScene] = useState<number | null>(0);
-  const [caretElement, setCaretElement] = useState<FountainElement | null>(null);
   const [pageCount, setPageCount] = useState<number | null>(null);
 
   useEffect(() => {
@@ -233,6 +357,9 @@ function ScreenplayPane({ workflowId, path }: { workflowId: string; path: string
         activeIndex={activeScene}
         onSelect={handleSceneSelect}
       />
+      {/* The screenplay keeps its own surface — its paged canvas with real page
+          breaks is a later wave (PARITY row 12), and dropping it onto the prose
+          page sheet now would fake a page geometry it does not have yet. */}
       <article className="mw-prose mw-screenplay">
         <header className="mw-prose-head">
           <span className="mw-prose-crumb">{path}</span>
@@ -243,7 +370,6 @@ function ScreenplayPane({ workflowId, path }: { workflowId: string; path: string
           <SaveBadge status={status} />
           <SplitButton path={path} />
         </header>
-        <EditorToolbar kind="fountain" path={path} activeElement={caretElement} />
         {Object.keys(parsed.titlePage).length > 0 && <TitlePage tp={parsed.titlePage} />}
         <div className="mw-prose-editor">
           {doc ? (
@@ -251,7 +377,7 @@ function ScreenplayPane({ workflowId, path }: { workflowId: string; path: string
               value={parsed.body}
               onChange={handleBodyEdit}
               path={path}
-              onElement={setCaretElement}
+              onElement={(el) => { if (!secondary) useToolbar.getState().setElement(el); }}
               onPageCount={setPageCount}
             />
           ) : (
@@ -268,7 +394,9 @@ function ScreenplayPane({ workflowId, path }: { workflowId: string; path: string
   );
 }
 
-function NotePane({ workflowId, path }: { workflowId: string; path: string }) {
+function NotePane({ workflowId, path, secondary = false }: {
+  workflowId: string; path: string; secondary?: boolean;
+}) {
   const { docs, open, edit } = useEditor();
   const doc = docs[path];
 
@@ -276,31 +404,35 @@ function NotePane({ workflowId, path }: { workflowId: string; path: string }) {
     void open(workflowId, path);
   }, [workflowId, path, open]);
 
+  useToolbarContext("md", path, secondary);
+
   const status = doc?.status ?? "clean";
   const title = (doc?.frontmatter?.title as string | undefined)
     ?? path.split("/").pop()?.replace(/\.md$/, "")
     ?? path;
 
   return (
-    <article className="mw-prose mw-note">
+    <article className="mw-prose mw-note mw-canvas">
       <header className="mw-prose-head">
         <span className="mw-prose-crumb">{path}</span>
         <SaveBadge status={status} />
         <SplitButton path={path} />
         <PopoutButton path={path} />
       </header>
-      <EditorToolbar kind="md" path={path} />
-      <h1 className="mw-prose-title">{title}</h1>
-      <div className="mw-prose-editor">
-        {doc ? (
-          <NoteEditor value={doc.body} onChange={(v) => edit(path, v)} path={path} />
-        ) : (
-          <p className="mw-prose-loading">Loading…</p>
-        )}
+      <div className="mw-sheet">
+        <h1 className="mw-prose-title">{title}</h1>
+        <div className="mw-prose-editor">
+          {doc ? (
+            <NoteEditor value={doc.body} onChange={(v) => edit(path, v)} path={path} />
+          ) : (
+            <p className="mw-prose-loading">Loading…</p>
+          )}
+        </div>
+        <footer className="mw-prose-foot">
+          <FooterStats text={doc?.body ?? ""} />
+        </footer>
       </div>
-      <footer className="mw-prose-foot">
-        <FooterStats text={doc?.body ?? ""} />
-      </footer>
+      {/* Backlinks belong to the desk, not to the page. */}
       <Backlinks path={path} />
     </article>
   );

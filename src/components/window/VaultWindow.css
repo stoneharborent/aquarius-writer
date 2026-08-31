@@ -2,7 +2,11 @@
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-rows: 38px 1fr 26px;
+  /* 38px title strip over the body, and nothing under it — the 26px status bar
+     was retired with the shell layout catch-up. The 38px is unchanged on
+     purpose: the drag region and the Linux window-control hit targets were
+     hard-won (NOTES §15). */
+  grid-template-rows: 38px minmax(0, 1fr);
   background: var(--bg);
   color: var(--ink);
   overflow: hidden;
@@ -62,23 +66,4 @@
   overflow: hidden;
 }
 
-/* Statusbar */
-.vw-statusbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  background: var(--bg-soft);
-  border-top: 1px solid var(--line);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ink-mute);
-  letter-spacing: 0.02em;
-}
-
-.vw-status-left,
-.vw-status-right {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-}
+/* (The `.vw-statusbar` rules were deleted with the status bar itself.) */

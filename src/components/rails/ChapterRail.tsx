@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Chapter, ChapterStatus, VaultNode } from "@/types/vault";
 import { useVault } from "@/state/vaultStore";
+import { Gutter } from "@/components/shell/Gutter";
 import "./Rail.css";
 
 interface ChapterRailProps {
@@ -40,18 +41,10 @@ export function ChapterRail({ chapters, selected, onSelect, onReorder }: Chapter
     setDragOver(null);
   }
 
+  // Collapsed, the rail is the same 28px gutter the sidebar and the right pane
+  // become — one idiom for every pane that folds away (SWIFT-AUDIT §1.3).
   if (collapsed) {
-    return (
-      <div className="rail rail-collapsed" aria-label="Chapter rail">
-        <button
-          className="rail-toggle"
-          onClick={() => setCollapsed(false)}
-          aria-label="Expand chapter rail"
-        >
-          ⌃
-        </button>
-      </div>
-    );
+    return <Gutter label="Chapters" side="right" onOpen={() => setCollapsed(false)} />;
   }
 
   return (

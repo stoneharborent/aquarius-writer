@@ -8,6 +8,7 @@ import { PanelRightIcon } from "@/icons";
 import { useVault } from "@/state/vaultStore";
 import { useEditor } from "@/state/editorStore";
 import { useOverlay } from "@/state/overlayStore";
+import { useShell } from "@/state/shellStore";
 import {
   addComment,
   deleteComment,
@@ -23,34 +24,28 @@ import { formatBus } from "@/lib/format/formatBus";
 import { stringify } from "@/lib/frontmatter";
 import "./RightPane.css";
 
-type Tab = "comments" | "versions";
-
+/**
+ * Which tab is showing and whether the pane is open both live in `shellStore`
+ * now, not here: the top bar's Comments / Versions buttons and ⌘⌥\ drive the
+ * same state, and the collapsed pane is a 28px gutter drawn by MainWindow
+ * rather than a stub of this component.
+ */
 export function RightPane() {
   const { current, selectedPath } = useVault();
-  const [tab, setTab] = useState<Tab>("comments");
-  const [collapsed, setCollapsed] = useState(false);
-
-  if (collapsed) {
-    return (
-      <aside className="rp rp-collapsed">
-        <button className="rp-collapse" title="Show pane"
-          onClick={() => setCollapsed(false)}>
-          <PanelRightIcon size={14} />
-        </button>
-      </aside>
-    );
-  }
+  const tab = useShell((s) => s.rightTab);
+  const setRightTab = useShell((s) => s.setRightTab);
+  const setRightCollapsed = useShell((s) => s.setRightCollapsed);
 
   return (
     <aside className="rp">
       <header className="rp-tabs">
         <button className={`rp-tab${tab === "comments" ? " on" : ""}`}
-          onClick={() => setTab("comments")}>Comments</button>
+          onClick={() => setRightTab("comments")}>Comments</button>
         <button className={`rp-tab${tab === "versions" ? " on" : ""}`}
-          onClick={() => setTab("versions")}>Versions</button>
+          onClick={() => setRightTab("versions")}>Versions</button>
         <span className="rp-spacer" />
-        <button className="rp-collapse" title="Hide pane"
-          onClick={() => setCollapsed(true)}>
+        <button className="rp-collapse" title="Hide pane (⌘⌥\)"
+          onClick={() => setRightCollapsed(true)}>
           <PanelRightIcon size={14} />
         </button>
       </header>

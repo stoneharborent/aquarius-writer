@@ -51,12 +51,19 @@ export const FOUNTAIN_ELEMENTS: { el: FountainElement; label: string; kb: string
 ];
 
 export function EditorToolbar({
-  kind, path, activeElement,
+  kind, path, activeElement, variant = "bar",
 }: {
   kind: "md" | "fountain";
   path: string;
   activeElement?: FountainElement | null;
+  /**
+   * `"bar"` is the full-width strip the toolbar used to be. `"inline"` is the
+   * shape it takes in the window's top bar: no background, no border, no
+   * wrapping — it is one element in a row, not a row of its own.
+   */
+  variant?: "bar" | "inline";
 }) {
+  const cls = `ed-toolbar${variant === "inline" ? " ed-toolbar-inline" : ""}`;
   const md = (cmd: FormatCommand) => {
     const view = formatBus.target(path);
     if (view) applyMdCommand(view, cmd);
@@ -68,7 +75,7 @@ export function EditorToolbar({
 
   if (kind === "fountain") {
     return (
-      <div className="ed-toolbar" role="toolbar" aria-label="Screenplay elements">
+      <div className={cls} role="toolbar" aria-label="Screenplay elements">
         <span className="ed-tb-label">ELEMENT</span>
         <div className="ed-tb-pills">
           {FOUNTAIN_ELEMENTS.map(({ el, label, kb }) => (
@@ -104,7 +111,7 @@ export function EditorToolbar({
   );
 
   return (
-    <div className="ed-toolbar" role="toolbar" aria-label="Formatting">
+    <div className={cls} role="toolbar" aria-label="Formatting">
       {group(INLINE)}
       <span className="ed-tb-sep" />
       {group(HEADINGS)}

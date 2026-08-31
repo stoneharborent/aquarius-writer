@@ -1,10 +1,10 @@
 # Parity — the Tauri app vs the Swift app
 
 *Written 2026-08-29 against v0.1.2 with the Swift side unreadable; rewritten
-2026-08-30 against v0.2.0 after a full read of the Swift source. Wave 0 is
-done. The complete Swift inventory — features, palette hex values, layout
-measurements, shortcut map — lives in [`SWIFT-AUDIT.md`](SWIFT-AUDIT.md);
-this file is the gap list and the plan.*
+2026-08-30 against v0.2.0 after a full read of the Swift source; updated the
+same day as Waves 0 and 1 closed. The complete Swift inventory — features,
+palette hex values, layout measurements, shortcut map — lives in
+[`SWIFT-AUDIT.md`](SWIFT-AUDIT.md); this file is the gap list and the plan.*
 
 ## Read this first
 
@@ -24,23 +24,25 @@ this document is a real list, not a feeling.
 
 ## Royce's three named gaps, answered (now with the Swift side verified)
 
-### 1. "The layout of the app is old" — **confirmed, and now we know exactly how**
+### 1. ~~"The layout of the app is old"~~ — ✅ **done 2026-08-30**
 
-The port is the May 2026 HANDOFF §8 layout minus the Spark column. The Swift
-app moved on. The differences, verified:
+The port was the May 2026 HANDOFF §8 layout minus the Spark column. The Swift
+app had moved on. Every row below is now closed:
 
 | | Swift app | This port |
 |---|---|---|
-| Top of window | 30pt title strip + a **top bar**: Files toggle, **⌘K search capsule**, centered editor toolbar, right-pane buttons | 38px title bar only; toolbar lives lower |
-| Bottom of window | **No status bar** — nothing down there | 26px status bar with version, "← workflows", icon buttons, theme dropdowns |
-| Columns | Sidebar **248pt, resizable 190–560, width persisted** · editor min 320 · right pane **360pt, resizable, persisted** | Fixed `240px 1fr 320px`, nothing resizes |
-| Collapsing | Everything collapses to a **28pt gutter with a rotated label** (sidebar, rails, right pane, even the editor) | Right pane collapses; no gutters |
-| Sidebar top | **Quick views: Starred · Today · Manuscript**, then a "WORKFLOW" eyebrow with A−/A+ tree zoom and an **add menu** | Search + tree only |
-| Prose surface | **US-Letter page canvas** — fixed-width sheet, 1" margins, drop shadow | Full-width text column |
-| Theme | **Ice** (light `#EAF1F8`) + ocean **Midnight** (`#0B1220`), 4 Aqua accents | **Parchment** + warm-neutral Midnight — the palette Swift *retired* (Ice's pref key is literally still `"parchment"`) + the AquariusOS skin |
+| Top of window | 30pt title strip + a **top bar**: Files toggle, **⌘K search capsule**, centered editor toolbar, right-pane buttons | ✅ **same shape** — 38px title strip (unchanged on purpose, NOTES §15) + a 48px top bar |
+| Bottom of window | **No status bar** — nothing down there | ✅ **retired**; its four kinds of content moved (NOTES §17) |
+| Columns | Sidebar **248pt, resizable 190–560, width persisted** · editor min 320 · right pane **360pt, resizable, persisted** | ✅ **same numbers**, dragged on 7px splitters, persisted in localStorage |
+| Collapsing | Everything collapses to a **28pt gutter with a rotated label** (sidebar, rails, right pane, even the editor) | ✅ one shared `Gutter` for sidebar, right pane, chapter rail and scenes rail. The *editor* itself still does not collapse (⌃⌘E "hide editor" is not ported). |
+| Sidebar top | **Quick views: Starred · Today · Manuscript**, then a "WORKFLOW" eyebrow with A−/A+ tree zoom and an **add menu** | ✅ quick views + eyebrow + add menu (done earlier the same day). **A−/A+ tree zoom is still missing.** |
+| Prose surface | **US-Letter page canvas** — fixed-width sheet, 1" margins, drop shadow | ✅ **shipped** — see row 3 |
+| Theme | **Ice** (light `#EAF1F8`) + ocean **Midnight** (`#0B1220`), 4 Aqua accents | ✅ shipped (row 2) |
 
-The layout catch-up is no longer "unknown, size L" — it's a spec. See
-SWIFT-AUDIT §1.3–1.6.
+Two pieces of the audit's §1.3–1.4 are deliberately left for later and are the
+only layout debt: the **navigator zoom** (A−/A+ scaling tree rows 0.8–1.8×) and
+**collapsing the editor pane itself** (⌃⌘E). Both are additions to a shell that
+now has the right bones, not rebuilds.
 
 ### 2. ~~"There are no favorites"~~ — ✅ **done 2026-08-30**
 
@@ -80,9 +82,9 @@ throughout (SWIFT-AUDIT.md has file names).
 
 | # | Feature | Swift app | Port | Size | Notes |
 |---|---|---|---|---|---|
-| 1 | **Shell layout** (top bar, ⌘K capsule, resizable + collapsible panes, no status bar) | verified | old HANDOFF shape | **L** | Spec in SWIFT-AUDIT §1.3. Port files: `VaultWindow.tsx`, `MainWindow.tsx`, `Sidebar.tsx`. |
-| 2 | **Ice / Midnight themes + Aqua accents** | verified (full hex tables in SWIFT-AUDIT §1.1) | ships the retired Parchment palette; accent keys still `sepia`/`sage` | **M** | Straight token swap in `src/theme/tokens.css` + accent renames. Keep the AquariusOS skin as-is. |
-| 3 | **Prose page canvas** (US-Letter sheet, 1" margins, shadow) | verified | plain text column | **M** | The single biggest "looks like a writing app" cue. |
+| ~~1~~ | ~~**Shell layout** (top bar, ⌘K capsule, resizable + collapsible panes, no status bar)~~ | verified | ✅ **done** — 48px top bar (Files toggle · 240px ⌘K capsule · centred toolbar · Comments/Versions), splitter-resized persisted columns, 28px collapse gutters, no status bar | **L** | New: `shellStore.ts`, `toolbarStore.ts`, `shell/{TopBar,Gutter,Splitter}`. The toolbar moved out of the editor panes into the top bar, so a pane now *publishes* its kind/path to `toolbarStore` instead of rendering its own row. Left for later: navigator zoom, collapsing the editor pane. |
+| 2 | **Ice / Midnight themes + Aqua accents** | verified (full hex tables in SWIFT-AUDIT §1.1) | ✅ **done** — Ice + ocean Midnight + the four Aqua accents in `tokens.css`; the AquariusOS skin untouched | **M** | Shipped 2026-08-30. |
+| ~~3~~ | ~~**Prose page canvas** (US-Letter sheet, 1" margins, shadow)~~ | verified | ✅ **done** — 850px sheet on `--bg`, 96px/64px margins, `black @ 22% r14 y1` (lighter on Ice), continuous canvas | **M** | Prose + notes only. The screenplay keeps its current surface: its *paged* canvas with real page breaks is row 12. |
 | ~~4~~ | ~~**Favorites / Starred** + quick views (Starred · Today · Manuscript)~~ | verified | ✅ **done** — row star + ⋯ menu + palette, Starred quick view, `favorites.json`, `toggle_star` | **M** | `aux_store::{read,save,set,toggle,forget}_favorite` + migration, `ops::set_star` / `ops::trash_entry`, `vault_set_star` / `vault_list_stars`, `favoritesStore`. Quick views: Starred (collapsible), Today (⌘T overlay), Manuscript (⌘2 outline). |
 | ~~5~~ | ~~**Create file / folder from the UI**~~ | verified — add menu with MD/Screenplay picker | ✅ **done** — WORKFLOW eyebrow + "+" add menu, inline name field, segmented Markdown/Screenplay picker; the new file opens in the editor | **M** | `ops::create_file` / `create_folder`, `vault_create_file` / `vault_create_folder`, MCP `create_folder` (`create_document` already existed). |
 | ~~6~~ | ~~**Rename / move files in the tree**~~ | verified — plus drag-in/out of the file manager | ✅ **done** — row menu (right-click or "⋯") with Rename (inline) and Move to… (folder picker) | **M** | `ops::rename_entry` / `move_entry`, `vault_rename` / `vault_move`, MCP `rename_document` / `move_document`. Names de-duplicate " 2"/" 3"; snapshots, comments and chapter order follow the file; bytes are never rewritten. **Still open: drag-reorder in the tree, and drag in/out of the file manager.** |
@@ -123,11 +125,13 @@ throughout (SWIFT-AUDIT.md has file names).
 | **Pricing / unlock dialog** | **absent by decision.** Swift still has $50 Studio tiers; that's a Swift cleanup question, not a port task. |
 | AquariusOS theme, Linux packaging, self-updater | **port ahead** — the reason this build exists |
 
-**Counts.** 19 open rows (rows 5, 6 and 4 closed 2026-08-30, along with the
-workflow-switcher item from §3): 2 large-and-structural (shell layout,
-screenplay depth), 1 large (Compile), 7 medium, 8 small, 1 research. Spark
-and pricing stay closed. The v1 claim that the port was "ahead" on MCP was
-wrong — Swift has 33 tools and a Web UI.
+**Counts.** 16 open rows. Everything closed on 2026-08-30, in order: the
+workflow-switcher item from §3, then rows 4, 5 and 6 (favourites, create,
+rename/move), then row 2 (Ice / Midnight / Aqua accents), and finally rows 1
+and 3 (shell layout, page canvas) — which finishes Wave 1. What is left:
+1 large-and-structural (screenplay depth), 1 large (Compile), 5 medium,
+8 small, 1 research. Spark and pricing stay closed. The v1 claim that the port
+was "ahead" on MCP was wrong — Swift has 33 tools and a Web UI.
 
 ---
 
@@ -135,22 +139,28 @@ wrong — Swift has 33 tools and a Web UI.
 
 ### ~~Wave 0 — read the Swift app~~ ✅ done 2026-08-30 → `SWIFT-AUDIT.md`
 
-### Wave 1 — make it look and feel like Aquarius Writer
+### ~~Wave 1 — make it look and feel like Aquarius Writer~~ ✅ done 2026-08-30
 
-The three things Royce named, now fully specified, plus the file basics.
+The three things Royce named, plus the file basics.
 
-1. **Themes** (row 2, M) — swap Parchment/old-Midnight for Ice/ocean-Midnight
-   + the four Aqua accents. Cheapest, most visible win in the whole plan.
+1. ~~**Themes** (row 2, M)~~ ✅ done — Ice / ocean-Midnight + the four Aqua
+   accents; the AquariusOS skin untouched.
 2. ~~**Workflow switcher as a footer chip** (row from §3 above, S)~~ ✅ done.
 3. ~~**Favorites + quick views** (row 4, M)~~ ✅ done — shipped with
    `toggle_star` in the same change.
-4. **Shell layout catch-up** (row 1, L) — top bar with ⌘K capsule, resizable
-   persisted panes, 28pt collapse gutters, retire the status bar.
-5. **Page canvas** (row 3, M) — pairs naturally with the layout work.
+4. ~~**Shell layout catch-up** (row 1, L)~~ ✅ done — top bar with the ⌘K
+   capsule, splitter-resized persisted panes, 28px collapse gutters, status bar
+   retired.
+5. ~~**Page canvas** (row 3, M)~~ ✅ done — shipped alongside the layout, as
+   planned.
 6. ~~**Create / rename / move files in the UI** (rows 5–6, M+M)~~ ✅ done —
    shipped with their MCP counterparts (`create_folder`, `rename_document`,
    `move_document`) in the same change. Tree drag-reorder and drag in/out of
    the file manager are the part of row 6 still outstanding.
+
+Wave 1 leftovers, small enough to fold into a later wave rather than hold it
+open: sidebar navigator zoom (A−/A+), a collapse for the editor pane itself
+(⌃⌘E), and tree drag-reorder / drag in and out of the file manager.
 
 ### Wave 2 — the features that are pretending to work
 

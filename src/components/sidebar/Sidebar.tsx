@@ -22,6 +22,7 @@ import {
 import type { ChapterStatus, NewFileKind, NodeKind, VaultNode } from "@/types/vault";
 import { useVault } from "@/state/vaultStore";
 import { useOverlay } from "@/state/overlayStore";
+import { useShell } from "@/state/shellStore";
 import { useFavorites } from "@/state/favoritesStore";
 import { trashFile } from "@/lib/vault/aux";
 import { useEditor } from "@/state/editorStore";
@@ -96,15 +97,58 @@ function ancestorsOf(path: string): string[] {
   return segments.map((_, i) => segments.slice(0, i + 1).join("/"));
 }
 
+/**
+ * The tree, keeping only what matches `q` — a folder survives because one of
+ * its descendants matched, never on its own account alone unless its name
+ * matches too. Returns null when nothing under `node` matched.
+ */
+function filterTree(node: VaultNode, q: string): VaultNode | null {
+  const hit = node.name.toLowerCase().includes(q);
+  if (node.kind !== "folder") return hit ? node : null;
+  const kids = (node.children ?? [])
+    .map((c) => filterTree(c, q))
+    .filter((c): c is VaultNode => c !== null);
+  if (!hit && kids.length === 0) return null;
+  return { ...node, children: kids };
+}
+
+/** Every folder path in a (filtered) tree — what the search result expands. */
+function folderPaths(node: VaultNode, out: string[] = []): string[] {
+  for (const child of node.children ?? []) {
+    if (child.kind === "folder") {
+      out.push(child.path);
+      folderPaths(child, out);
+    }
+  }
+  return out;
+}
+
 export function Sidebar() {
-  const { current, tree, expanded, toggleExpanded, selectedPath, selectPath } = useVault();
+  const {
+    current, tree, expanded, toggleExpanded, selectedPath, selectPath, expandAll,
+  } = useVault();
   const overlay = useOverlay();
+  const query = useShell((s) => s.query);
   const [composer, setComposer] = useState<Composer | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [lastFolder, setLastFolder] = useState<string | null>(null);
 
   const folders = useMemo(() => (tree ? collectFolders(tree) : []), [tree]);
+
+  // The top bar's ⌘K capsule filters the tree by name; Enter in it opens the
+  // full-text Find sheet, which is the part a name filter cannot do.
+  const q = query.trim().toLowerCase();
+  const shown = useMemo(
+    () => (!tree || !q ? tree : filterTree(tree, q)),
+    [tree, q],
+  );
+
+  // A filtered tree is useless folded up — open everything the filter kept.
+  useEffect(() => {
+    if (!q || !shown) return;
+    expandAll(folderPaths(shown));
+  }, [q, shown, expandAll]);
 
   if (!current || !tree) return null;
 
@@ -138,10 +182,16 @@ export function Sidebar() {
             onDone={() => setComposer(null)}
           />
         )}
+        {q && (!shown || (shown.children?.length ?? 0) === 0) && (
+          <p className="sb-quick-empty sb-no-hits">
+            No file name matches “{query.trim()}”. Press Enter to search inside
+            the documents.
+          </p>
+        )}
         <TreeOpsContext.Provider
           value={{ menuFor, setMenuFor, renaming, setRenaming, folders, noteTarget: setLastFolder }}
         >
-          {tree.children?.map((node) => (
+          {shown?.children?.map((node) => (
             <TreeBranch
               key={node.path}
               node={node}
@@ -155,11 +205,22 @@ export function Sidebar() {
         </TreeOpsContext.Provider>
       </div>
 
+      {/* Six now, not four: Palette and Settings moved here when the status bar
+          was retired (SWIFT-AUDIT §1.3 — Swift has no status bar), so nothing
+          that used to be down there lost its button. */}
       <div className="sb-rail">
-        <button className="sb-rail-btn" onClick={() => overlay.open("today")}>Today</button>
-        <button className="sb-rail-btn" onClick={() => overlay.open("graph")}>Graph</button>
-        <button className="sb-rail-btn" onClick={() => overlay.open("find")}>Find</button>
-        <button className="sb-rail-btn" onClick={() => overlay.open("trash")}>Trash</button>
+        <button className="sb-rail-btn" title="Command palette (⌘P)"
+          onClick={() => overlay.open("palette")}>Palette</button>
+        <button className="sb-rail-btn" title="Today (⌘T)"
+          onClick={() => overlay.open("today")}>Today</button>
+        <button className="sb-rail-btn" title="Graph (⌘G)"
+          onClick={() => overlay.open("graph")}>Graph</button>
+        <button className="sb-rail-btn" title="Find in workflow (⇧⌘F)"
+          onClick={() => overlay.open("find")}>Find</button>
+        <button className="sb-rail-btn" title="Recently Deleted"
+          onClick={() => overlay.open("trash")}>Trash</button>
+        <button className="sb-rail-btn" title="Settings (⌘,)"
+          onClick={() => overlay.open("settings")}>Settings</button>
       </div>
 
       <WorkflowChip />

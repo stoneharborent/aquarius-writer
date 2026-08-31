@@ -1,60 +1,9 @@
-/* App-level styles outside of tokens / components */
-
-.vw-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.05em;
-  color: var(--ink-mute);
-  text-transform: uppercase;
-}
-
-.vw-toggle select {
-  appearance: none;
-  background: var(--surface);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  text-transform: none;
-  cursor: pointer;
-}
-
-.vw-toggle select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--ring-focus);
-}
-
-.vw-link {
-  background: transparent;
-  border: none;
-  color: var(--accent);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  cursor: pointer;
-  padding: 0;
-}
-
-.vw-link:hover { text-decoration: underline; }
-
-.vw-icon-btn {
-  background: transparent;
-  border: none;
-  color: var(--ink-mute);
-  padding: 2px 4px;
-  border-radius: 4px;
-  cursor: pointer;
-  display: inline-grid;
-  place-items: center;
-}
-
-.vw-icon-btn:hover {
-  background: var(--surface);
-  color: var(--ink);
-}
+/* App-level styles outside of tokens / components.
+ *
+ * This file used to hold the status bar's furniture — `.vw-toggle` (the theme
+ * and accent dropdowns), `.vw-link` ("← workflows") and `.vw-icon-btn` (the
+ * palette / graph / today / settings buttons). The status bar was retired with
+ * the shell layout catch-up (SWIFT-AUDIT §1.3); every one of those controls has
+ * a home elsewhere now, so the rules went with them rather than sitting here
+ * unused. See App.tsx and docs/NOTES.md §17.
+ */

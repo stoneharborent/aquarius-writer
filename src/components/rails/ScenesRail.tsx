@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { SceneIndex } from "@/lib/fountain";
+import { Gutter } from "@/components/shell/Gutter";
 import "./Rail.css";
 
 interface ScenesRailProps {
@@ -11,12 +12,9 @@ interface ScenesRailProps {
 export function ScenesRail({ scenes, activeIndex, onSelect }: ScenesRailProps) {
   const [collapsed, setCollapsed] = useState(false);
 
+  // Same 28px gutter as every other collapsed pane — SWIFT-AUDIT §1.3.
   if (collapsed) {
-    return (
-      <div className="rail rail-collapsed" aria-label="Scenes rail">
-        <button className="rail-toggle" onClick={() => setCollapsed(false)} aria-label="Expand scenes rail">⌃</button>
-      </div>
-    );
+    return <Gutter label="Scenes" side="right" onOpen={() => setCollapsed(false)} />;
   }
 
   return (

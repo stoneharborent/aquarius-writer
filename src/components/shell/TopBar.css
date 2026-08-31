@@ -1,0 +1,138 @@
+/* The top bar — ~48px, the height SWIFT-AUDIT §1.3 measures, with 13–14px
+   icons and a 240px search capsule carrying a 0.5px hairline stroke. */
+
+.topbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  padding: 0 12px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+
+.tb-left,
+.tb-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The toolbar is centred in the window, not merely in the space left over —
+   the 1fr track is symmetric because the grid gives it the middle. */
+.tb-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ── buttons ─────────────────────────────────────────────────────────────── */
+
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background: transparent;
+  border: 0.5px solid transparent;
+  border-radius: var(--radius-button);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease);
+}
+
+.tb-btn:hover {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.tb-btn.on {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.tb-icon-only { padding: 0 7px; }
+
+/* ── the search capsule ──────────────────────────────────────────────────── */
+
+.tb-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 240px;
+  height: 28px;
+  padding: 0 9px;
+  background: var(--surface);
+  border: 0.5px solid var(--line);
+  border-radius: 999px;
+  transition: border-color var(--motion-fast) var(--ease),
+              box-shadow var(--motion-fast) var(--ease);
+}
+
+.tb-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--ring-focus);
+}
+
+.tb-search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.tb-search-input::placeholder { color: var(--ink-mute); }
+
+/* A keycap, at the 3px radius the audit gives badges and keycaps (§1.6). */
+.tb-keycap {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  background: var(--bg-soft);
+  border: 0.5px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 4px;
+  flex: none;
+}
+
+.tb-search-clear {
+  flex: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: 3px;
+}
+
+.tb-search-clear:hover { color: var(--ink); background: var(--bg-soft); }
+
+/* Narrow windows: the Files button keeps its icon and drops its word, and the
+   capsule gives up some width. The right-pane buttons keep their labels —
+   they have no icon to fall back on. */
+@media (max-width: 1100px) {
+  .tb-left .tb-btn-text { display: none; }
+  .tb-search { width: 180px; }
+}

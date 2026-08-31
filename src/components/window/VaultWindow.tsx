@@ -6,16 +6,22 @@ import "./VaultWindow.css";
 export interface VaultWindowProps {
   title?: string;
   subtitle?: string;
-  footerLeft?: ReactNode;
-  footerRight?: ReactNode;
   children?: ReactNode;
 }
 
+/**
+ * Title strip + body. There is no status bar: Swift has none (SWIFT-AUDIT
+ * §1.3), and the port's 26px one was carrying four kinds of thing that all
+ * belonged elsewhere. See the note in App.tsx for where each went.
+ *
+ * The 38px title bar height is deliberately unchanged. The drag region and the
+ * Linux window controls were the whole of v0.1.1/0.1.2 (NOTES §15) and their
+ * hit targets are measured against this bar — slimming it is not worth
+ * re-testing on the bench for 6px.
+ */
 export function VaultWindow({
   title = "Aquarius",
   subtitle,
-  footerLeft,
-  footerRight,
   children,
 }: VaultWindowProps) {
   // On macOS the system draws the traffic lights over our title bar
@@ -39,11 +45,6 @@ export function VaultWindow({
       </header>
 
       <div className="vw-body">{children}</div>
-
-      <footer className="vw-statusbar">
-        <div className="vw-status-left">{footerLeft}</div>
-        <div className="vw-status-right">{footerRight}</div>
-      </footer>
     </div>
   );
 }

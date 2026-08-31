@@ -22,6 +22,12 @@ export interface OverlayPayload {
    * "Manage workflows…" opens on Workflows instead of on Appearance.
    */
   tab?: string;
+  /**
+   * A search term to open with. The top bar's ⌘K capsule passes the words
+   * already typed there to the Find sheet on Enter, so the writer does not
+   * type them twice.
+   */
+  query?: string;
 }
 
 interface OverlayState {

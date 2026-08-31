@@ -5,30 +5,24 @@ import { SelectWorkflow } from "@/components/workflows/SelectWorkflow";
 import { OverlayRoot } from "@/components/overlays/OverlayRoot";
 import { ConflictDialog } from "@/components/safety/ConflictDialog";
 import { Notices } from "@/components/notices/Notices";
-import {
-  ACCENTS,
-  ACCENT_LABEL,
-  AccentName,
-  THEMES,
-  THEME_LABEL,
-  ThemeName,
-  themeLocksAccent,
-} from "@/theme/theme";
 import { useTheme } from "@/state/themeStore";
 import { useVault } from "@/state/vaultStore";
 import { useUpdates } from "@/state/updateStore";
 import { useOverlay } from "@/state/overlayStore";
 import { usePopout } from "@/state/popoutStore";
-import { CommandIcon, GraphIcon, SettingsIcon, SparkleIcon } from "@/icons";
+import { useShell } from "@/state/shellStore";
 import { useGlobalShortcuts, type Shortcut, mod } from "@/lib/shortcuts";
 import { getPopoutPath } from "@/lib/popout";
 import { PopoutWindow } from "@/components/popout/PopoutWindow";
 
 export default function App() {
-  const { theme, accent, setTheme, setAccent, adoptWorkflow } = useTheme();
-  const { current, closeWorkflow, setView, selectedPath, bootstrap, booted } = useVault();
+  const { adoptWorkflow } = useTheme();
+  const { current, setView, selectedPath, bootstrap, booted } = useVault();
   const overlay = useOverlay();
   const popout = usePopout();
+  // Read imperatively rather than subscribing: App has no reason to re-render
+  // on every pixel of a splitter drag, and these handlers only ever *write*.
+  const shell = useShell.getState;
   const startUpdates = useUpdates((s) => s.start);
   const popoutPath = getPopoutPath();
 
@@ -54,6 +48,19 @@ export default function App() {
     { id: "find", combo: "⇧⌘F", group: "navigation", label: "Find in workflow",
       match: (e) => mod(e) && e.shiftKey && e.key.toLowerCase() === "f",
       run: () => overlay.open("find") },
+    { id: "search", combo: "⌘K", group: "navigation", label: "Focus the search capsule",
+      match: (e) => mod(e) && e.key.toLowerCase() === "k",
+      run: () => {
+        // A collapsed sidebar makes the filter invisible, so ⌘K opens it.
+        shell().setSidebarCollapsed(false);
+        shell().focusSearch();
+      } },
+    { id: "sidebar", combo: "⌘\\", group: "view", label: "Show / hide the file sidebar",
+      match: (e) => mod(e) && !e.altKey && e.key === "\\",
+      run: () => shell().toggleSidebar() },
+    { id: "rightpane", combo: "⌘⌥\\", group: "view", label: "Cycle the right pane",
+      match: (e) => mod(e) && e.altKey && (e.key === "\\" || e.code === "Backslash"),
+      run: () => shell().cycleRight() },
     { id: "view-editor", combo: "⌘1", group: "view", label: "Editor",
       match: (e) => mod(e) && e.key === "1", run: () => setView("editor") },
     { id: "view-outline", combo: "⌘2", group: "view", label: "Outline",
@@ -72,7 +79,7 @@ export default function App() {
           else popout.popOut(selectedPath);
         }
       } },
-  ], [overlay, setView, popout, selectedPath, popoutPath]);
+  ], [overlay, setView, popout, selectedPath, popoutPath, shell]);
 
   useGlobalShortcuts(shortcuts);
 
@@ -103,53 +110,14 @@ export default function App() {
     }
   }, [current?.id, current?.settings, adoptWorkflow]);
 
+  // No status bar. Swift has none (SWIFT-AUDIT §1.3) and everything that used
+  // to live in the port's went somewhere it reads better: the version number
+  // is in Settings → About, "← workflows" is the sidebar's footer chip ("All
+  // workflows"), the palette / graph / today / settings buttons are the
+  // sidebar's bottom rail, and the theme and accent dropdowns were always a
+  // duplicate of Settings → Appearance.
   return (
-    <VaultWindow
-      title="Aquarius"
-      subtitle={current?.title}
-      footerLeft={
-        <>
-          <span>v{__APP_VERSION__}</span>
-          {current && (
-            <button className="vw-link" onClick={closeWorkflow}>
-              ← workflows
-            </button>
-          )}
-        </>
-      }
-      footerRight={
-        <>
-          <button className="vw-icon-btn" title="Command palette (⌘P)" onClick={() => overlay.open("palette")}>
-            <CommandIcon size={11} color="currentColor" />
-          </button>
-          <button className="vw-icon-btn" title="Graph (⌘G)" onClick={() => overlay.open("graph")}>
-            <GraphIcon size={11} color="currentColor" />
-          </button>
-          <button className="vw-icon-btn" title="Today (⌘T)" onClick={() => overlay.open("today")}>
-            <SparkleIcon size={11} color="currentColor" />
-          </button>
-          <button className="vw-icon-btn" title="Settings (⌘,)" onClick={() => overlay.open("settings")}>
-            <SettingsIcon size={11} color="currentColor" />
-          </button>
-          <label className="vw-toggle">
-            theme
-            <select value={theme} onChange={(e) => setTheme(e.target.value as ThemeName)}>
-              {THEMES.map((t) => <option key={t} value={t}>{THEME_LABEL[t]}</option>)}
-            </select>
-          </label>
-          {/* AquariusOS locks the accent to starlight, so the picker has
-              nothing to offer under it. */}
-          {!themeLocksAccent(theme) && (
-            <label className="vw-toggle">
-              accent
-              <select value={accent} onChange={(e) => setAccent(e.target.value as AccentName)}>
-                {ACCENTS.map((a) => <option key={a} value={a}>{ACCENT_LABEL[a]}</option>)}
-              </select>
-            </label>
-          )}
-        </>
-      }
-    >
+    <VaultWindow title="Aquarius" subtitle={current?.title}>
       {current ? <MainWindow /> : booted ? <SelectWorkflow /> : null}
       <OverlayRoot />
       <ConflictDialog />

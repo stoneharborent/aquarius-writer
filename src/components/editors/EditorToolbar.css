@@ -10,6 +10,21 @@
   user-select: none;
 }
 
+/* In the top bar the toolbar is one element in a row rather than a row of its
+   own: no strip, no wrapping, and the spacer stops being a spacer — a `flex: 1`
+   there would stretch the whole group across the window and un-centre it. */
+.ed-toolbar-inline {
+  padding: 0;
+  min-height: 0;
+  background: transparent;
+  border-bottom: none;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.ed-toolbar-inline .ed-tb-spacer { flex: 0 0 6px; }
+
 .ed-tb-group { display: flex; gap: 2px; }
 
 .ed-tb-btn {

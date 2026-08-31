@@ -18,6 +18,7 @@ const GROUPS: { name: string; rows: ShortcutRow[] }[] = [
       { combo: "⌘3", label: "Corkboard" },
       { combo: "⌘G", label: "Graph view" },
       { combo: "⌘T", label: "Today" },
+      { combo: "⌘K", label: "Focus the search capsule (filters the file tree)" },
     ],
   },
   {
@@ -26,7 +27,6 @@ const GROUPS: { name: string; rows: ShortcutRow[] }[] = [
       { combo: "⌘S", label: "Force save (auto-save runs continuously)" },
       { combo: "⌘B", label: "Bold" },
       { combo: "⌘I", label: "Italic" },
-      { combo: "⌘K", label: "Insert wiki link" },
       { combo: "⌘F", label: "Find in document" },
       { combo: "⇧⌘F", label: "Find in workflow" },
     ],
@@ -35,6 +35,7 @@ const GROUPS: { name: string; rows: ShortcutRow[] }[] = [
     name: "View",
     rows: [
       { combo: "⌘\\", label: "Toggle sidebar" },
+      { combo: "⌘⌥\\", label: "Cycle the right pane (comments → versions → hidden)" },
       { combo: "⌘⇧L", label: "Toggle theme (Ice / Midnight)" },
     ],
   },

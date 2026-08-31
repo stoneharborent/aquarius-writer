@@ -1110,3 +1110,145 @@ here can cover, because Royce's Mac is Apple Silicon:
 Those three want one pass on the x86 bench: install an update, confirm the
 version in Settings → About changes after the restart, and confirm
 `versions/` holds only the new copy afterwards.
+
+---
+
+## 17. The shell layout catch-up — the top bar, and where the status bar went
+
+PARITY rows 1 and 3, the last of Wave 1. The port had been wearing the May 2026
+HANDOFF §8 shape: a 38px title bar, a fixed `240px 1fr 320px` grid that nothing
+could resize, an editor toolbar buried inside each editor pane, and a 26px
+status bar along the bottom. SWIFT-AUDIT §1.3 says the Swift app has none of
+that below the title strip and one thing above the columns: a **top bar**.
+
+### 17a. The new shape
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ 38px title strip — drag region + (Linux) window controls     │  unchanged
+├──────────────────────────────────────────────────────────────┤
+│ 48px top bar: [Files] (⌘K capsule) ·· toolbar ·· Comments    │  new
+│                                          Versions  [pane]    │
+├────────┬─┬───────────────────────────────┬─┬─────────────────┤
+│Sidebar │▏│ Editor (rails + page canvas)  │▏│ Right pane      │
+│248 def │ │ min 320                       │ │ 360 def, min 280│
+│190–560 │ │                               │ │                 │
+└────────┴─┴───────────────────────────────┴─┴─────────────────┘
+              ▲ 7px splitter, 0.5px hairline → 2px accent
+```
+
+Four files carry it, all new:
+
+- `src/state/shellStore.ts` — widths, collapse flags, right-pane tab, the
+  search text, and a `focusTick` that ⌘K bumps.
+- `src/state/toolbarStore.ts` — which document the top bar's toolbar is
+  driving. The toolbar used to be a prop-fed child of each editor pane; now the
+  **primary** pane publishes `{kind, path, element}` on mount and clears it on
+  unmount, and the top bar draws whatever is there. Only the primary pane
+  publishes: one row, one owner.
+- `src/components/shell/TopBar.tsx` — the row itself.
+- `src/components/shell/{Splitter,Gutter}.tsx` — the two new primitives.
+
+### 17b. Where every status-bar item went
+
+Nothing that was reachable became unreachable. The bar held four kinds of
+thing:
+
+| Was in the status bar | Lives now |
+|---|---|
+| `v0.2.0` version string | **Settings → About** (it was already there — the status bar was the duplicate) |
+| "← workflows" | the sidebar footer chip's **"All workflows"** — same `closeWorkflow()` call, in the control people actually look at for workflows |
+| Palette / Graph / Today / Settings icon buttons | the **sidebar bottom rail**, which grew from four buttons to six (Palette · Today · Graph / Find · Trash · Settings) and became a 3×2 grid so six labels still read at the 190px minimum width. ⌘P, ⌘G, ⌘T and ⌘, are unchanged. |
+| theme + accent `<select>`s | **Settings → Appearance**, which has had both as chip pickers all along. Deleted rather than moved. |
+
+`src/app.css` is now a comment: `.vw-toggle`, `.vw-link` and `.vw-icon-btn`
+existed only for that bar.
+
+### 17c. The title bar was left alone, deliberately
+
+38px, not 32px. The drag region (`data-tauri-drag-region="deep"`) and the
+Linux-only `WindowControls` were the entirety of v0.1.1 and v0.1.2 (§15), they
+are tuned against this height, and neither can be re-tested from an Apple
+Silicon Mac. Six pixels is not worth a second bench trip. The only change to
+`VaultWindow` is that `footerLeft` / `footerRight` and the `<footer>` are gone
+and the grid is `38px minmax(0, 1fr)`.
+
+### 17d. Splitters, clamps and persistence
+
+The column track list is written in `MainWindow.tsx` from the current state,
+because a collapsed pane drops **its splitter track as well as its width** —
+that way a hidden splitter can never be grabbed, and the number of grid tracks
+always matches the number of children.
+
+Clamping happens in two places. During a drag, the ceiling is computed live
+from the host's width so the editor keeps 320px. On a window resize a
+`ResizeObserver` does the same sum and, if the editor would fall short, takes
+the space back from the right pane first and the sidebar second — the sidebar
+is what you navigate with.
+
+Persisted, in the spirit of the existing `aquarius.*` keys (and named after the
+Swift UserDefaults keys in SWIFT-AUDIT §4):
+
+```
+aquarius.sidebarWidth        190–560, default 248
+aquarius.sidebarCollapsed    "true" | "false"
+aquarius.rightpane.width     ≥ 280, default 360
+aquarius.rightpane.collapsed "true" | "false"
+aquarius.rightpane.mode      "comments" | "versions"
+```
+
+The search text is **not** persisted: a filter that survived a restart would
+look like a broken file tree.
+
+### 17e. One gutter, four panes
+
+`Gutter` is 28px of `--bg-soft` with a hairline on the editor-facing edge and
+the pane's name rotated −90° in heavy, 0.16em-tracked 10px caps. The sidebar,
+the right pane, the chapter rail and the scenes rail all collapse to it — the
+rails used to have their own `.rail-collapsed` with a `⌃` glyph, and that is
+gone. The rails also went 220px → 244px, the audit's number.
+
+The **editor pane itself** does not collapse. Swift's ⌃⌘E "hide editor" is not
+ported; the shell now has the bones for it, and it is listed as Wave 1 leftover
+work in PARITY rather than pretended done.
+
+### 17f. ⌘K and what the capsule actually searches
+
+The capsule is a real input, 240px, hairline-stroked, with a `⌘K` keycap that
+becomes a clear button once there is text. Typing **filters the file tree by
+name** (folders survive because a descendant matched, and the filtered tree
+auto-expands — a folded filter result is useless). Pressing **Enter** hands the
+same words to the Find-in-workflow sheet, which is the half a name filter
+cannot do: look inside the documents. `OverlayPayload` grew a `query` field for
+that hand-off.
+
+⌘K was previously advertised in the cheat sheet as "insert wiki link" and was
+bound to nothing at all, so nothing was displaced. ⌘\ (sidebar) and ⌘⌥\
+(right-pane cycle: comments → versions → hidden) were also only ever cheat-sheet
+entries; they are real now. On macOS ⌥\ types `«`, so the matcher accepts
+`e.code === "Backslash"` as well as `e.key`.
+
+### 17g. The page canvas, and why the screenplay does not get one
+
+SWIFT-AUDIT §1.5: prose renders on a US-Letter sheet, and that "more than
+anything is why the Swift app looks like a writing app and the port looks like
+a text field". Prose and note documents now render `.mw-canvas` (the desk,
+`--bg`) holding `.mw-sheet` — 850px wide, 96px side and 64px top/bottom
+margins as the 1" rule, `--surface`, a `--radius-card` corner and
+`black @ 22%, blur 14, y 1` (much lighter on Ice, where that shadow would be a
+smudge). The document header stays on the desk above the sheet; the title, the
+editor and the footer stats are on the page.
+
+It is **one continuous canvas, not paged** — Swift's prose canvas has no page
+breaks either.
+
+The screenplay keeps its old surface on purpose. Its canvas is *paged*, with
+real page breaks at industry geometry (PARITY row 12, a later wave); dropping
+Fountain onto the prose sheet now would fake a page geometry the port does not
+have yet.
+
+The CodeMirror embed is untouched by any of this. `.mw-prose` is still the
+scroll container and the editor still grows to its content, which is the exact
+arrangement `ProseEditor.css` and `lib/cm-embed.ts` describe and the reason
+they exist — putting a scroller inside the sheet would reintroduce the
+viewport-virtualisation bug they were written to kill.
