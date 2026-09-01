@@ -49,5 +49,12 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 sha2 = "0.10"
 semver = "1"
 
+# The terminal pane (src/pty/). One crate, chosen because it is the same PTY
+# layer WezTerm ships: it wraps forkpty/openpty on Unix and ConPTY on Windows
+# behind one trait, so the pane is not a macOS-only feature the way SwiftTerm
+# made it. Nothing else is pulled in — the terminal EMULATOR is xterm.js in the
+# webview; this side only owns the pipe.
+portable-pty = "0.9"
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]

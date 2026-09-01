@@ -115,6 +115,29 @@
   pointer-events: none;
 }
 
+/* ── scene drag: slide into place (PARITY row 12) ─────────────────────────
+ *
+ * The chapter rail draws a 2px insertion bar (`.drag-over`); the scenes rail
+ * opens the gap instead, because a scene is a block of script and the writer
+ * is choosing where that block LANDS, not where a line goes. Only a transform
+ * moves — the list order is untouched until the drop rewrites the file, so
+ * nothing here can leave the rail and the document disagreeing.
+ *
+ * The transition is on `transform` alone, so it composites and never triggers
+ * layout; a rail of two hundred scenes still slides at frame rate. */
+.rail-item.rail-scene {
+  background-clip: padding-box;
+  will-change: transform;
+}
+
+.rail-item.rail-scene.sliding {
+  transition: transform var(--motion-fast, 120ms) ease;
+}
+
+.rail-item.rail-scene.dragging {
+  opacity: 0.4;
+}
+
 .rail-grip {
   color: var(--ink-mute);
   font-size: 9px;

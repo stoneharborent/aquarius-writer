@@ -35,7 +35,23 @@ export const ZOOM_MIN = 0.8;
 export const ZOOM_MAX = 1.8;
 export const ZOOM_STEP = 0.1;
 
-export type RightTab = "comments" | "versions";
+/**
+ * The right pane holds one thing at a time — Swift's model, and the reason
+ * the terminal is a tab here rather than a fourth column (SWIFT-AUDIT §1.3,
+ * §2.7). `terminal` joined on 2026-08-31; the stored value falls back to
+ * `comments` for anything unrecognised, so an older or newer build's
+ * preference can never leave the pane blank.
+ */
+export type RightTab = "comments" | "versions" | "terminal";
+
+const RIGHT_TABS: RightTab[] = ["comments", "versions", "terminal"];
+
+/** What the collapsed gutter is labelled with, per tab. */
+export const RIGHT_TAB_LABEL: Record<RightTab, string> = {
+  comments: "Comments",
+  versions: "Versions",
+  terminal: "Terminal",
+};
 
 const K = {
   sidebarWidth: "aquarius.sidebarWidth",
@@ -116,7 +132,7 @@ interface ShellState {
    * showing — put the pane away. One button, both directions.
    */
   toggleRightTab: (tab: RightTab) => void;
-  /** ⌘⌥\ — comments → versions → hidden → comments. */
+  /** ⌘⌥\ — comments → versions → terminal → hidden → comments. */
   cycleRight: () => void;
 
   setQuery: (q: string) => void;
@@ -131,7 +147,8 @@ export const useShell = create<ShellState>((set, get) => ({
   rightCollapsed: bool(K.rightCollapsed, false),
   rightTab: (() => {
     try {
-      return localStorage.getItem(K.rightTab) === "versions" ? "versions" : "comments";
+      const raw = localStorage.getItem(K.rightTab);
+      return (RIGHT_TABS as string[]).includes(raw ?? "") ? (raw as RightTab) : "comments";
     } catch { return "comments"; }
   })(),
   query: "",
@@ -188,8 +205,9 @@ export const useShell = create<ShellState>((set, get) => ({
       s.setRightCollapsed(false);
       return;
     }
-    if (s.rightTab === "comments") {
-      s.setRightTab("versions");
+    const next = RIGHT_TABS[RIGHT_TABS.indexOf(s.rightTab) + 1];
+    if (next) {
+      s.setRightTab(next);
       return;
     }
     s.setRightCollapsed(true);

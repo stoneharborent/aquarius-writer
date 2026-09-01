@@ -151,6 +151,13 @@ This can only ever build the *Mac* app. For the Linux one, see below.
 - The **MCP server** is in and switched off until you want it (Settings → MCP).
   On, an AI app on this machine can drive the vault.
 
+- There is a **terminal in the right pane** (⇧⌘J), opening in your workflow's
+  folder. It is the other half of the MCP server: this is where you run
+  `claude` so the line Settings prints has somewhere to be pasted. Several
+  named sessions, an optional command to run on launch, and a file dragged
+  from the sidebar types its full path. It is your own shell with your own
+  permissions — `docs/NOTES.md` §26 spells that out.
+
 - **Compile / Export works** (⌘E). Markdown and Fountain need nothing installed
   and always work. EPUB, Word (.docx) and PDF are produced by **pandoc**, which
   the app looks for rather than bundles — see "One thing you may need to
@@ -544,6 +551,7 @@ From `AquariusOS/docs/aquarius-writer-port-plan.md`:
 src/                     the interface (React + TypeScript)
   components/            every screen and panel
   components/window/     the app's own title bar + the Linux window buttons
+  components/terminal/   the terminal pane (xterm.js; instances live outside React)
   lib/platform.ts        "which OS am I on" — asked by the theme and the chrome
   lib/vault/             ← the important seam, see below
   lib/dev/               development-only checks (AQ_DEV_SMOKE)
@@ -558,6 +566,7 @@ src-tauri/               the desktop shell (Rust)
   src/vault/             workflow registry, workflow.json, the folder walk
   src/vault/ops.rs       the operations the UI and the MCP server both use
   src/mcp/               the MCP server: the switch, and the 15 tools
+  src/pty/               the terminal pane's shells (one pseudo-terminal each)
   src/fs_ops/            saving, trash + retention, the file watcher
   src/aux_store.rs       version history / comments / searches in .aquarius/
   capabilities/          what the app is permitted to do (kept deliberately tiny)

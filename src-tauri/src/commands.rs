@@ -795,6 +795,134 @@ pub fn updater_restart(app: AppHandle) -> R<()> {
     crate::updater::restart(&app)
 }
 
+// ── the terminal pane ────────────────────────────────────────────────────
+//
+// Five commands over `crate::pty`. The session ids are the renderer's — see
+// the note on `PtyState`. Read the module header before changing any of this;
+// the security posture is written down there, not here.
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyInfo {
+    /// The directory the shell actually started in — shown in the pane header
+    /// so "which workflow is this terminal in" is never a guess.
+    pub cwd: String,
+    /// The program that was spawned.
+    pub shell: String,
+}
+
+/// Open a PTY and spawn the writer's shell in it.
+///
+/// `workflow_id` picks the working directory: the workflow's root, which is
+/// the whole point of the pane (SWIFT-AUDIT §2.7 — "auto-cwd to the active
+/// workflow"). An unknown or unavailable workflow is not an error; the shell
+/// starts in the home directory and the returned `cwd` says so.
+#[tauri::command]
+pub fn pty_spawn(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    pty: State<'_, crate::pty::PtyState>,
+    id: String,
+    workflow_id: Option<String>,
+    startup: Option<String>,
+    cols: u16,
+    rows: u16,
+) -> R<PtyInfo> {
+    let cwd = workflow_id
+        .as_deref()
+        .and_then(|w| root_of(&state, w).ok())
+        .or_else(|| dirs_home())
+        .unwrap_or_else(|| PathBuf::from("/"));
+
+    let shell = crate::pty::default_shell();
+    let spec = crate::pty::SpawnSpec {
+        program: None,
+        args: Vec::new(),
+        cwd: Some(cwd.clone()),
+        startup,
+        cols,
+        rows,
+    };
+
+    // Both callbacks cross a thread boundary into the webview. `emit` is
+    // fire-and-forget on purpose: a dropped output event during shutdown must
+    // not panic a reader thread.
+    let out_app = app.clone();
+    let out_id = id.clone();
+    let exit_app = app.clone();
+    let exit_id = id.clone();
+
+    let session = crate::pty::Session::spawn(
+        spec,
+        move |data| {
+            let _ = out_app.emit(
+                crate::pty::OUTPUT_EVENT,
+                serde_json::json!({ "id": out_id, "data": data }),
+            );
+        },
+        move |code| {
+            let _ = exit_app.emit(
+                crate::pty::EXIT_EVENT,
+                serde_json::json!({ "id": exit_id, "code": code }),
+            );
+        },
+    )?;
+
+    pty.insert(id, session);
+    Ok(PtyInfo { cwd: cwd.to_string_lossy().to_string(), shell })
+}
+
+/// Keystrokes from xterm.js, straight through.
+#[tauri::command]
+pub fn pty_write(pty: State<'_, crate::pty::PtyState>, id: String, data: String) -> R<()> {
+    pty.with(&id, |s| s.write(&data))?
+}
+
+#[tauri::command]
+pub fn pty_resize(
+    pty: State<'_, crate::pty::PtyState>,
+    id: String,
+    cols: u16,
+    rows: u16,
+) -> R<()> {
+    pty.with(&id, |s| s.resize(cols, rows))?
+}
+
+/// Close a session. Idempotent — a tab closed after its shell already exited
+/// is the normal case, not an error.
+#[tauri::command]
+pub fn pty_kill(pty: State<'_, crate::pty::PtyState>, id: String) {
+    pty.remove(&id);
+}
+
+/// The absolute path of a vault-relative one.
+///
+/// This is what makes "drag a file from the sidebar onto the terminal" work:
+/// the tree's drag payload is a workflow-relative path (`Drafts/Ch_03.md`) and
+/// a shell needs the real thing. It goes through `resolve_in_root` like every
+/// other path command, so a crafted drag cannot name a file outside the vault.
+#[tauri::command]
+pub fn pty_resolve_path(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    rel_path: String,
+) -> R<String> {
+    let path = file_in(&state, &workflow_id, &rel_path)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// The writer's home directory, without a crate for it.
+fn dirs_home() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE").map(PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
+}
+
 // ── the log bridge ───────────────────────────────────────────────────────
 
 /// Print a line the renderer sent us to stderr.

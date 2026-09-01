@@ -1,3 +1,4 @@
+/* The read-only title-page render, used by the print-preview overlay. */
 .tp {
   font-family: var(--font-mono);
   text-align: center;
@@ -42,4 +43,130 @@
   font-size: 11px;
   color: var(--ink-mute);
   letter-spacing: 0.04em;
+}
+
+/* ── the Title Page TAB (PARITY row 12) ───────────────────────────────────
+ *
+ * The same sheet the script sits on — one page, the same tokens, the same
+ * shadow — with the six fields where a title page puts them. The page metrics
+ * come from `--sp-*` (screenplay-metrics.ts), so the title page and the script
+ * are literally the same size and follow the same zoom.
+ *
+ * Nothing here is in the CodeMirror content path, so the NOTES §1a whole-pixel
+ * rule does not bind it the way it binds the script grid — but the numbers are
+ * whole pixels anyway, because half of them ARE the page tokens.
+ */
+.tpe-canvas {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.tpe-sheet {
+  box-sizing: border-box;
+  width: var(--sp-page-w, 816px);
+  min-width: var(--sp-page-w, 816px);
+  min-height: var(--sp-page-h, 1056px);
+  padding: var(--sp-margin-t, 96px) var(--sp-margin-r, 96px)
+           var(--sp-margin-b, 96px) var(--sp-margin-l, 144px);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--line), 0 1px 14px rgba(0, 0, 0, 0.22);
+  font-family: var(--font-mono);
+  font-size: var(--sp-line, 16px);
+  line-height: var(--sp-line, 16px);
+  display: flex;
+  flex-direction: column;
+}
+
+:root[data-theme="ice"] .tpe-sheet {
+  box-shadow: 0 0 0 1px var(--line), 0 1px 14px rgba(16, 40, 66, 0.1);
+}
+
+/* Industry convention puts the title block a little above centre. */
+.tpe-block-centre {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  text-align: center;
+  padding-bottom: 10%;
+  gap: calc(var(--sp-line, 16px) * 2);
+}
+
+.tpe-field {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--sp-line, 16px);
+  line-height: calc(var(--sp-line, 16px) * 1.25);
+  padding: 4px 6px;
+  border-radius: 4px;
+  resize: none;
+}
+
+.tpe-field::placeholder {
+  color: var(--ink-mute);
+  opacity: 0.6;
+}
+
+.tpe-field:hover:not(:focus):not([readonly]) {
+  background: var(--bg-soft);
+}
+
+.tpe-field:focus {
+  outline: none;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tpe-title {
+  text-align: center;
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.tpe-credit,
+.tpe-author,
+.tpe-source {
+  text-align: center;
+}
+
+.tpe-author {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tpe-source {
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.tpe-feet {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.tpe-draft { flex: 0 1 40%; }
+
+.tpe-contact {
+  flex: 0 1 40%;
+  text-align: right;
+  white-space: pre;
+}
+
+.tpe-note {
+  max-width: var(--sp-page-w, 816px);
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-mute);
+  text-align: center;
 }

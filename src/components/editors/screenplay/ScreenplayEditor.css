@@ -1,54 +1,147 @@
-/* Grow-to-content embed: the surrounding article (.mw-prose) is the scroll
-   container. A fixed-height editor with its own internal scroller broke CM's
-   viewport virtualization here (only ~27 lines ever rendered, phantom
-   scroll height) — growing the editor and scrolling the page fixes it. */
+/* ── THE PAGED CANVAS (PARITY row 12, SWIFT-AUDIT §2.1, NOTES §27) ────────
+ *
+ * Grow-to-content embed: the surrounding article (.mw-prose) is the scroll
+ * container. A fixed-height editor with its own internal scroller broke CM's
+ * viewport virtualization here (only ~27 lines ever rendered, phantom scroll
+ * height) — growing the editor and scrolling the page fixes it.
+ *
+ * HOW THE SHEETS ARE DRAWN, and why there are no page elements.
+ *
+ * CodeMirror holds ONE continuous document; splitting it into a document per
+ * page would break undo, find, the caret, and every extension in the tree. So
+ * the pages are painted *behind* the single content box:
+ *
+ *   • `.cm-content` is exactly one page wide (`--sp-page-w`) with the real
+ *     industry margins as its padding — 1.5" left, 1" right, 1" top.
+ *   • Its `background-image` is a REPEATING gradient whose period is
+ *     `--sp-page-h + --sp-gap`: one sheet, then a strip of desk.
+ *   • Every page break line carries `--sp-fill`, the number of blank rows owed
+ *     to the foot of the page above it, and turns it into padding-top:
+ *         fill·line  +  bottom margin  +  desk gap  +  top margin
+ *     so the sheet above closes at exactly `--sp-page-h` and the next line
+ *     lands exactly one top-margin below the next sheet's edge.
+ *   • The last page is closed by `--sp-tailrows` on the host, written by the
+ *     editor from the same pagination result.
+ *
+ * The gradient therefore never has to be measured, re-measured on resize, or
+ * synchronised with CodeMirror's viewport — it is arithmetic, and the
+ * arithmetic is exact because every vertical length is an integer multiple of
+ * the line box (see `screenplay-metrics.ts`). That is also the constraint the
+ * grid in `fountain-ext.ts` exists to protect: no element padding, no
+ * per-line gap, no borders in the content path. Add 1px of vertical padding
+ * anywhere below and the text walks off the sheets.
+ */
+
+/* A block, not a flex row. The sheet is centred by `margin: 0 auto` on the
+   content, which collapses to zero when the page is wider than the pane — so
+   a too-narrow pane overflows to the RIGHT and stays scrollable. Centring
+   with flex or `justify-content` would overflow both ways and put the binding
+   margin somewhere the scrollbar cannot reach. */
 .screenplay-editor {
-  display: flex;
+  display: block;
 }
 
 .screenplay-editor .cm-editor {
-  flex: 1;
   height: auto;
+  background: transparent;
 }
 
 .screenplay-editor .cm-scroller {
   overflow: visible;
 }
 
-.screenplay-editor .cm-content {
-  /* Whole pixels: 720 - 2×12 = a 696px content box, which is what the
-     fixed-pixel Fountain indents in fountain-ext.ts are derived from. */
-  max-width: 720px;
+/* One page wide, with the real margins as padding. `background-origin` is
+   `padding-box` by default, so the gradient's zero is the top edge of page 1 —
+   which is exactly where the top margin starts. */
+.screenplay-editor .cm-editor .cm-content {
+  /* border-box: the page is 816px INCLUDING its margins, leaving a 576px text
+     column — exactly 432pt, exactly 60 Courier columns.
+
+     The page never reflows. A pane narrower than a page scrolls sideways the
+     way Final Draft does, because a reflowed column would wrap at a different
+     number of characters than `fountain-pages.ts` counted, and every page
+     below would drift off its sheet. A page is a fixed object. */
+  box-sizing: border-box;
+  /* CodeMirror's base theme puts `.cm-content` in a flex row at
+     `flex-grow: 2`, which would stretch the page to whatever the pane is wide.
+     A page has a width. `flex: none` is what makes `width` mean width here. */
+  flex: none;
+  width: var(--sp-page-w, 816px);
+  min-width: var(--sp-page-w, 816px);
   margin: 0 auto;
-  padding: 0 12px;
+  padding-top: var(--sp-margin-t, 96px);
+  padding-left: var(--sp-margin-l, 144px);
+  padding-right: var(--sp-margin-r, 96px);
+  /* Close the last sheet. `--sp-tailrows` is a unitless row count written on
+     the host by the editor; multiplying it here rather than in JS keeps the
+     value valid across a zoom without a second rounding. */
+  padding-bottom: max(0px, calc(
+    var(--sp-tailrows, 0) * var(--sp-line, 16px) + var(--sp-margin-b, 96px)
+  ));
+
+  background-color: transparent;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--surface) 0,
+    var(--surface) calc(var(--sp-page-h, 1056px) - 1px),
+    var(--line) calc(var(--sp-page-h, 1056px) - 1px),
+    var(--line) var(--sp-page-h, 1056px),
+    /* the shadow one sheet casts on the one under it */
+    rgba(0, 0, 0, 0.18) var(--sp-page-h, 1056px),
+    rgba(0, 0, 0, 0) calc(var(--sp-page-h, 1056px) + 6px),
+    transparent calc(var(--sp-page-h, 1056px) + 6px),
+    transparent calc(var(--sp-page-h, 1056px) + var(--sp-gap, 24px))
+  );
+
+  /* One shadow around the whole stack — a box-shadow cannot be repeated, and
+     the gradient above already separates the sheets. Matches `.mw-sheet`. */
+  box-shadow: 0 0 0 1px var(--line), 0 1px 14px rgba(0, 0, 0, 0.22);
 }
 
-/* Estimated page breaks — a top rule + "p. N" label on the first line of
-   each new page (line decoration; pure CSS, no widgets).
+:root[data-theme="ice"] .screenplay-editor .cm-editor .cm-content {
+  box-shadow: 0 0 0 1px var(--line), 0 1px 14px rgba(16, 40, 66, 0.1);
+}
 
-   The 22px used to be `margin-top`, which CodeMirror's height map cannot see
-   (it measures border boxes) — a page break therefore shifted every line below
-   it out from under the caret. It is folded into the padding instead; the
-   painted gap is unchanged. NOTES §1a. The ::before label is absolutely
-   positioned and so contributes no layout.
-
-   The token carries the same 32px as its fallback; per-document zoom writes a
-   rounded whole-pixel override onto the editor host (PARITY row 14). */
+/* ── the break between two pages ──────────────────────────────────────────
+ *
+ * One line decoration, no widget: widget decorations wedged CM's viewport
+ * updates in this nested-scroll embed. The padding is the whole mechanism —
+ * see the header comment. `margin-top: 0` is not decoration: NOTES §1a, a
+ * margin is invisible to CodeMirror's height map and moves the caret.
+ */
 .cm-aq-pagebreak-line {
-  border-top: 1px solid var(--line);
   margin-top: 0;
-  padding-top: var(--fnt-pagebreak-pt, 32px) !important;
+  /* `--sp-fill` is SIGNED (fountain-pages.ts rule 7): a page that absorbed a
+     trailing blank overhangs its body area, and the padding under it shrinks
+     by exactly those rows so the next page's first line still lands one top
+     margin below the next sheet's edge. `max(0px, …)` is the floor for the
+     pathological case — a single source line taller than a whole page. */
+  padding-top: max(0px, calc(
+    var(--sp-fill, 0) * var(--sp-line, 16px)
+    + var(--sp-margin-b, 96px)
+    + var(--sp-gap, 24px)
+    + var(--sp-margin-t, 96px)
+  )) !important;
   position: relative;
 }
+
+/* The page number, 0.5" down from the new sheet's top edge and flush with the
+   right text margin — which is where `right: 0` already is, because a line
+   element spans the text column. Absolutely positioned, so it contributes no
+   layout and cannot disturb the grid. */
 .cm-aq-pagebreak-line::before {
   content: attr(data-page);
   position: absolute;
-  top: -8px;
   right: 0;
-  background: var(--surface);
-  padding: 0 6px;
+  top: calc(
+    var(--sp-fill, 0) * var(--sp-line, 16px)
+    + var(--sp-margin-b, 96px)
+    + var(--sp-gap, 24px)
+    + var(--sp-pagenum-top, 48px)
+  );
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--sp-line, 16px);
+  line-height: var(--sp-line, 16px);
   color: var(--ink-mute);
-  letter-spacing: 0.04em;
+  pointer-events: none;
 }

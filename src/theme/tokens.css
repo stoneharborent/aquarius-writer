@@ -63,15 +63,37 @@
    *   --prose-para-gap  0.55em    =  9.35  →  9px   (as PADDING, not margin —
    *                                                  margins are outside the
    *                                                  border box CM measures)
-   *   --screenplay-*    14 × 1.55 = 21.7   → 22px
    *
    * `--prose-leading` is kept for chrome that wants the ratio; nothing inside
    * `.cm-content` may use it. */
   --prose-line-px: 28px;
   --prose-para-gap: 9px;
-  --screenplay-size: 14px;
-  --screenplay-line-px: 22px;
-  --screenplay-para-gap: 2px;
+
+  /* ── the screenplay page (PARITY row 12, NOTES §27) ────────────────────
+   * A screenplay is not a prose surface with a mono font on it — it is a
+   * 612×792pt sheet with a 12pt Courier grid, and the paged canvas paints
+   * real sheets from these numbers. CSS defines 1pt as 4/3px, so 12pt is a
+   * 16px line box, set solid (type size == line box, like print), and every
+   * vertical length below is an integer multiple of it: the page is 66 lines,
+   * the margins 6, the body exactly 54.
+   *
+   * `screenplayMetrics()` in `src/lib/markdown/screenplay-metrics.ts` is the
+   * single source of these values; per-document zoom rewrites all of them,
+   * scoped to one editor's host, and the numbers here are what it computes at
+   * 100%. Do not hand-edit one without the others — `fountain-pages.ts`
+   * counts rows against the same geometry, and the sheets are drawn by
+   * arithmetic rather than measurement. */
+  --screenplay-size: 16px;
+  --screenplay-line-px: 16px;
+  --sp-line: 16px;
+  --sp-page-w: 816px;   /* 612pt */
+  --sp-page-h: 1056px;  /* 792pt = 6 + 54 + 6 lines */
+  --sp-margin-t: 96px;  /* 72pt */
+  --sp-margin-b: 96px;  /* 72pt */
+  --sp-margin-l: 144px; /* 108pt — the 1.5" binding margin */
+  --sp-margin-r: 96px;  /* 72pt */
+  --sp-gap: 24px;       /* desk showing between two sheets */
+  --sp-pagenum-top: 48px; /* 36pt down from the sheet's top edge */
 
   /* Radius + motion, declared for every theme.
      AquariusOS overrides them with the tokens.md values (7/9/12/16px,

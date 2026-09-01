@@ -33,14 +33,21 @@
 }
 
 .sp-line { white-space: pre-wrap; word-wrap: break-word; min-height: 12px; }
-.sp-scene { padding: 24px 72px 0 108px; font-weight: 700; }
-.sp-action, .sp-blank { padding: 12px 72px 0 108px; }
-.sp-action + .sp-action, .sp-blank + .sp-blank,
-.sp-action + .sp-blank, .sp-blank + .sp-action { padding-top: 0; }
-.sp-shot { padding: 24px 72px 0 108px; }
-.sp-character { padding: 12px 90px 0 252px; font-weight: 700; }
+
+/* Set solid on the 12pt grid, with NO element padding.
+   PARITY row 12: `fountain-pages.ts` counts one source line as one grid row
+   and adds nothing for element spacing, because Fountain's blank lines ARE the
+   spacing and they are already in the document. The padding-tops this block
+   used to carry (24px before a scene, 12px before action and character) were
+   the visual half of the same double-count the old `SPACE_BEFORE` table was
+   the arithmetic half of — with them here, a page of 54 counted rows painted
+   longer than a page and ran off the sheet. */
+.sp-scene { padding: 0 72px 0 108px; font-weight: 700; }
+.sp-action, .sp-blank { padding: 0 72px 0 108px; }
+.sp-shot { padding: 0 72px 0 108px; }
+.sp-character { padding: 0 90px 0 252px; font-weight: 700; }
 .sp-paren { padding: 0 216px; color: #333; }
 .sp-dialogue { padding: 0 180px; }
-.sp-transition { padding: 12px 101px 0 396px; text-align: right; font-weight: 700; }
-.sp-section { padding: 12px 72px 0 108px; color: var(--accent); font-weight: 700; }
+.sp-transition { padding: 0 101px 0 396px; text-align: right; font-weight: 700; }
+.sp-section { padding: 0 72px 0 108px; color: var(--accent); font-weight: 700; }
 .sp-synopsis { padding: 0 72px 0 108px; font-style: italic; color: #555; }

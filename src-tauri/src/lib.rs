@@ -21,6 +21,7 @@ mod compile;
 mod fs_ops;
 mod mcp;
 mod model;
+mod pty;
 mod sessions;
 mod state;
 mod testutil;
@@ -43,6 +44,10 @@ pub fn run() {
             let registry = vault::registry::load(&config_dir);
             app.manage(AppState::new(config_dir, registry));
             app.manage(mcp::McpState::default());
+            // The terminal pane's live PTYs. Empty at launch by design: a
+            // session's config is persisted in the renderer, the process is
+            // not, so nothing survives a quit (pty/mod.rs).
+            app.manage(pty::PtyState::default());
             // Reads the AquariusOS launcher's environment once. Off that OS it
             // finds nothing and the whole updater stays asleep.
             app.manage(updater::UpdaterState::from_process());
@@ -57,7 +62,11 @@ pub fn run() {
             // ours to close politely — and on a platform where the app can
             // outlive its window, an orphaned open port would be a surprise.
             if matches!(event, tauri::WindowEvent::Destroyed) {
-                mcp::stop(&window.app_handle().clone());
+                let app = window.app_handle().clone();
+                mcp::stop(&app);
+                // Same reason, louder: an orphaned shell is a live process
+                // with the writer's privileges and no window attached to it.
+                app.state::<pty::PtyState>().clear();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -110,6 +119,11 @@ pub fn run() {
             commands::updater_check,
             commands::updater_install,
             commands::updater_restart,
+            commands::pty_spawn,
+            commands::pty_write,
+            commands::pty_resize,
+            commands::pty_kill,
+            commands::pty_resolve_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aquarius Writer");

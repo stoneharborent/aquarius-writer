@@ -1,0 +1,278 @@
+/* The terminal pane. Same shell as the Comments/Versions pane it shares a slot
+   with: no left border (the splitter's hairline is the edge), `--bg` behind the
+   chrome, `--surface` under the screen itself. Every colour is a token — the
+   xterm palette is read from the same variables at runtime (registry.ts), so
+   the terminal follows Ice / Midnight / AquariusOS with the rest of the app. */
+
+.tm {
+  display: flex;
+  flex-direction: column;
+  flex: 1;               /* it is a child of `.rp`'s column, under its tab row */
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+  position: relative;
+}
+
+/* ── tabs ────────────────────────────────────────────────────────────────── */
+
+.tm-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.tm-tabstrip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tm-tabstrip::-webkit-scrollbar { display: none; }
+
+.tm-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 6px 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.tm-tab:hover { color: var(--ink); }
+.tm-tab.on {
+  background: var(--bg-soft);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.tm-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The connected dot, straight from SWIFT-AUDIT §2.7. Three honest states and
+   no fourth: idle (nothing spawned), live (a shell is attached), exited. */
+.tm-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ink-mute);
+}
+.tm-dot-live { background: var(--success); }
+.tm-dot-exited { background: var(--danger); }
+
+.tm-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  opacity: 0;
+}
+.tm-tab:hover .tm-tab-close,
+.tm-tab.on .tm-tab-close { opacity: 1; }
+.tm-tab-close:hover { background: var(--chrome-hover); color: var(--ink); }
+
+.tm-rename {
+  width: 90px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  outline: none;
+}
+
+.tm-spacer { flex: 1; }
+
+.tm-font { display: inline-flex; gap: 2px; }
+
+.tm-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink-mute);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease),
+              color var(--motion-fast) var(--ease);
+}
+.tm-icon:hover:not(:disabled) { background: var(--bg-soft); color: var(--ink); }
+.tm-icon.on { background: var(--bg-soft); border-color: var(--line); color: var(--ink); }
+.tm-icon:disabled { opacity: 0.35; cursor: default; }
+
+/* ── the status line ─────────────────────────────────────────────────────── */
+
+.tm-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  border-bottom: 1px solid var(--line);
+}
+
+.tm-cwd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;          /* keep the tail of a long path, not its head */
+  text-align: left;
+}
+
+.tm-relaunch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tm-relaunch:hover { color: var(--ink); border-color: var(--accent); }
+
+.tm-error {
+  margin: 0;
+  padding: 6px 10px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--danger);
+  border-bottom: 1px solid var(--line);
+}
+
+/* ── the startup-command panel ───────────────────────────────────────────── */
+
+.tm-gear {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--line);
+}
+
+.tm-gear-label {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+.tm-gear-input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 5px 8px;
+  outline: none;
+}
+.tm-gear-input:focus { border-color: var(--accent); }
+
+.tm-gear-hint {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink-mute);
+}
+
+.tm-gear-row { display: flex; gap: 6px; }
+
+.tm-gear-btn {
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tm-gear-btn.ghost { background: transparent; color: var(--ink-soft); }
+.tm-gear-btn.ghost:hover { color: var(--ink); }
+
+/* ── the screens ─────────────────────────────────────────────────────────── */
+
+.tm-bodies {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Every session's screen is mounted; only the active one is laid out. It is
+   `display: none` rather than `visibility: hidden` on purpose — a hidden-but
+   -laid-out xterm still measures, and `safeFit` would then resize the PTY of a
+   tab nobody is looking at. */
+.tm-body {
+  position: absolute;
+  inset: 0;
+  padding: 6px 4px 6px 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.tm-hidden { display: none; }
+
+/* The drop ring: a file dragged out of the sidebar lands here as its path. */
+.tm-dropping {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+  background: var(--accent-soft);
+}
+
+.tm-xterm { width: 100%; height: 100%; }
+
+/* xterm draws its own scrollbar track; keep it out of the way of the theme. */
+.tm-body .xterm-viewport {
+  background: transparent !important;
+  scrollbar-width: thin;
+}
+.tm-body .xterm .xterm-screen { will-change: transform; }

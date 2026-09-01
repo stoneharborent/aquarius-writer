@@ -6,8 +6,11 @@ import { fountainDecorations, fountainTheme } from "@/lib/markdown/fountain-ext"
 import {
   fountainSmartTyping,
   pageBreaks,
+  paginate,
   type FountainElement,
+  type Pagination,
 } from "@/lib/markdown/fountain-smart";
+import { screenplayCompletion } from "@/lib/markdown/fountain-complete";
 import { focusZoomPane, registerZoomPane } from "@/lib/markdown/editor-zoom";
 import { formatBus } from "@/lib/format/formatBus";
 import { watchAncestorScroll } from "@/lib/cm-embed";
@@ -38,15 +41,35 @@ export function ScreenplayEditor({
   const onPageCountRef = useRef(onPageCount);
   onPageCountRef.current = onPageCount;
 
+  /**
+   * Close the last sheet.
+   *
+   * The paged canvas draws every page as one period of a repeating gradient,
+   * so the final page has to be padded out to a full page height or it stops
+   * mid-sheet. `--sp-tailrows` is the blank row count the pagination left over;
+   * the CSS multiplies it by the line box (see ScreenplayEditor.css), which is
+   * what keeps it correct across a zoom without a second rounding here.
+   */
+  function applyPagination(p: Pagination) {
+    host.current?.style.setProperty("--sp-tailrows", String(p.tailRows));
+    onPageCountRef.current?.(p.pageCount);
+  }
+  const applyRef = useRef(applyPagination);
+  applyRef.current = applyPagination;
+
   useEffect(() => {
     if (!host.current) return;
     const state = EditorState.create({
       doc: value,
       extensions: [
         history(),
-        // Smart typing first: its Enter/Tab/⌘n bindings outrank the defaults.
+        // Completion first: its keymap is Prec.highest, so Enter accepts a
+        // highlighted character name and otherwise falls straight through to
+        // the Fountain rhythm below.
+        screenplayCompletion(),
+        // Smart typing next: its Enter/Tab/⌘n bindings outrank the defaults.
         fountainSmartTyping((el) => onElementRef.current?.(el)),
-        pageBreaks((n) => onPageCountRef.current?.(n)),
+        pageBreaks((p) => applyRef.current(p)),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.lineWrapping,
         fountainDecorations(),
@@ -62,11 +85,15 @@ export function ScreenplayEditor({
     });
     const view = new EditorView({ state, parent: host.current });
     viewRef.current = view;
+    // The tail padding has to exist before the first paint, not after the
+    // first edit, or the document opens with its last page cut off.
+    applyPagination(paginate(value.split("\n")));
     if (path && !readOnly) formatBus.register(path, view);
     const unwatchScroll = watchAncestorScroll(view);
     const focusPath = path;
     // The screenplay zooms its whole grid — type, line box, the element
-    // indents — not just the font, so a page stays a page at every step.
+    // indents, and now the page itself — not just the font, so a page stays a
+    // page at every step.
     const unzoom = focusPath
       ? registerZoomPane({ path: focusPath, kind: "screenplay", host: host.current, view })
       : undefined;
@@ -106,12 +133,31 @@ export function ScreenplayEditor({
     view.focus();
   }
 
+  /**
+   * Re-measure after the editor has been `display: none` and come back.
+   *
+   * The Title Page tab hides this pane rather than unmounting it (unmounting
+   * would take the undo history and the caret with it). Everything in a hidden
+   * subtree measures as zero, so CodeMirror's height map — which is built from
+   * `getBoundingClientRect` — is worthless the moment the pane returns, and a
+   * click would land nowhere. That is NOTES §1a's failure mode arriving by a
+   * new road, so the pane that un-hides it has to say so.
+   */
+  function remeasure() {
+    viewRef.current?.requestMeasure();
+  }
+
   // Expose imperatively via a ref hook would be cleaner; the scenes rail uses
   // the (from) position so the parent passes it through via a callback prop.
   // We attach scrollTo to the DOM node for the rail to access without ceremony.
   useEffect(() => {
     if (host.current) {
-      (host.current as HTMLDivElement & { __screenplayScroll?: typeof scrollTo }).__screenplayScroll = scrollTo;
+      const node = host.current as HTMLDivElement & {
+        __screenplayScroll?: typeof scrollTo;
+        __screenplayMeasure?: typeof remeasure;
+      };
+      node.__screenplayScroll = scrollTo;
+      node.__screenplayMeasure = remeasure;
     }
   });
 

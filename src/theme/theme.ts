@@ -1,4 +1,8 @@
 import { detectPlatform } from "@/lib/platform";
+import {
+  BASE_LINE_PX as SP_BASE_LINE,
+  screenplayMetrics,
+} from "@/lib/markdown/screenplay-metrics";
 
 export type ThemeName = "ice" | "midnight" | "aquarius";
 export type AccentName = "blue" | "indigo" | "turquoise" | "aquamarine";
@@ -220,25 +224,43 @@ const PROSE_SCALED: ReadonlyArray<readonly [string, number]> = [
 const PROSE_BASE_VARS = ["--prose-size", "--prose-line-px", "--prose-para-gap"] as const;
 
 /**
- * The screenplay grid. Every value is the whole pixel v0.3.1 rounded it to,
- * including the horizontal indents — those do not affect the height map, but a
- * dialogue block that stayed at 97px while its type grew 60% would stop being
- * a screenplay page.
+ * The screenplay grid, since PARITY row 12 (NOTES §27).
+ *
+ * This one is NOT a list of constants to multiply. A screenplay page is a
+ * geometry, and its parts have to stay consistent with each other or the paged
+ * canvas comes apart: the sheets are painted as a repeating background, so
+ * `page height == top margin + 54 × line + bottom margin` has to hold exactly
+ * at every rung of the ladder, not approximately.
+ *
+ * So the zoom scales ONE number — the line box — and `screenplayMetrics`
+ * derives the rest from it. Every vertical point value in the format is a
+ * multiple of 12, so every derived vertical length is an exact integer
+ * multiple of the (integer) line box. Nothing is rounded twice, and nothing
+ * can round out of agreement with anything else.
  */
-const SCREENPLAY_SCALED: ReadonlyArray<readonly [string, number]> = [
-  ["--screenplay-size", 14],
-  ["--screenplay-line-px", 22],
-  ["--screenplay-para-gap", 2],
-  ["--fnt-scene-pt", 18],
-  ["--fnt-scene-pb", 2],
-  ["--fnt-character-pt", 9],
-  ["--fnt-character-indent", 181],
-  ["--fnt-paren-indent", 139],
-  ["--fnt-dialogue-indent", 97],
-  ["--fnt-transition-pt", 15],
-  ["--fnt-section-pt", 15],
-  ["--fnt-pagebreak-pt", 32],
-];
+function screenplayVars(zoom: number): Array<readonly [string, string]> {
+  const m = screenplayMetrics(Math.max(1, Math.round(SP_BASE_LINE * zoom)));
+  return [
+    ["--screenplay-size", `${m.line}px`],
+    ["--screenplay-line-px", `${m.line}px`],
+    ["--sp-line", `${m.line}px`],
+    ["--sp-page-w", `${m.pageW}px`],
+    ["--sp-page-h", `${m.pageH}px`],
+    ["--sp-margin-t", `${m.marginT}px`],
+    ["--sp-margin-b", `${m.marginB}px`],
+    ["--sp-margin-l", `${m.marginL}px`],
+    ["--sp-margin-r", `${m.marginR}px`],
+    ["--sp-gap", `${m.gap}px`],
+    ["--sp-pagenum-top", `${m.pagenumTop}px`],
+    ["--fnt-character-indent", `${m.charIndent}px`],
+    ["--fnt-character-pr", `${m.charPr}px`],
+    ["--fnt-paren-indent", `${m.parenIndent}px`],
+    ["--fnt-paren-pr", `${m.parenPr}px`],
+    ["--fnt-dialogue-indent", `${m.dialogueIndent}px`],
+    ["--fnt-dialogue-pr", `${m.dialoguePr}px`],
+    ["--fnt-transition-pr", `${m.transitionPr}px`],
+  ];
+}
 
 /**
  * Write (or clear) one editor's zoom on its host element.
@@ -249,15 +271,29 @@ const SCREENPLAY_SCALED: ReadonlyArray<readonly [string, number]> = [
  */
 export function applyEditorZoom(el: HTMLElement, kind: EditorZoomKind, zoom: number) {
   const s = el.style;
-  const scaled = kind === "screenplay" ? SCREENPLAY_SCALED : PROSE_SCALED;
 
-  if (zoom === 1) {
-    for (const [name] of scaled) s.removeProperty(name);
-    if (kind === "prose") for (const name of PROSE_BASE_VARS) s.removeProperty(name);
+  if (kind === "screenplay") {
+    const vars = screenplayVars(zoom);
+    if (zoom === 1) {
+      // The 100% values are the global tokens in tokens.css; removing the
+      // overrides restores them, so an unzoomed page is the cascade the app
+      // ships with rather than a restatement of it.
+      for (const [name] of vars) s.removeProperty(name);
+      return;
+    }
+    for (const [name, value] of vars) s.setProperty(name, value);
     return;
   }
 
-  if (kind === "prose") {
+  const scaled = PROSE_SCALED;
+
+  if (zoom === 1) {
+    for (const [name] of scaled) s.removeProperty(name);
+    for (const name of PROSE_BASE_VARS) s.removeProperty(name);
+    return;
+  }
+
+  {
     // Composes with the sliders: the zoom multiplies the *body size*, and the
     // leading ratio is then applied to that product and rounded once.
     const m = proseMetrics(proseBase.size * zoom, proseBase.leading);

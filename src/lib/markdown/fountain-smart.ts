@@ -14,33 +14,26 @@ import {
   type TransactionSpec,
 } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { classify, type FountainLineKind } from "@/lib/fountain";
+import { type FountainLineKind } from "@/lib/fountain";
+import {
+  classifyLines,
+  isShotLine,
+  paginate,
+  type Pagination,
+} from "@/lib/markdown/fountain-pages";
+
+// The classifier helpers and the page model moved to `fountain-pages.ts` when
+// the estimate became a real pagination engine (PARITY row 12). They are
+// re-exported here because half the app imports them from this module, and a
+// rename across six files buys nothing.
+export { classifyLines, isShotLine, estimatePages, paginate } from "@/lib/markdown/fountain-pages";
+export type { PageEstimate, Pagination, Page } from "@/lib/markdown/fountain-pages";
 
 export type FountainElement =
   | "scene" | "action" | "character" | "parenthetical"
   | "dialogue" | "transition" | "shot";
 
 const CUE_KINDS: FountainLineKind[] = ["character", "parenthetical", "dialogue"];
-
-export function isShotLine(line: string): boolean {
-  let u = line.trim().toUpperCase();
-  if (u.startsWith("!")) u = u.slice(1); // see through a forced-action mark
-  return ["CLOSE ON", "ANGLE ON", "POV", "INSERT", "ESTABLISHING SHOT"]
-    .some((p) => u.startsWith(p));
-}
-
-/** Classify every line of the doc (classification is backward-looking only). */
-export function classifyLines(lines: readonly string[]): FountainLineKind[] {
-  const kinds: FountainLineKind[] = new Array(lines.length);
-  let prev: FountainLineKind = "blank";
-  let prevPrev: FountainLineKind = "blank";
-  for (let i = 0; i < lines.length; i++) {
-    kinds[i] = classify(lines[i], prev, prevPrev);
-    prevPrev = prev;
-    prev = kinds[i];
-  }
-  return kinds;
-}
 
 export function effectiveElement(
   lines: readonly string[],
@@ -322,49 +315,20 @@ export function fountainSmartTyping(
   ];
 }
 
-// ── page estimate (feature parity for page count / breaks, not layout) ────
+// ── the page model, pushed out to React ───────────────────────────────────
 
-/** Courier 12 at industry margins: chars-per-line by element. */
-const COLS: Record<string, number> = {
-  "scene-heading": 60, action: 60, character: 38, parenthetical: 25,
-  dialogue: 35, transition: 15, section: 60, synopsis: 60, blank: 60,
-};
-const SPACE_BEFORE: Record<string, number> = {
-  "scene-heading": 2, action: 1, character: 1, transition: 1,
-};
-const LINES_PER_PAGE = 54;
-
-export interface PageEstimate {
-  pageCount: number;
-  /** 0-based line indices that START a new page (page 2+). */
-  breaks: number[];
-}
-
-export function estimatePages(lines: readonly string[]): PageEstimate {
-  const kinds = classifyLines(lines);
-  const breaks: number[] = [];
-  let y = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const k = kinds[i];
-    const shot = k === "action" && isShotLine(lines[i]);
-    const sb = i === 0 ? 0 : (shot ? 2 : SPACE_BEFORE[k] ?? 0);
-    const rows = Math.max(1, Math.ceil((lines[i].length || 1) / (COLS[k] ?? 60)));
-    if (y + sb + rows > LINES_PER_PAGE && y > 0) {
-      breaks.push(i);
-      y = rows;
-    } else {
-      y += sb + rows;
-    }
-  }
-  return { pageCount: breaks.length + 1, breaks };
-}
-
-/** Live page count for the footer. The visible page-break rules render as
- * line decorations inside `fountainDecorations` (fountain-ext.ts) — widget
- * decorations wedged CM's viewport updates in this nested-scroll embed. */
-export function pageBreaks(onPageCount?: (n: number) => void): Extension {
+/**
+ * Report the live pagination to the host on every document change.
+ *
+ * The visible page-break rules render as **line decorations** inside
+ * `fountainDecorations` (fountain-ext.ts) — widget decorations wedged CM's
+ * viewport updates in this nested-scroll embed — and the sheets themselves are
+ * a repeating background, so nothing here paints. What the host needs is the
+ * page count for the footer and `tailRows` for the canvas's bottom padding.
+ */
+export function pageBreaks(onPages?: (p: Pagination) => void): Extension {
   return EditorView.updateListener.of((u) => {
-    if (!onPageCount || !u.docChanged) return;
-    onPageCount(estimatePages(u.state.doc.toString().split("\n")).pageCount);
+    if (!onPages || !u.docChanged) return;
+    onPages(paginate(u.state.doc.toString().split("\n")));
   });
 }

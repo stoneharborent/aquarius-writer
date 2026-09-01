@@ -57,6 +57,14 @@ export default function App() {
     { id: "sidebar", combo: "⌘\\", group: "view", label: "Show / hide the file sidebar",
       match: (e) => mod(e) && !e.altKey && e.key === "\\",
       run: () => shell().toggleSidebar() },
+    /* The terminal gets its own key rather than only a place in the ⌘⌥\ cycle:
+       it is the one right-pane tab a writer reaches for mid-thought, and
+       cycling past Comments and Versions to get there is three presses. ⌘⇧J is
+       free in this app (nothing else binds J at all) and is the shortcut the
+       writer already has for a terminal drawer in VS Code. */
+    { id: "terminal", combo: "⇧⌘J", group: "view", label: "Terminal",
+      match: (e) => mod(e) && e.shiftKey && e.key.toLowerCase() === "j",
+      run: () => shell().toggleRightTab("terminal") },
     { id: "rightpane", combo: "⌘⌥\\", group: "view", label: "Cycle the right pane",
       match: (e) => mod(e) && e.altKey && (e.key === "\\" || e.code === "Backslash"),
       run: () => shell().cycleRight() },

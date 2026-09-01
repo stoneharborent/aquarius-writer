@@ -8,7 +8,7 @@ import { useEffect, useRef } from "react";
 import { EditorToolbar } from "@/components/editors/EditorToolbar";
 import { PanelRightIcon, SearchIcon, SidebarIcon } from "@/icons";
 import { useOverlay } from "@/state/overlayStore";
-import { useShell } from "@/state/shellStore";
+import { useShell, type RightTab } from "@/state/shellStore";
 import { useToolbar } from "@/state/toolbarStore";
 import "./TopBar.css";
 
@@ -36,7 +36,7 @@ export function TopBar() {
     search.current?.select();
   }, [focusTick]);
 
-  const paneOn = (tab: "comments" | "versions") => !rightCollapsed && rightTab === tab;
+  const paneOn = (tab: RightTab) => !rightCollapsed && rightTab === tab;
 
   return (
     <div className="topbar">
@@ -111,6 +111,14 @@ export function TopBar() {
           onClick={() => toggleRightTab("versions")}
         >
           <span className="tb-btn-text">Versions</span>
+        </button>
+        <button
+          className={`tb-btn${paneOn("terminal") ? " on" : ""}`}
+          title="Terminal (⌘⇧J)"
+          aria-pressed={paneOn("terminal")}
+          onClick={() => toggleRightTab("terminal")}
+        >
+          <span className="tb-btn-text">Terminal</span>
         </button>
         <button
           className="tb-btn tb-icon-only"

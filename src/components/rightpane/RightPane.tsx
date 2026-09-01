@@ -1,10 +1,13 @@
-// Right pane — Comments + Versions tabs. Collapsible.
+// Right pane — Comments · Versions · Terminal. Collapsible.
 //
-// There is no third tab. The embedded AI panel this pane once made room for
-// was cut in Stage 5 (Royce, 2026-08-25: no embedded agent); external AI apps
-// drive the vault through the MCP server instead — see src-tauri/src/mcp/.
+// The third tab is NOT the embedded AI panel this pane once made room for:
+// that was cut in Stage 5 (Royce, 2026-08-25: no embedded agent). The terminal
+// is the opposite arrangement — the writer runs whatever agent they like in
+// their own shell, and it reaches the vault through the MCP server
+// (src-tauri/src/mcp/). See components/terminal/TerminalPane.tsx.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PanelRightIcon } from "@/icons";
+import { TerminalPane } from "@/components/terminal/TerminalPane";
 import { useVault } from "@/state/vaultStore";
 import { useEditor } from "@/state/editorStore";
 import { useOverlay } from "@/state/overlayStore";
@@ -43,13 +46,20 @@ export function RightPane() {
           onClick={() => setRightTab("comments")}>Comments</button>
         <button className={`rp-tab${tab === "versions" ? " on" : ""}`}
           onClick={() => setRightTab("versions")}>Versions</button>
+        <button className={`rp-tab${tab === "terminal" ? " on" : ""}`}
+          onClick={() => setRightTab("terminal")}>Terminal</button>
         <span className="rp-spacer" />
         <button className="rp-collapse" title="Hide pane (⌘⌥\)"
           onClick={() => setRightCollapsed(true)}>
           <PanelRightIcon size={14} />
         </button>
       </header>
-      {!current || !selectedPath ? (
+      {/* The terminal is not about a document, so it renders before the
+          "open a document" guard — a shell in the workflow's root is useful
+          with nothing selected at all. */}
+      {tab === "terminal" ? (
+        <TerminalPane />
+      ) : !current || !selectedPath ? (
         <p className="rp-idle">Open a document to see its {tab}.</p>
       ) : tab === "comments" ? (
         <CommentsTab wf={current.id} path={selectedPath} />

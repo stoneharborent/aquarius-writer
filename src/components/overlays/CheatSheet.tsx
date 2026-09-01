@@ -36,7 +36,8 @@ const GROUPS: { name: string; rows: ShortcutRow[] }[] = [
     name: "View",
     rows: [
       { combo: "⌘\\", label: "Toggle sidebar" },
-      { combo: "⌘⌥\\", label: "Cycle the right pane (comments → versions → hidden)" },
+      { combo: "⌘⌥\\", label: "Cycle the right pane (comments → versions → terminal → hidden)" },
+      { combo: "⇧⌘J", label: "Terminal — the pane you run `claude` in" },
       { combo: "⌘⇧L", label: "Toggle theme (Ice / Midnight)" },
       { combo: "⌘+", label: "Zoom this document in (remembered per document)" },
       { combo: "⌘−", label: "Zoom this document out" },

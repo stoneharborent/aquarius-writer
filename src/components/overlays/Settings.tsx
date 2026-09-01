@@ -369,8 +369,10 @@ function McpTab() {
         <div className="st-section">
           <h3>Connect Claude Code</h3>
           <p className="st-help">
-            Run this once in a terminal. Claude Code remembers it; the app has
-            to be running for the connection to work.
+            Run this once in a terminal — including the app's own, in the right
+            pane (⇧⌘J), which already opens in the workflow's folder. Claude
+            Code remembers it; the app has to be running for the connection to
+            work.
           </p>
           <div className="st-row">
             <code className="st-code">{status.claudeCommand}</code>

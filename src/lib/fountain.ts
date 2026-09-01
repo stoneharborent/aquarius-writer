@@ -73,35 +73,156 @@ export function classify(line: string, prev: FountainLineKind, prevPrev: Fountai
   return "action";
 }
 
-/** Split off the title page block (everything up to the first blank line is
- * the title page if any line matches the title-page key pattern). */
-export function splitTitlePage(text: string): { titlePage: TitlePage; body: string } {
+/* ── the Fountain title block ─────────────────────────────────────────────
+ *
+ * PARITY row 12 / SWIFT-AUDIT §2.1: the Title Page is "a second tab on the
+ * same .fountain file (Title/Credit/Author/Source/Draft date/Contact, written
+ * into the Fountain title block)". No frontmatter is involved and none is
+ * introduced — a `.fountain` file's metadata is its own title block, and the
+ * editor writes it through the same buffer and the same guarded save path as
+ * the script.
+ *
+ * Two rules the writer never sees but would notice if they broke:
+ *
+ *   • **Unknown keys survive.** Fountain's spec allows any `Key: value`, and
+ *     writers use `Notes:`, `Copyright:`, `Revision:`, `WGA:`. The form edits
+ *     six fields; everything else round-trips in its original position with
+ *     its original spelling.
+ *   • **A field is removed by emptying it**, not by writing an empty line.
+ *     An `Author:` with nothing after it is a title page with a blank line on
+ *     it, which is not what the writer meant.
+ */
+
+/** The six fields the Title Page tab edits, in the order it lays them out. */
+export const TITLE_FIELDS = [
+  "Title", "Credit", "Author", "Source", "Draft date", "Contact",
+] as const;
+export type TitleField = (typeof TITLE_FIELDS)[number];
+
+/** One `Key: value` line of the block, in file order. */
+export type TitleEntry = [key: string, value: string];
+
+export interface TitleBlock {
+  /** Every entry, in the order the file has them. */
+  entries: TitleEntry[];
+  /** Characters of the source the block occupies, blank separator included. */
+  length: number;
+  /** False when the file simply has no title block. */
+  present: boolean;
+}
+
+const TITLE_KEY_RE = /^([A-Za-z][A-Za-z ]*[A-Za-z])\s*:\s?(.*)$/;
+
+/** Match a written key against a known field, ignoring case and spacing. */
+export function canonicalTitleField(key: string): TitleField | null {
+  const k = key.trim().toLowerCase();
+  return TITLE_FIELDS.find((f) => f.toLowerCase() === k) ?? null;
+}
+
+/**
+ * Read the title block off the top of a Fountain file.
+ *
+ * A continuation line (indented, or simply not a `Key:` line) belongs to the
+ * key above it and is joined with a newline rather than a space — a `Contact:`
+ * is usually an address, and flattening it loses the address.
+ */
+export function parseTitleBlock(text: string): TitleBlock {
   const lines = text.split("\n");
   let i = 0;
   while (i < lines.length && lines[i].trim() === "") i++;
-  if (i >= lines.length) return { titlePage: {}, body: text };
-  if (!TITLE_PAGE_KEYS.test(lines[i])) return { titlePage: {}, body: text };
-
-  const headerLines: string[] = [];
-  while (i < lines.length && lines[i].trim() !== "") {
-    headerLines.push(lines[i]);
-    i++;
+  if (i >= lines.length || !TITLE_PAGE_KEYS.test(lines[i])) {
+    return { entries: [], length: 0, present: false };
   }
-  // skip the blank separator
-  while (i < lines.length && lines[i].trim() === "") i++;
 
-  const titlePage: TitlePage = {};
-  let currentKey: string | null = null;
-  for (const line of headerLines) {
-    const m = /^([A-Za-z][A-Za-z ]+):\s*(.*)$/.exec(line);
+  const head: string[] = [];
+  while (i < lines.length && lines[i].trim() !== "") { head.push(lines[i]); i++; }
+  while (i < lines.length && lines[i].trim() === "") i++; // the blank separator
+
+  const entries: TitleEntry[] = [];
+  for (const line of head) {
+    const m = TITLE_KEY_RE.exec(line);
     if (m) {
-      currentKey = m[1];
-      titlePage[currentKey] = m[2].trim();
-    } else if (currentKey) {
-      titlePage[currentKey] = (titlePage[currentKey] ?? "") + " " + line.trim();
+      entries.push([m[1], m[2].trim()]);
+    } else if (entries.length) {
+      const last = entries[entries.length - 1];
+      last[1] = last[1] ? `${last[1]}\n${line.trim()}` : line.trim();
     }
   }
-  return { titlePage, body: lines.slice(i).join("\n") };
+
+  const body = lines.slice(i).join("\n");
+  return { entries, length: text.length - body.length, present: true };
+}
+
+/** Render entries back to Fountain. Empty values are dropped, not emitted. */
+export function serializeTitleBlock(entries: readonly TitleEntry[]): string {
+  const out: string[] = [];
+  for (const [key, value] of entries) {
+    if (!value.trim()) continue;
+    const [first, ...rest] = value.split("\n");
+    out.push(`${key}: ${first}`.trimEnd());
+    // Fountain's continuation is an indented line under its key.
+    for (const line of rest) if (line.trim()) out.push(`    ${line.trim()}`);
+  }
+  return out.join("\n");
+}
+
+/**
+ * Fold the form's six fields into a file's existing entries.
+ *
+ * An existing key keeps its position and its own spelling; a field the form
+ * has emptied disappears; a field the file never had is inserted where the
+ * canonical order says it belongs among the known keys, so a new `Title:`
+ * lands at the top and not under someone's `Copyright:`.
+ */
+export function mergeTitleEntries(
+  existing: readonly TitleEntry[],
+  updates: Partial<Record<TitleField, string>>,
+): TitleEntry[] {
+  const result: TitleEntry[] = [];
+  const handled = new Set<TitleField>();
+
+  for (const [key, value] of existing) {
+    const canon = canonicalTitleField(key);
+    if (canon && canon in updates) {
+      handled.add(canon);
+      const next = updates[canon] ?? "";
+      if (next.trim()) result.push([key, next]); // keep the file's own spelling
+      continue;
+    }
+    result.push([key, value]);
+  }
+
+  for (const field of TITLE_FIELDS) {
+    if (handled.has(field)) continue;
+    const value = updates[field];
+    if (!value || !value.trim()) continue;
+    const at = result.findIndex(([k]) => {
+      const c = canonicalTitleField(k);
+      return c !== null && TITLE_FIELDS.indexOf(c) > TITLE_FIELDS.indexOf(field);
+    });
+    if (at < 0) result.push([field, value]);
+    else result.splice(at, 0, [field, value]);
+  }
+
+  return result;
+}
+
+/** Replace (or remove, or create) the title block at the top of a file. */
+export function withTitleBlock(text: string, entries: readonly TitleEntry[]): string {
+  const { length } = parseTitleBlock(text);
+  const body = text.slice(length);
+  const block = serializeTitleBlock(entries);
+  return block ? `${block}\n\n${body}` : body;
+}
+
+/** Split off the title page block (everything up to the first blank line is
+ * the title page if any line matches the title-page key pattern). */
+export function splitTitlePage(text: string): { titlePage: TitlePage; body: string } {
+  const { entries, length, present } = parseTitleBlock(text);
+  if (!present) return { titlePage: {}, body: text };
+  const titlePage: TitlePage = {};
+  for (const [key, value] of entries) titlePage[key] = value;
+  return { titlePage, body: text.slice(length) };
 }
 
 /** Find every scene heading in the body. */

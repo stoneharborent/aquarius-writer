@@ -1,5 +1,6 @@
-// CM6 line decorations for Fountain. Stateless line-by-line classifier — for
-// most files this is plenty; export/render goes through fountain-js.
+// CM6 line decorations for Fountain, and the grid the paged canvas is drawn
+// on. Stateless line-by-line classifier — for most files this is plenty;
+// export/render goes through fountain-js.
 
 import { RangeSetBuilder } from "@codemirror/state";
 import {
@@ -10,7 +11,7 @@ import {
   ViewUpdate,
 } from "@codemirror/view";
 import { classify, FountainLineKind } from "@/lib/fountain";
-import { estimatePages } from "@/lib/markdown/fountain-smart";
+import { paginate } from "@/lib/markdown/fountain-pages";
 
 const LINE = (kind: FountainLineKind) =>
   Decoration.line({ class: `cm-fnt cm-fnt-${kind}` });
@@ -20,19 +21,30 @@ function build(view: EditorView): DecorationSet {
   let prev: FountainLineKind = "blank";
   let prevPrev: FountainLineKind = "blank";
 
-  // Estimated page starts (page 2+) get a break rule + "p. N" label.
-  const { breaks } = estimatePages(view.state.doc.toString().split("\n"));
-  const breakPage = new Map(breaks.map((lineIdx, n) => [lineIdx + 1, n + 2]));
+  // Where the pages break, and how much blank is owed to the foot of the page
+  // above each one. `--sp-fill` is that number of rows; the CSS turns it into
+  // the padding that makes every painted sheet exactly `--sp-page-h` tall,
+  // which is what lets the sheets be a repeating background instead of a
+  // measured layout (docs/NOTES.md §27).
+  const { breaks, breakFill } = paginate(view.state.doc.toString().split("\n"));
+  const breakAt = new Map(
+    breaks.map((lineIdx, n) => [lineIdx + 1, { page: n + 2, fill: breakFill[n] ?? 0 }]),
+  );
 
   for (let i = 1; i <= view.state.doc.lines; i++) {
     const line = view.state.doc.line(i);
     const kind = classify(line.text, prev, prevPrev);
     b.add(line.from, line.from, LINE(kind));
-    const page = breakPage.get(i);
-    if (page !== undefined) {
+    const brk = breakAt.get(i);
+    if (brk !== undefined) {
       b.add(line.from, line.from, Decoration.line({
         class: "cm-aq-pagebreak-line",
-        attributes: { "data-page": `p. ${page}` },
+        attributes: {
+          "data-page": `${brk.page}.`,
+          // A unitless count, not a length: the CSS multiplies it by the line
+          // box so the arithmetic survives a zoom without a second rounding.
+          style: `--sp-fill:${brk.fill}`,
+        },
       }));
     }
     prevPrev = prev;
@@ -58,19 +70,37 @@ export function fountainDecorations() {
   );
 }
 
-/* Metrics rule: identical to the one written out at length above `proseTheme`
- * in wysiwyg.ts, and for the same reason (NOTES §1a). Vertical rhythm is
- * PADDING, never margin — CodeMirror's height map is built from border boxes
- * and cannot see a margin. Every length is a whole pixel, because WebKitGTK
- * snaps fractional boxes to device pixels and CoreText does not.
+/* THE SCREENPLAY GRID — read this before changing a number.
  *
- * The screenplay's left indents were percentages of the content width, which
- * resolve to fractions (26% of the 696px content box is 180.96px) and move
- * with the pane. They are fixed pixels now: a screenplay indent is an absolute
- * grid measured in inches, not a proportion of whatever the window happens to
- * be, so this is closer to the PARITY row 12 target as well as cheaper to
- * measure. Values are the old percentages resolved at the 696px design width
- * (`.cm-content` is max-width 720px less its 12px side padding).
+ * Metrics rule (docs/NOTES.md §1a): vertical rhythm is PADDING, never margin —
+ * CodeMirror's height map is built from border boxes and cannot see a margin —
+ * and every length is a whole pixel, because WebKitGTK snaps fractional boxes
+ * to device pixels and CoreText does not.
+ *
+ * The paged canvas (PARITY row 12, NOTES §27) leans on that harder than the old
+ * continuous surface did. The sheets are painted as a **repeating background**
+ * with no measurement at all, so the arithmetic in `fountain-pages.ts` and the
+ * layout the browser paints must agree to the pixel. Two consequences:
+ *
+ *   1. **The screenplay is set solid.** Every element padding-top this file
+ *      used to carry (scene 18px, character 9px, transition 15px, section
+ *      15px) and the 2px per-line gap are GONE. A line is exactly one line box
+ *      tall, always. Fountain's blank lines are the spacing — they are in the
+ *      document, they are counted as rows, and adding CSS padding on top of
+ *      them double-counted the rhythm and pushed the text off the sheets.
+ *      The scene heading's rule is an inset box-shadow for the same reason:
+ *      a border-bottom is 1px of layout.
+ *   2. **Horizontal geometry is the point geometry.** Each element's block is
+ *      a padding-left / padding-right pair inside a text column that is
+ *      exactly 432pt (60 Courier columns) wide, from SWIFT-AUDIT §2.1's
+ *      margins: character 252→522, parenthetical 216→396, dialogue 180→432,
+ *      transition right-aligned ending at 510.98. `screenplayMetrics()` in
+ *      `screenplay-metrics.ts` converts them, once, at 4/3 px per point.
+ *
+ * The `var(…, Npx)` fallbacks ARE the 100%-zoom values. Per-document zoom
+ * writes whole-pixel overrides for all of them, scoped to one editor's host
+ * element (`applyEditorZoom` in theme.ts, PARITY row 14), so an unzoomed
+ * screenplay resolves every one to its fallback.
  */
 export const fountainTheme = EditorView.theme(
   {
@@ -78,8 +108,8 @@ export const fountainTheme = EditorView.theme(
       color: "var(--ink-prose)",
       backgroundColor: "transparent",
       fontFamily: "var(--font-mono)",
-      fontSize: "var(--screenplay-size)",      // 14px
-      lineHeight: "var(--screenplay-line-px)", // was 1.55 → 21.7px, now 22px
+      fontSize: "var(--screenplay-size)",      // 16px = 12pt at 4/3
+      lineHeight: "var(--screenplay-line-px)", // 16px — set solid, like print
       // Grow with content — the article scrolls, not the editor. A fixed
       // height + internal scroller broke CM's viewport virtualization in
       // this embed (only the first ~27 lines ever rendered).
@@ -87,48 +117,42 @@ export const fountainTheme = EditorView.theme(
     },
     ".cm-content": {
       caretColor: "var(--accent)",
-      padding: "0",
       // Restated so nothing from the shell reaches the content path.
       fontFamily: "var(--font-mono)",
       fontSize: "var(--screenplay-size)",
       lineHeight: "var(--screenplay-line-px)",
       letterSpacing: "normal",
+      // The page geometry itself lives in ScreenplayEditor.css, where the
+      // sheet is painted; putting it here would put a page inside the
+      // popout's and the preview's editors too.
     },
     "&.cm-focused": { outline: "none" },
-    // was `padding: 0 0 0.15em 0` = 2.1px
-    ".cm-line": { padding: "0 0 var(--screenplay-para-gap) 0", margin: "0" },
+    ".cm-line": { padding: "0", margin: "0" },
 
-    // Each `marginTop` below became a `paddingTop` of the same rounded value
-    // less the 2px the previous line already contributes as padding-bottom.
-    //
-    // The `var(…, Npx)` fallbacks ARE those numbers. Nothing defines these
-    // properties globally: per-document zoom writes them — already rounded to
-    // whole pixels — scoped to one editor's host element (`applyEditorZoom` in
-    // theme.ts, PARITY row 14), so an unzoomed screenplay resolves every one to
-    // the fallback and is exactly the grid it was.
     ".cm-fnt-scene-heading": {
       fontWeight: "700",
       textTransform: "uppercase",
       color: "var(--ink)",
-      paddingTop: "var(--fnt-scene-pt, 18px)", // was marginTop 1.4em = 19.6px
-      borderBottom: "1px solid var(--line)",
-      paddingBottom: "var(--fnt-scene-pb, 2px)", // was 0.15em = 2.1px
+      // An inset shadow, not a border: a border is 1px of layout and the row
+      // model says a heading is exactly one line box tall.
+      boxShadow: "inset 0 -1px 0 var(--line)",
     },
     ".cm-fnt-character": {
       fontWeight: "600",
       textTransform: "uppercase",
       color: "var(--ink)",
-      paddingLeft: "var(--fnt-character-indent, 181px)", // was 26% = 180.96px at the design width
-      paddingTop: "var(--fnt-character-pt, 9px)", // was marginTop 0.8em = 11.2px
+      paddingLeft: "var(--fnt-character-indent, 192px)",   // 252pt − 108pt
+      paddingRight: "var(--fnt-character-pr, 24px)",       // 540pt − 522pt
     },
     ".cm-fnt-parenthetical": {
       color: "var(--ink-soft)",
-      paddingLeft: "var(--fnt-paren-indent, 139px)", // was 20% = 139.2px
+      paddingLeft: "var(--fnt-paren-indent, 144px)",       // 216pt − 108pt
+      paddingRight: "var(--fnt-paren-pr, 192px)",          // 540pt − 396pt
       fontStyle: "italic",
     },
     ".cm-fnt-dialogue": {
-      paddingLeft: "var(--fnt-dialogue-indent, 97px)", // was 14% = 97.44px
-      paddingRight: "var(--fnt-dialogue-indent, 97px)",
+      paddingLeft: "var(--fnt-dialogue-indent, 96px)",     // 180pt − 108pt
+      paddingRight: "var(--fnt-dialogue-pr, 144px)",       // 540pt − 432pt
       color: "var(--ink-prose)",
     },
     ".cm-fnt-transition": {
@@ -136,7 +160,7 @@ export const fountainTheme = EditorView.theme(
       textTransform: "uppercase",
       textAlign: "right",
       color: "var(--ink-soft)",
-      paddingTop: "var(--fnt-transition-pt, 15px)", // was marginTop 1.2em = 16.8px
+      paddingRight: "var(--fnt-transition-pr, 39px)",      // 540pt − 510.98pt
     },
     ".cm-fnt-section": {
       fontFamily: "var(--font-ui)",
@@ -146,7 +170,6 @@ export const fountainTheme = EditorView.theme(
       // the two engines disagree about, so it is a whole pixel now.
       letterSpacing: "1px",
       textTransform: "uppercase",
-      paddingTop: "var(--fnt-section-pt, 15px)", // was marginTop 1.2em = 16.8px
     },
     ".cm-fnt-synopsis": {
       fontFamily: "var(--font-serif)",

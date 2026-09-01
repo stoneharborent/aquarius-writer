@@ -2,6 +2,13 @@
 // (it previews the compiled PDF layout). Mirror of ScreenplayPreviewSheet.swift.
 // Layout metrics: US Letter, 1" top margin, Courier 12, industry indents —
 // see `swift/AquariusWriter/Lib/ScreenplayPageFormat.swift`.
+//
+// PARITY row 12: the preview and the editor's paged canvas now run the SAME
+// pagination (`paginate`, fountain-pages.ts), so page 7 here is page 7 there.
+// They differ in exactly one way, on purpose: this sheet is drawn at 1pt = 1px
+// because it is a picture of the PDF, and the canvas is drawn at 1pt = 4/3px
+// because it is a writing surface (screenplay-metrics.ts explains the choice).
+// The row model is scale-free, so both read the same page breaks off it.
 import { useMemo } from "react";
 import { Overlay } from "./Overlay";
 import { useOverlay } from "@/state/overlayStore";
@@ -10,9 +17,9 @@ import { useEditor } from "@/state/editorStore";
 import { splitTitlePage } from "@/lib/fountain";
 import {
   classifyLines,
-  estimatePages,
   isShotLine,
-} from "@/lib/markdown/fountain-smart";
+  paginate,
+} from "@/lib/markdown/fountain-pages";
 import "./ScreenplayPreview.css";
 
 const KIND_CLASS: Record<string, string> = {
@@ -32,18 +39,14 @@ export function ScreenplayPreview() {
     const { body } = splitTitlePage(raw);
     const lines = body.split("\n");
     const kinds = classifyLines(lines);
-    const { breaks } = estimatePages(lines);
-    const bounds = [0, ...breaks, lines.length];
-    const out: { text: string; kind: string }[][] = [];
-    for (let p = 0; p < bounds.length - 1; p++) {
-      out.push(lines.slice(bounds[p], bounds[p + 1]).map((text, i) => ({
+    return paginate(lines).pages.map((page) =>
+      lines.slice(page.start, page.end).map((text, i) => ({
         text,
-        kind: kinds[bounds[p] + i] === "action" && isShotLine(text)
+        kind: kinds[page.start + i] === "action" && isShotLine(text)
           ? "sp-shot"
-          : KIND_CLASS[kinds[bounds[p] + i]] ?? "sp-action",
-      })));
-    }
-    return out;
+          : KIND_CLASS[kinds[page.start + i]] ?? "sp-action",
+      })),
+    );
   }, [raw]);
 
   return (
@@ -54,7 +57,7 @@ export function ScreenplayPreview() {
             {p > 0 && <span className="sp-pagenum">{p + 1}.</span>}
             {page.map((l, i) => (
               <div key={i} className={`sp-line ${l.kind}`}>
-                {l.text || " "}
+                {l.text || " "}
               </div>
             ))}
           </section>

@@ -38,6 +38,23 @@ Faster on Linux, smarter in the editor, and a rounder toolbox for AI.
   workflow) now explain themselves with a small illustration instead of
   showing a blank pane.
 
+### A terminal, in the app
+
+- **There is a terminal in the right pane now** (⇧⌘J, or the Terminal button
+  in the top bar). It opens in your workflow's folder, so you can run
+  `claude` — or anything else — right where your writing is.
+- **This is the other half of the MCP server.** Turn the server on in
+  Settings, copy the `claude mcp add …` line, paste it into this terminal, and
+  Claude Code can read and edit the vault while you watch it happen in the
+  editor beside it.
+- Several named sessions in tabs, each with its own font size (A− / A+) and an
+  optional command to run every time it starts — put `claude` there and you
+  never type it again. Names, sizes and startup commands are remembered;
+  running programs are not, so a fresh launch always starts clean.
+- Drag a file out of the sidebar onto the terminal to type its full path.
+- It is your own shell, with your own permissions — the same as opening
+  Terminal yourself. Nothing runs that you did not type or set up.
+
 ### For AI tools
 
 - The MCP server grows from 21 to 31 tools: editing a synopsis, inserting or

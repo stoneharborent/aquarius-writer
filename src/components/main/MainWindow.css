@@ -92,6 +92,67 @@
   padding: 18px 28px 64px;
 }
 
+/* ── the screenplay desk (PARITY row 12, NOTES §27) ───────────────────────
+ *
+ * Same desk as the prose canvas, different page. The prose sheet is one
+ * continuous `.mw-sheet` element; a screenplay's sheets are painted INSIDE
+ * CodeMirror's content box (ScreenplayEditor.css) so the text and the page
+ * edges are the same layout and cannot drift apart.
+ *
+ * The article therefore contributes only the desk and the scroll. It keeps
+ * `overflow: auto` in both axes: a page never reflows, so a pane narrower than
+ * one scrolls sideways rather than rewrapping the script under the page model.
+ */
+.mw-screenplay {
+  background: var(--bg);
+  /* Tighter sides than the prose desk: a page is 816px wide and does not
+     reflow, so every pixel of desk is a pixel the sheet might need. A full
+     page fits beside one open pane at any normal window size; beside BOTH the
+     sidebar and the right pane on a 1440 screen it is about 40px over and the
+     article scrolls sideways. The 90% zoom rung is a 714px page, which fits
+     everywhere — and the zoom is remembered per document. */
+  padding: 18px 20px 64px;
+}
+
+.mw-screenplay .mw-prose-head,
+.mw-screenplay .mw-prose-foot {
+  width: 100%;
+  max-width: var(--sp-page-w, 816px);
+  margin-left: auto;
+  margin-right: auto;
+  flex: none;
+}
+
+/* Script / Title Page — the segmented pair from SWIFT-AUDIT §1.2's toolbar
+   idiom, at the document header's scale. */
+.mw-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 0.5px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-soft);
+}
+
+.mw-tab {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.mw-tab:hover { color: var(--ink); }
+
+.mw-tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* A chapter's page shares its column with the floating Outline / Cards
    buttons, which hang at top: 14px. Start the document header below them so
    the crumb and the save badge are never underneath a button. */

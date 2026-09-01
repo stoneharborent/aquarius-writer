@@ -2811,3 +2811,608 @@ was wired when `applyRelocation` was written.
   hand-off with a trackpad and with Tab, an autosave firing in one pane while
   the other is being typed in, and the conflict dialog raised against a
   document that is open in the split.
+
+---
+
+## 26. The terminal pane — a real PTY, and where the agent actually runs
+
+*2026-08-31. PARITY row 18, the last item in Wave 3, deferred on purpose until
+the layout settled. Files: `src-tauri/src/pty/mod.rs`, five commands in
+`commands.rs`, `src/lib/pty.ts`, `src/state/terminalStore.ts`,
+`src/components/terminal/{registry.ts,TerminalPane.tsx,TerminalPane.css}`, plus
+additive wiring in `shellStore`, `RightPane`, `MainWindow`, `TopBar`,
+`CheatSheet`, `Settings` and one shortcut in `App.tsx`.*
+
+### 26a. What it is for
+
+The MCP server (§23) gave an external agent a door onto the vault, and Settings
+prints the `claude mcp add …` line that opens it. What was missing was
+somewhere to *run* the agent. That is this pane, and the whole flow is one
+sentence: **open the terminal, type `claude`, and it drives the vault over
+MCP** — in the app, in the workflow's own folder, with the manuscript beside
+it.
+
+This is the deliberate opposite of the thing Stage 5 cut. There is still no
+embedded model, no chat panel, no second copy of the writer's files. The app
+supplies a shell; the writer supplies the agent.
+
+### 26b. Sessions map one-to-one onto PTYs, and the split that matters is
+config vs process
+
+Swift's terminal (SWIFT-AUDIT §2.7) has named session tabs, so this one does
+too. Each tab is exactly one pseudo-terminal:
+
+```text
+  tab "Angel"  ──►  session id "t1m3x…"  ──►  one PTY  ──►  one login shell
+```
+
+The id is made up by the **renderer**, not by Rust, because the tab outlives
+the process by design. Rust's `PtyState` is a `HashMap<String, Session>` of the
+ones running *now*; the renderer's `localStorage` holds the ones that exist at
+all.
+
+What persists (`aquarius.terminal.sessions`, `aquarius.terminal.active`):
+
+* the tab's **name** (default: the workflow's title, as in Swift),
+* its **font size** (integer px, 9–24, stepped by the A− / A+ pair),
+* its **startup command**,
+* which tab was active.
+
+What never persists: the PTY, the scrollback, the exit code, the cwd, the
+"live" dot. A relaunched app shows its saved tabs **cold**, with an idle dot,
+and spawns a shell for the one you look at. The alternative — restoring a tab
+as though it were still connected — puts a dead prompt on screen that silently
+swallows what the writer types, and there is no honest way to draw that.
+
+Sessions are launched **lazily and only for the visible tab**: four saved tabs
+should not mean four shells the moment the pane opens.
+
+### 26c. Two threads per session, and the second one is the reaper
+
+```text
+  pty_spawn ─► openpty ─► shell -l ─┬─► reader thread ─► pty://output
+                                    └─► waiter thread ─► pty://exit
+```
+
+* The **reader** blocks on the master fd and ends at EOF — which the kernel
+  only delivers once the last slave handle is closed, which is why the parent's
+  copy of `pair.slave` is dropped immediately after the spawn. Forget that drop
+  and a shell that exits leaves a reader blocked forever.
+* The **waiter** blocks in `Child::wait()`. This is not bookkeeping, it is the
+  zombie reaper: a killed child nobody waits on stays in the process table for
+  the life of the app, and a writer who opens and closes ten terminals would
+  leave ten of them. `wait()` needs its own thread precisely because a kill can
+  arrive while it is blocked — that is what `portable_pty`'s `clone_killer()`
+  is for, and why the `Session` holds a killer rather than the child.
+
+Kills happen at three doors and all three go through the same code: closing a
+tab (`pty_kill`), replacing an id (`HashMap::insert` drops the old `Session`,
+whose `Drop` kills), and the window being destroyed (`PtyState::clear()` in the
+`WindowEvent::Destroyed` arm, next to `mcp::stop`).
+
+### 26d. UTF-8 does not respect a read boundary
+
+A PTY read lands wherever it lands, including the middle of an em dash or a
+box-drawing rule in someone's prompt. Decoding each 8 KiB chunk on its own
+turns that into a replacement character **permanently** — the two halves never
+meet again. So `Utf8Chunker` holds the tail of an incomplete sequence and
+prepends it to the next chunk, while *genuinely* invalid bytes are replaced and
+dropped so a binary file dumped to the terminal cannot wedge the decoder. Three
+unit tests cover the three cases.
+
+The alternative was shipping `Vec<u8>` over the event bridge, which Tauri
+serialises as a JSON array of numbers — several times the bytes, for a problem
+15 lines of Rust solves properly.
+
+### 26e. The xterm instances live outside React
+
+A terminal is not a view; it is a running process with scrollback, and the pane
+it lives in collapses. If the `Terminal` were owned by a component, hiding the
+right pane — ⌘⌥\, or just clicking Comments — would dispose it and take a
+running `claude` session with it.
+
+So `registry.ts` holds a module-level `Map<id, {term, fit, el, …}>` and the
+component only **borrows**: on mount it appends the entry's element to its
+host, on unmount it hands the element back to an off-screen parking lot. Only
+closing the tab calls `dispose()`. Two consequences worth naming:
+
+* Output keeps arriving into a terminal whose element is not on screen. xterm
+  buffers it as scrollback, so re-opening the pane shows what happened — the
+  same as switching away from a terminal window.
+* The parking lot is a real, sized, off-screen div rather than a floating
+  element, because xterm measures a character cell by rendering into the DOM
+  and `open()` on something never laid out yields a zero-sized cell. Nothing
+  fits to the parking lot: `safeFit()` is only ever called by the mounted view,
+  and it refuses to run on a box under 8px either way — a `fit()` against a
+  hidden div would drive the PTY to a 1×1 grid that the shell then really
+  redraws into.
+
+Font sizes are integers only, per §1a. A fractional cell grid is exactly the
+kind of half-pixel geometry that contract exists to forbid, and on a terminal
+it is visible immediately.
+
+### 26f. The startup command is typed, not spawned
+
+Swift calls this the "agent command" and lets you set an executable plus args.
+Here the shell is always the process and the command is **typed into it** after
+a 300 ms delay. That is a deliberate difference and it is better for the flow
+this pane exists for: when `claude` quits you land at a prompt in the right
+directory, instead of the tab dying under you.
+
+It also means a startup command is **executable content**, so the store says
+plainly where it may come from: the gear button in the pane header and nowhere
+else. It is never read out of a document, a vault file, or the MCP server, and
+it is not synced. The delay is about not interleaving with the shell's own
+startup output rather than about losing bytes (the kernel buffers the write) —
+it is the one timing-dependent thing here and it is on the bench list.
+
+### 26g. Drag a file, get its path
+
+The sidebar's tree rows have set `dataTransfer.setData("text/plain", node.path)`
+since the move/reorder work, so nothing had to be coordinated: the pane accepts
+a plain-text drop, sends the vault-relative path to `pty_resolve_path`, and
+types the absolute answer with a trailing space, ready for a command in front
+of it. Paths needing it are shell-quoted.
+
+`pty_resolve_path` goes through `paths::resolve_in_root` like every other path
+command, so it is also the safety check — a crafted drag cannot name a file
+outside the workflow. A path that will not resolve is simply not typed; the
+ring going away is the whole answer a drop needs.
+
+### 26h. Where it lives, and why not a fourth column
+
+It is the **right pane's third tab**, beside Comments and Versions. Swift has
+one right-pane slot and everything takes turns in it (SWIFT-AUDIT §1.3), and a
+dedicated bottom drawer would have meant a second resizable axis, a second
+persisted geometry and a fight with the editor's 320px floor.
+
+So: `RightTab` gained `"terminal"`, ⌘⌥\ cycles comments → versions → terminal →
+hidden, the TopBar gained a third button, and the collapsed gutter now names
+the tab that will come back rather than always saying "Comments". **⇧⌘J**
+toggles straight to it — the terminal is the one tab a writer reaches for
+mid-thought, three presses of ⌘⌥\ is not that, and J was completely unbound in
+this app (it is also the muscle memory from VS Code's terminal drawer).
+
+The pane draws two header rows: the shared Comments/Versions/Terminal row from
+`RightPane`, and its own session strip under it. That costs ~28px and buys the
+way back out.
+
+### 26i. Security posture, stated rather than implied
+
+**The pane runs the writer's own login shell, as the writer, with the writer's
+environment and privileges.** Exactly what Terminal.app or GNOME Console would
+give them, in a pane. No sandbox, no elevation, no `sudo`, no setuid, nothing
+remote: a PTY is reachable only through this process's own Tauri commands,
+which only this app's webview can call.
+
+That is the *point* — an agent that could not read the writer's files as the
+writer would be no use — and the cost is written down rather than left to be
+discovered: **anything typed into this pane runs**, and a session's startup
+command is therefore executable content with exactly one author (§26f).
+
+Two things that did **not** change, and should stay that way:
+
+* **The capability file.** The PTY is our own Rust code, so nothing was granted
+  to `tauri-plugin-shell` and no scope widened. `pty://output` and `pty://exit`
+  are covered by the listener permission already inside `core:default`, the
+  same way `updater://state` is.
+* **`-l`, and only for shells that know it.** A login shell is what sources
+  `.zprofile` / `.bash_profile`, which is where `PATH` picks up Homebrew,
+  `~/.local/bin` and nvm — i.e. where `claude` actually is. Without it the
+  marquee flow fails with "command not found" on a machine where the command
+  plainly exists. `login_args()` returns `-l` for zsh/bash/fish/sh/dash/ksh and
+  nothing for anything else.
+
+### 26j. Workflow switching is answered, not silently obeyed
+
+A new session spawns in the current workflow's root. A session that is *already
+running* does not get moved: killing a live `claude` because the writer clicked
+another workflow in the sidebar would be the worst possible reading of "auto-cwd
+to the active workflow".
+
+Instead the status line says where the shell actually is — `in Angel — restart
+here` — and the button next to it kills that shell and starts a fresh one in
+the current workflow, keeping the old screen so the writer can still read what
+it said. Same treatment for a shell that exited on its own: an honest `exited`
+dot, the exit code written into the screen, and a **Relaunch** button.
+
+### 26k. What this did not do
+
+* **No shell-integration niceties.** No cwd tracking after a `cd`, no command
+  detection, no OSC 7 / OSC 133 handling. The status line reports the directory
+  the shell *started* in and says nothing about where it went.
+* **No search, no link detection, no clickable paths in the output.** Those are
+  xterm addons and each is a dependency; none is needed for the flow this pane
+  exists for.
+* **No MCP tool.** The repo's doctrine is "if a human can do it in the app, an
+  MCP client can do it too", and this is the one place it must not hold: a
+  `run_command` tool would hand every connected agent a shell on the writer's
+  machine, which is a far larger capability than anything else in the catalogue
+  and is not what the writer opted into when they enabled the server. The pane
+  is a door for the *writer*, not for the agent. Stated here so the omission
+  reads as a decision rather than an oversight.
+* **No session restore.** See §26b — deliberate.
+* **Windows is untested.** `portable-pty` covers ConPTY and `default_shell()`
+  falls back to `COMSPEC`, but nothing on that path has been run.
+
+### 26l. Bench checklist (Linux, and the parts of macOS not covered by tests)
+
+`cargo test` covers the pipe itself — a real spawn/echo/kill round trip
+(`spawn_echo_kill_round_trip`), the chunker and the shell fallbacks. Everything
+below is a real run:
+
+- **WebKitGTK rendering.** xterm's canvas renderer under WebKitGTK at both
+  themes; glyph crispness at 9px and at 24px; the cell grid staying on whole
+  pixels after a splitter drag.
+- **The startup delay** against a slow `.zshrc` — does `claude` still land
+  cleanly, or does it interleave with the shell's banner? 300 ms is a guess
+  made on a fast Mac.
+- **`claude` end to end**: run it in the pane, have it connect to the MCP
+  server, and watch a vault edit land in the editor beside it.
+- **Resize behaviour**: drag the right-pane splitter while `htop` or `vim` is
+  running and check the child gets SIGWINCH and redraws.
+- **Drag-and-drop** from the sidebar onto the pane under WebKitGTK — the tree's
+  drag is HTML5 (§18a), so this should work, but it has not been watched.
+- **Zombies**: open and close ten tabs, then check `ps` for defunct children.
+- **Quit with a live shell** and confirm nothing survives the window closing.
+
+---
+
+## 27. The screenplay is paged now, and the pages are arithmetic
+
+*PARITY row 12, closed 2026-08-31. SWIFT-AUDIT §2.1: "industry-exact page
+geometry … a paged canvas with real page breaks … Title Page as a second tab
+on the same file … drag-reorder scenes rewrites the script … smart-type
+autocomplete for character names and scene headings."*
+
+Four things shipped and two were deferred. Only the first is interesting, and
+what makes it interesting is that **nothing in it is measured**.
+
+### 27a. Why the pages are not elements
+
+The obvious way to draw a paged screenplay is a `<section>` per page. It is
+also the way that cannot work here, twice over:
+
+- **One document, or nothing works.** CodeMirror holds a single `EditorState`.
+  Splitting the script into a view per page would take undo, Find & Replace,
+  the caret, the smart-typing rhythm, the element pills, the zoom registration
+  and the scene rail's scroll with it. Every extension in the tree assumes one
+  document, because there is one document.
+- **A measured overlay drifts.** The other approach — one continuous editor
+  with absolutely-positioned page sheets painted behind it, their tops read
+  off `coordsAtPos` — has to re-measure on every keystroke, every resize,
+  every font load and every zoom step, and it is wrong for one frame each
+  time. On WebKitGTK, where §1a's whole story is that measurement and paint
+  disagree, "wrong for one frame" becomes "wrong until something else forces
+  a re-layout".
+
+So the pages are **a repeating background gradient on `.cm-content`**, and the
+document is padded so that it lands on them. No `getBoundingClientRect`
+anywhere in the feature.
+
+### 27b. The arithmetic, and why it is exact
+
+`src/lib/markdown/screenplay-metrics.ts` holds the geometry. The point values
+are SWIFT-AUDIT §2.1's, unchanged: a 612×792pt page, a text block from 72pt to
+720pt, Courier 12 on 12, and element blocks at 108→540 (action, scene, shot),
+252→522 (character), 216→396 (parenthetical), 180→432 (dialogue), with
+transitions right-aligned ending at 510.98pt.
+
+Everything derives from **one integer**: the line box in pixels.
+
+```
+line  = round(16 × zoom)          16 = 12pt at 4/3
+u(pt) = round(pt × line / 12)
+```
+
+Every *vertical* point value in the format is a multiple of 12, so `u()` on it
+is an exact integer multiple of `line` and never actually rounds:
+
+| | points | in lines | at line = 16 |
+|---|---|---|---|
+| page height | 792 | 66 | 1056px |
+| top / bottom margin | 72 | 6 | 96px |
+| body | 648 | **54** | 864px |
+| page width | 612 | 51 | 816px |
+| left / right margin | 108 / 72 | 9 / 6 | 144 / 96px |
+
+`6 + 54 + 6 = 66` and `9 + 36 + 6 = 51` hold at *every* rung of the zoom
+ladder — 13, 14, 16, 18, 20, 22, 26, 29 — which is the property the whole
+design rests on. §1a said a fractional line box is the caret bug; this section
+says a page whose parts are rounded independently is the same bug wearing a
+sheet of paper.
+
+**On 4/3 rather than 1/1.** The Wave-3 brief said "1pt = 1px at baseline
+zoom". CSS defines a point as exactly 4/3 of a pixel — a point is 1/72", a CSS
+pixel is 1/96" — so 1pt = 1px is not the identity, it is a 25% shrink, and it
+puts the writer on a 12px line box. At 4/3 the page is 816×1056: a US Letter
+sheet at 96dpi, exactly, with 16px Courier set solid, which is what 12-on-12
+*is*. The print-preview overlay still draws at 1pt = 1px, because that sheet
+is a picture of the PDF rather than a surface to write on. The row model is
+scale-free, so both read their page breaks off the same engine.
+
+One consequence worth knowing before it surprises anyone: **a page is 816px
+and does not reflow.** Beside both the sidebar and the right pane on a 1440
+screen that is about 40px too wide and the article scrolls sideways, the way
+Final Draft does. The 90% rung is a 714px page and fits everywhere, and the
+zoom is remembered per document. Reflowing instead was never an option: a
+narrower column wraps at a different number of characters than the engine
+counted, and then every page below drifts off its sheet.
+
+### 27c. The pagination engine, and the double-count it replaced
+
+`src/lib/markdown/fountain-pages.ts`. The old `estimatePages` was honestly
+named: it added a `SPACE_BEFORE` allowance of one or two virtual blank rows
+before scene headings, action and character cues — **on top of** the blank
+lines the Fountain source already contains, which it was also counting. Every
+scene heading in a script cost three or four rows instead of one, and the page
+count ran long by a third on a dialogue-heavy script. Nobody noticed because
+nothing depended on it but a footer badge.
+
+The engine's rules, in full, are written out at the top of the file. The short
+version:
+
+1. **A page is 54 rows**, from the geometry. Not "about 55".
+2. **A row is a wrapped visual row of one source line**; a blank line is one
+   row. Wrapping is greedy word wrap at that element's column count — 60
+   action, 37 character, 25 parenthetical, 35 dialogue, all `floor(width /
+   7.2pt)` — which is what the browser does to `pre-wrap` text in a box of
+   exactly that many monospace glyphs.
+3. **Nothing is added for element spacing.** Fountain's blank lines *are* the
+   spacing and they are already in the document.
+4. **A break falls between source lines**, never inside one.
+5. **Orphan control moves a break earlier, never later**: a page may not end on
+   a scene heading, a heading and its blank, a character cue, or a cue and its
+   parenthetical.
+6. **Blank lines at a break stay on the page above**, so a page never opens on
+   a blank row.
+7. **`fill` = `54 − used`, and it is signed.**
+
+Rule 7 is the one that was wrong first. Rule 6 can leave a page at 55 or 56
+rows — the extra rows are blank and sit invisibly in the bottom margin — and
+clamping `fill` at zero looked completely harmless. It walks every page below
+down by one line box per absorbed blank, and by page six the text is a third
+of a page off the sheet it is printed on. The padding is clamped at zero in
+CSS; the row count is not.
+
+Rule 2 has one detail that is *checked* rather than assumed: `lineWrapping`
+sets `overflow-wrap: anywhere` on `.cm-content` (plus `word-break: break-word`
+for Safari), so an over-long word is chopped rather than overhung, and
+`wrapRows` chops it at the same place.
+
+### 27d. Where the padding goes
+
+Three numbers, and between them they close every sheet:
+
+- **`.cm-content` padding-top** = the top margin. `background-origin` is
+  `padding-box`, so the gradient's zero is page 1's top edge.
+- **Each page-break line** is a line decoration carrying
+  `style="--sp-fill:N"` — a *unitless row count*, not a length, so the CSS
+  multiplies it by the line box and the value survives a zoom without a second
+  rounding. Its padding-top is
+  `fill·line + bottom margin + desk gap + top margin`, which closes the sheet
+  above at exactly `--sp-page-h` and drops the next line exactly one top
+  margin below the next sheet's edge.
+- **`.cm-content` padding-bottom** = `tailrows·line + bottom margin`, written
+  on the host element by the editor from the same pagination result. Without
+  it the last page stops mid-sheet.
+
+The page number is the break line's `::before`, absolutely positioned 0.5"
+below the new sheet's top edge and flush right — which is where `right: 0`
+already is, because a line element spans the text column. It contributes no
+layout, so it cannot disturb the grid.
+
+**The grid had to be set solid for any of this to work.** Every element
+padding-top in `fountainTheme` is gone: scene 18px, character 9px, transition
+15px, section 15px, and the 2px per-line gap. The scene heading's rule is now
+an inset `box-shadow` rather than a `border-bottom`, because a border is 1px of
+layout. A screenplay line is one line box tall, always. The same double-count
+was removed from `ScreenplayPreview.css`, which had the visual half of it.
+
+If a future change adds one pixel of vertical padding inside `.cm-content`,
+the symptom will be text sliding off the sheets, further with every page. That
+is the thing to look for.
+
+Two CodeMirror base-theme rules had to be beaten, and both would have been
+mystifying:
+
+- `.cm-content { flex-grow: 2 }` — the content is a flex item in
+  `.cm-scroller`, and flex-grow overrides `width`. The page needs `flex: none`
+  or it stretches to the pane.
+- The base `.cm-content` selector has the same specificity as
+  `.screenplay-editor .cm-content`, and the injection order of a StyleModule
+  against a Vite-injected stylesheet is not ours to decide. The page rules use
+  `.screenplay-editor .cm-editor .cm-content` so they always win.
+
+The sheet is centred with `margin: 0 auto` on the content and the host is a
+plain block — not a flex row with `justify-content: center`, which would
+overflow both ways at narrow widths and put the binding margin somewhere the
+scrollbar cannot reach.
+
+### 27e. The Title Page is a page, and it writes the title block
+
+`Script` / `Title Page` is a tab pair on the document header. The tab renders
+a real sheet — the same `--sp-*` tokens, the same size, the same zoom — with
+the six fields where a title page puts them, each an input that only looks
+like an input once the caret is in it. A labelled settings form would have
+been the one place in the app where a document is edited somewhere other than
+on its page.
+
+What it writes is the **Fountain title block** at the top of the same file.
+No frontmatter is involved and none is created: a `.fountain` file's metadata
+is its title block. It goes back through `editorStore.edit` like a keystroke,
+so it debounces, snapshots and conflict-guards identically.
+
+`parseTitleBlock` / `mergeTitleEntries` / `withTitleBlock` in
+`src/lib/fountain.ts` carry two rules the writer never sees but would notice:
+
+- **Unknown keys survive, in place, with their own spelling.** Writers put
+  `Copyright:`, `Notes:`, `Revision:`, `WGA:` up there. The form edits six
+  fields and leaves everything else exactly where it found it. A key the file
+  already has keeps its position; a new one is inserted where the canonical
+  order says it belongs among the known keys, so a first `Title:` lands at the
+  top and not under someone's copyright line.
+- **A field is removed by emptying it.** An `Author:` with nothing after it is
+  a title page with a blank line on it, which is not what anyone meant.
+
+Continuation lines (an indented address under `Contact:`) are joined with a
+newline rather than a space, and written back out indented. `splitTitlePage`
+is now a thin wrapper over the same parser, so the preview overlay and the
+popout cannot disagree with the form about where the block ends.
+
+**The script editor is hidden, not unmounted, by the tab switch** — unmounting
+would take the undo history, the caret and the zoom registration with it. That
+buys one obligation back: everything in a `display: none` subtree measures as
+zero, so the pane that un-hides it calls `requestMeasure()`. That is §1a's
+failure mode arriving by a new road.
+
+### 27f. Scene drag-reorder, and the file it deliberately mirrors
+
+The rail's rows are draggable and slide into place — the gap the scene will
+land in opens before the writer lets go. The chapter rail draws an insertion
+bar instead; a scene is a *block* of script, and the writer is choosing where
+the block lands, not where a line goes. Only a `transform` moves, so it
+composites, and the list order is untouched until the drop.
+
+The rewrite is `src/lib/markdown/fountain-scenes.ts`, and it is **a deliberate
+mirror of `src-tauri/src/vault/fountain.rs`** — the same operation reached
+through two doors, the writer's drag and the MCP `reorder_scenes` tool. A
+script that came out differently depending on which one moved the scene would
+be a genuinely unpleasant surprise. The Rust file is the reference; change it
+first, then mirror. Its two hard-won rules come across intact, and both have
+tests on the Rust side:
+
+- **Nothing above the first heading moves** — the title block and any opening
+  `FADE IN:`.
+- **A moved last scene gets the blank line a heading needs.** The last scene
+  in a script has no trailing blank of its own, so moving it anywhere but the
+  end would glue the next heading onto the line above and that heading would
+  stop being a heading. One blank is inserted only where that would happen,
+  which keeps an identity permutation byte-identical.
+
+One asymmetry is inherited on purpose: the Rust scanner matches slug prefixes
+case-insensitively and the renderer's `SCENE_HEAD_RE` does not. This module
+follows the **Rust** rule, because the rail must be able to drag every scene
+the tool can see. A permutation that is not a permutation is refused whole
+rather than half-applied.
+
+The result goes back in through the pane's normal body edit, so the rewrite is
+one ⌘Z away and one conflict-guarded save away.
+
+### 27g. Smart-type
+
+`src/lib/markdown/fountain-complete.ts`, on `@codemirror/autocomplete` — the
+same mechanism as the `[[` completion (§22a), including the `override` source
+so nothing inherited can appear in the popup, and the popover themed in tokens
+as chrome. It sits before the Fountain keymap in the extension list;
+`autocompletion`'s own keymap is `Prec.highest`, so ⏎ accepts a highlighted
+name when the popup is open and falls straight through to the Final Draft
+Enter rhythm when it is not.
+
+Two sources behind one entry point, chosen from the caret's position so a
+character name can never be offered where a slug belongs:
+
+- **Character cues**, on a line that is a cue *position* — blank line above,
+  nothing but a name on it, nothing after the caret. Every character who has
+  spoken, **most recent first**, because the person who just spoke is
+  overwhelmingly the person about to. A `(V.O.)` extension and the `^` dual
+  mark are stripped from the offered name.
+- **Scene headings**, once a line has started one: the locations the script has
+  already used with that prefix, ranked by recency, then the bare slug
+  prefixes below them so a brand-new location still gets its slug free.
+
+The vocabulary is read off the document on each request rather than cached. A
+screenplay is one file, the pass is the same `classifyLines` the decorations
+already run, and a cache is one more thing that can disagree with the buffer.
+
+### 27h. What was deferred, and why one of them is not a styling job
+
+**Dual dialogue** (`CHARACTER ^` rendering two speakers side by side) and
+**revision marks** (a `*` in the margin on changed lines) did not ship.
+
+Revision marks are simply not started — they want a revision *set* stored per
+draft, which is a document-model question, not a rendering one.
+
+Dual dialogue is the one worth writing down, because it looks like CSS and is
+not. The paged canvas is built on **one source line is N grid rows, and rows
+are the only thing that exists**. Two dialogue blocks sharing a horizontal band
+break that: six source lines occupy three rows, the rows are not in document
+order, and the pagination, the page fill, the sheet gradient and the caret's
+height map all disagree at once. Doing it properly needs a real column
+primitive — a block-level widget decoration holding both speakers, with its own
+height contributed back to the row model — and widget decorations are exactly
+what wedged CodeMirror's viewport updates in this nested-scroll embed the last
+time (which is why the page breaks are line decorations). It is a wave of its
+own, not a rule in `fountainTheme`.
+
+### 27i. What this did not do
+
+- **No caret-anchored zoom.** §22f parked it here; it is still parked. The type
+  and the page scale together correctly, but the line under the cursor does not
+  stay under the cursor.
+- **The compile path is unchanged.** The screenplay PDF is still a Courier
+  reader PDF at WGA margins (§19f) rather than a paginated one. The engine that
+  would fix it now exists and is shared; wiring it into `compile::run` is a
+  separate change.
+- **No `(MORE)` / `(CONT'D)`.** A dialogue block that crosses a page break is
+  split without the continuation marks a production draft carries. The break is
+  never left on the cue itself, which is the part that would actually confuse a
+  reader.
+- **Scene numbers are displayed, never assigned.** `#12#` shows in the rail if
+  the script has it; nothing generates or renumbers them, and a reorder does
+  not renumber either — which is correct, because locked scene numbers are
+  supposed to survive a move.
+- **The popout still renders the old read-only title-page block** above the
+  script rather than offering the tab. It is a second surface with its own
+  chrome and was out of scope.
+
+### 27j. Bench checklist (Linux, on top of §1a's and §22e's)
+
+The pagination is arithmetic and was verified as arithmetic — the painted
+offset of every page's first line was walked against the gradient's period on a
+seven-page script and came out at zero drift, and the metrics were checked for
+`6 + 54 + 6 = 66` at all eight zoom rungs. What cannot be checked without a
+window:
+
+1. **The sheets actually line up.** Open a script of 4+ pages and scroll to the
+   bottom. The last line of every page must sit inside its sheet, and the first
+   line of the next must sit one margin below the next sheet's edge. Any drift
+   grows with page number, so page 6 is where to look, not page 2.
+2. **The same, zoomed.** ⌘+ to 180% and 0.8, and repeat (1). This is the test
+   that catches a token that rounds independently.
+3. **Click at the bottom of page 5.** §1a's test, on the new grid. The caret
+   must land on the character clicked.
+4. **Hold ↓ across a page break.** No skipped or doubled lines. The break line
+   carries ~200px of padding and is the most likely place for a vertical step
+   to land oddly.
+5. **A page that absorbed a blank.** Find a break where the page above ends on a
+   blank line (`--sp-fill` will be negative in the DOM) and check the next
+   sheet still lines up. This is rule 7.
+6. **Courier.** The column model assumes a 0.6em advance. If the mono face
+   falls through to something else the wrap count is wrong and pages drift —
+   confirm the body is Courier (macOS) or the bundled JetBrains Mono fallback,
+   and that a full-width action line is 60 characters at the right margin.
+7. **Title Page tab, both directions.** Fill all six fields, switch to Script,
+   confirm the block is at the top of the file and the script did not move.
+   Then add a `Copyright:` line by hand in the script view, return to the tab,
+   edit `Author:`, and confirm the copyright line is still there in its
+   original position.
+8. **Tab round-trip and the caret.** Script → Title Page → Script, then click
+   in the middle of page 3. This is the `requestMeasure` in §27e; if it is
+   wrong the caret will be badly off after the switch and fine before it.
+9. **Drag a scene.** Move scene 4 above scene 2 and confirm the script rewrote,
+   ⌘Z restores it, the rail renumbered, and the save badge went dirty → clean.
+   Then move the **last** scene up and confirm the heading below it still
+   parses as a heading (that is the Rust test that exists because this went
+   wrong once).
+10. **Smart-type.** Type a blank line then two letters of a character who has
+    already spoken — the popup should show them most-recent-first. ⏎ accepts.
+    Then type `INT. ` and confirm past locations appear above the bare
+    prefixes. Esc must dismiss without inserting, and ⏎ with no popup must
+    still do the Final Draft paragraph rhythm.
+11. **Narrow pane.** Open a screenplay with the sidebar and right pane both
+    open on a small screen. The article should scroll sideways, the left
+    binding margin must stay reachable, and nothing should reflow.
+12. **Both themes and AquariusOS.** The sheet is `--surface` on a `--bg` desk
+    with a `--line` hairline at each page edge; the gap shadow should read as a
+    shadow on all three, not as a black band on Midnight.

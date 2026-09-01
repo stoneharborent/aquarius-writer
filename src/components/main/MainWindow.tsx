@@ -5,8 +5,9 @@ import { ScenesRail } from "@/components/rails/ScenesRail";
 import { ProseEditor } from "@/components/editors/prose/ProseEditor";
 import { NoteEditor } from "@/components/editors/note/NoteEditor";
 import { ScreenplayEditor } from "@/components/editors/screenplay/ScreenplayEditor";
-import { TitlePage } from "@/components/editors/screenplay/TitlePage";
-import { estimatePages } from "@/lib/markdown/fountain-smart";
+import { TitlePageEditor } from "@/components/editors/screenplay/TitlePage";
+import { paginate } from "@/lib/markdown/fountain-smart";
+import { movePermutation, reorderScenes } from "@/lib/markdown/fountain-scenes";
 import { countWords } from "@/lib/words";
 import { ImageViewer } from "@/components/viewers/ImageViewer";
 import { PdfViewer } from "@/components/viewers/PdfViewer";
@@ -28,11 +29,11 @@ import { useOverlay } from "@/state/overlayStore";
 import { useToolbar } from "@/state/toolbarStore";
 import {
   EDITOR_MIN, GUTTER,
-  RIGHT_DEFAULT, RIGHT_MIN,
+  RIGHT_DEFAULT, RIGHT_MIN, RIGHT_TAB_LABEL,
   SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
   useShell,
 } from "@/state/shellStore";
-import { collectScenes, splitTitlePage } from "@/lib/fountain";
+import { collectScenes, parseTitleBlock, splitTitlePage } from "@/lib/fountain";
 import type { ChapterStatus } from "@/types/vault";
 import "./MainWindow.css";
 
@@ -40,7 +41,7 @@ export function MainWindow() {
   const { view } = useVault();
   const {
     sidebarWidth, sidebarCollapsed, setSidebarWidth, setSidebarCollapsed,
-    rightWidth, rightCollapsed, setRightWidth, setRightCollapsed,
+    rightWidth, rightCollapsed, rightTab, setRightWidth, setRightCollapsed,
   } = useShell();
   const host = useRef<HTMLDivElement>(null);
 
@@ -136,8 +137,11 @@ export function MainWindow() {
           />
         )}
 
+        {/* The gutter names what will come back, not what came first — a
+            writer who put a terminal away should not be offered "Comments". */}
         {rightCollapsed
-          ? <Gutter label="Comments" side="left" onOpen={() => setRightCollapsed(false)} />
+          ? <Gutter label={RIGHT_TAB_LABEL[rightTab]} side="left"
+              onOpen={() => setRightCollapsed(false)} />
           : <RightPane />}
       </div>
     </div>
@@ -495,17 +499,30 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
   const parsed = useMemo(() => {
     if (!doc?.body) return { titlePage: {}, body: "", titleBlockText: "", scenes: [] };
     const split = splitTitlePage(doc.body);
-    const titleBlockText = doc.body.slice(0, doc.body.length - split.body.length);
+    const titleBlockText = doc.body.slice(0, parseTitleBlock(doc.body).length);
     return { ...split, titleBlockText, scenes: collectScenes(split.body) };
   }, [doc?.body]);
 
   const [activeScene, setActiveScene] = useState<number | null>(0);
   const [pageCount, setPageCount] = useState<number | null>(null);
+  /** Script / Title Page — SWIFT-AUDIT §2.1's "second tab on the same file". */
+  const [tab, setTab] = useState<"script" | "title">("script");
   const surface = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (parsed.body) setPageCount(estimatePages(parsed.body.split("\n")).pageCount);
+    if (parsed.body) setPageCount(paginate(parsed.body.split("\n")).pageCount);
   }, [parsed.body]);
+
+  // Coming back from the Title Page tab, the script editor has spent that time
+  // in a `display: none` subtree where everything measures as zero. Tell
+  // CodeMirror to rebuild its height map before the writer clicks in it — see
+  // `remeasure` in ScreenplayEditor and NOTES §1a.
+  useEffect(() => {
+    if (tab !== "script") return;
+    const host = surface.current?.querySelector<HTMLDivElement>(".screenplay-editor");
+    (host as (HTMLDivElement & { __screenplayMeasure?: () => void }) | null)
+      ?.__screenplayMeasure?.();
+  }, [tab]);
 
   function handleSceneSelect(idx: number) {
     setActiveScene(idx);
@@ -517,6 +534,30 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
     const host = surface.current?.querySelector<HTMLDivElement>(".screenplay-editor");
     const fn = (host as HTMLDivElement & { __screenplayScroll?: (n: number) => void } | null)?.__screenplayScroll;
     fn?.(scene.from);
+  }
+
+  /**
+   * A scene dragged in the rail rewrites the script.
+   *
+   * The rewrite is `reorderScenes`, the renderer's mirror of the Rust
+   * `vault::fountain::reorder_scenes` the MCP tool calls — one behaviour, two
+   * doors. It goes back in through `handleBodyEdit`, so it is a normal buffer
+   * edit: undoable in the editor's own history, debounced, and saved through
+   * the conflict guard like a keystroke. A refused permutation changes nothing
+   * and says so rather than half-applying.
+   */
+  function handleSceneReorder(from: number, to: number) {
+    if (readOnly) return;
+    const result = reorderScenes(
+      parsed.body,
+      movePermutation(parsed.scenes.length, from, to),
+    );
+    if ("error" in result) {
+      console.warn(`[screenplay] scene reorder refused: ${result.error}`);
+      return;
+    }
+    handleBodyEdit(result.text);
+    setActiveScene(to);
   }
 
   function handleBodyEdit(nextBody: string) {
@@ -540,14 +581,36 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
           scenes={parsed.scenes}
           activeIndex={activeScene}
           onSelect={handleSceneSelect}
+          onReorder={readOnly ? undefined : handleSceneReorder}
         />
       )}
-      {/* The screenplay keeps its own surface — its paged canvas with real page
-          breaks is a later wave (PARITY row 12), and dropping it onto the prose
-          page sheet now would fake a page geometry it does not have yet. */}
+      {/* The screenplay is a paged canvas now (PARITY row 12): a desk, and real
+          US-Letter sheets drawn from the point geometry in
+          `screenplay-metrics.ts`. It does NOT use `.mw-sheet` — that is the
+          prose canvas's one continuous page, and a screenplay's sheets are
+          painted inside the CodeMirror content box so the text and the page
+          edges cannot drift apart. */}
       <article className="mw-prose mw-screenplay">
         <header className="mw-prose-head">
           <span className="mw-prose-crumb">{secondary ? "" : path}</span>
+          {!secondary && (
+            <div className="mw-tabs" role="tablist" aria-label="Screenplay views">
+              <button
+                className={`mw-tab${tab === "script" ? " active" : ""}`}
+                role="tab" aria-selected={tab === "script"}
+                onClick={() => setTab("script")}
+              >
+                Script
+              </button>
+              <button
+                className={`mw-tab${tab === "title" ? " active" : ""}`}
+                role="tab" aria-selected={tab === "title"}
+                onClick={() => setTab("title")}
+              >
+                Title Page
+              </button>
+            </div>
+          )}
           {!secondary && (
             <button className="mw-mode-btn" title="Print-layout preview"
               onClick={() => useOverlay.getState().open("screenplay-preview", { path })}>
@@ -557,8 +620,11 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
           <SaveBadge status={status} />
           {!secondary && <SplitButton path={path} />}
         </header>
-        {Object.keys(parsed.titlePage).length > 0 && <TitlePage tp={parsed.titlePage} />}
-        <div className="mw-prose-editor">
+        {/* The script editor is never unmounted by the tab switch — a
+            CodeMirror teardown would take the undo history, the caret and the
+            per-pane zoom registration with it, and the writer would come back
+            from the title page to a document that had forgotten them. */}
+        <div className="mw-prose-editor" hidden={tab !== "script"}>
           {doc ? (
             <ScreenplayEditor
               value={parsed.body}
@@ -573,6 +639,15 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
             <p className="mw-prose-loading">Loading…</p>
           )}
         </div>
+        {tab === "title" && doc && (
+          <div className="mw-prose-editor">
+            <TitlePageEditor
+              value={doc.body}
+              onChange={(next) => edit(path, next)}
+              readOnly={readOnly}
+            />
+          </div>
+        )}
         <footer className="mw-prose-foot">
           <span>{parsed.scenes.length} scenes</span>
           {pageCount !== null && <span>{pageCount} {pageCount === 1 ? "page" : "pages"}</span>}
