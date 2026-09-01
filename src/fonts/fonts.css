@@ -19,10 +19,10 @@
  * which is why there is one file per subset rather than one per weight.
  * Subsets are the Google Fonts latin and latin-ext slices.
  *
- * Licences: SIL Open Font License 1.1, all four — full texts beside this file
+ * Licences: SIL Open Font License 1.1, all five — full texts beside this file
  * (LICENSE-*.txt). Downloaded from fonts.googleapis.com/css2 on 2026-08-25:
- * Sora v17, Inter v20, JetBrains Mono v24. Source Serif 4 v14 was added
- * 2026-08-31 from the same source.
+ * Sora v17, Inter v20, JetBrains Mono v24. Source Serif 4 v14 and
+ * Courier Prime v11 were added 2026-08-31 from the same source.
  */
 
 /* ── Sora → "AQ Sora", weights 600 700 ── */
@@ -130,5 +130,94 @@
   font-weight: 400 700;
   font-display: swap;
   src: url("./source-serif-4-italic-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ── Courier Prime → "AQ Courier Prime", 400 + 700 + italic 400 ───────────
+ *
+ * THE SCREENPLAY FACE. `--font-screenplay` (tokens.css) is what the paged
+ * canvas, the print-preview overlay, the Title Page tab and the scenes rail's
+ * slug chips are set in, and this bundled family leads it on EVERY platform —
+ * ahead of a system "Courier Prime", ahead of "Courier New", ahead of macOS
+ * Courier. That is deliberate and it is the same trade §1a made for the serif:
+ * we give up "whatever Courier this machine has" and get identical glyphs, and
+ * therefore an identical height map, on macOS and WebKitGTK.
+ *
+ * Before this, `--font-mono` read `"Courier Prime", "Courier New", …` and
+ * nothing in that chain was bundled: macOS resolved a screenplay to Courier
+ * New, Linux fell through to DejaVu Sans Mono. Different advance, different
+ * wrap, different pages.
+ *
+ * ── THE 0.6em ASSERTION (screenplay-metrics.ts CHAR_PT = 7.2 = 0.6 × 12pt) ──
+ * `screenplay-metrics.ts` derives every column count from a glyph advance of
+ * exactly 0.6em (7.2pt at 12pt), and `fountain-pages.ts` wraps at 60 / 37 / 25
+ * / 35 columns on that basis. Measured from these exact files (fontTools,
+ * 2026-08-31): unitsPerEm = 2048, and EVERY glyph in all three faces has a
+ * single advance of 1228 units.
+ *
+ *     1228 / 2048 = 0.599609375 em      (0.6 × 2048 = 1228.8, rounded down)
+ *
+ * So the advance is 0.6em rounded onto Courier Prime's 2048 grid, 0.00039em
+ * short. At the 16px base line box that is 9.59375px per glyph, and a
+ * full-width 60-column action line paints 575.625px inside a text column that
+ * is exactly 576px. It FITS, with 0.375px to spare — which is the direction we
+ * want the error to point: an advance of exactly 0.6em would paint 576.000px
+ * into a 576px box and sit on the knife edge where one device-pixel of
+ * rounding wraps the last glyph and desynchronises `wrapRows` from the paint.
+ * If this face is ever swapped, re-run that check: the column count is only
+ * correct while `60 × advance ≤ 576px`.
+ *
+ * Roman, bold and italic are all bundled. Bold is the character cue and the
+ * scene heading; italic is the parenthetical and the synopsis. A synthesised
+ * oblique or a synthesised bold has different metrics again, which is exactly
+ * the class of bug this file exists to prevent. Bold-italic is deliberately
+ * NOT bundled: no screenplay element asks for both at once.
+ */
+@font-face {
+  font-family: "AQ Courier Prime";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./courier-prime-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "AQ Courier Prime";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./courier-prime-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "AQ Courier Prime";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./courier-prime-bold-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "AQ Courier Prime";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./courier-prime-bold-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "AQ Courier Prime";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./courier-prime-italic-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "AQ Courier Prime";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./courier-prime-italic-latin-ext.woff2") format("woff2");
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }

@@ -24,6 +24,36 @@ const LINK = Decoration.mark({ class: "cm-link" });
 const CODE = Decoration.mark({ class: "cm-inline-code" });
 const QUOTE_LINE = Decoration.line({ class: "cm-quote" });
 
+/**
+ * ── WHY THIS DOES NOT REBUILD ON `viewportChanged` (NOTES §27k) ───────────
+ *
+ * `build` walks the whole syntax tree and returns a decoration set for the
+ * whole document. NOTES §1 called this "viewport-scoped"; it never was. What
+ * saved it on macOS is that nothing forced it to run very often.
+ *
+ * On the Linux build something does. The prose editor is the same
+ * grow-to-content embed the screenplay is, so `watchAncestorScroll`
+ * (cm-embed.ts) calls `requestMeasure()` on every scroll event of the
+ * surrounding article, and every measure that moved the viewport re-ran a full
+ * `syntaxTree` iteration over the document before a frame could be painted.
+ *
+ * A whole-document decoration set is already correct for any viewport, so
+ * there is nothing to recompute when one changes — dropping the trigger is
+ * exact, not an approximation. `docChanged` and `selectionSet` stay: the doc
+ * changing invalidates the tree, and the caret moving is what fades the
+ * syntax marks in and out on the caret's line.
+ *
+ * The third trigger is the one that is easy to get wrong when removing the
+ * second: Lezer parses a long document in the background and hands the rest of
+ * the tree over in an update that changed neither the document nor the
+ * selection. `syntaxTree(startState) !== syntaxTree(state)` is the standard
+ * CodeMirror guard for exactly that, and it is what used to be covered
+ * incidentally by rebuilding on every scroll.
+ *
+ * If this is ever made genuinely viewport-scoped (`tree.iterate({from, to})`
+ * over `view.visibleRanges`), it may watch the viewport again — and it must,
+ * at that point.
+ */
 export function wysiwygDecorations() {
   return ViewPlugin.fromClass(
     class {
@@ -32,7 +62,11 @@ export function wysiwygDecorations() {
         this.decorations = build(view.state);
       }
       update(u: ViewUpdate) {
-        if (u.docChanged || u.viewportChanged || u.selectionSet) {
+        if (
+          u.docChanged ||
+          u.selectionSet ||
+          syntaxTree(u.startState) !== syntaxTree(u.state)
+        ) {
           this.decorations = build(u.state);
         }
       }

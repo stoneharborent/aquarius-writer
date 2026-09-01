@@ -1,4 +1,5 @@
 import { Overlay } from "./Overlay";
+import { comboLabel } from "@/lib/shortcuts";
 import "./CheatSheet.css";
 
 interface ShortcutRow {
@@ -45,6 +46,23 @@ const GROUPS: { name: string; rows: ShortcutRow[] }[] = [
     ],
   },
   {
+    /* Screenplay only, and only while the script has the caret — the window's
+       ⌘1/⌘2/⌘3 view keys stand down for a focused screenplay so these reach
+       the editor (see `screenplayOwnsDigit` in lib/shortcuts.ts). */
+    name: "Screenplay elements",
+    rows: [
+      { combo: "⌘1", label: "Scene heading" },
+      { combo: "⌘2", label: "Action" },
+      { combo: "⌘3", label: "Character cue" },
+      { combo: "⌘4", label: "Parenthetical" },
+      { combo: "⌘5", label: "Dialogue" },
+      { combo: "⌘6", label: "Transition" },
+      { combo: "⌘7", label: "Shot" },
+      { combo: "Tab", label: "Next element · ⇧Tab for the previous one" },
+      { combo: "⏎", label: "Finish the element and start the one that follows it" },
+    ],
+  },
+  {
     name: "System",
     rows: [
       { combo: "⌘,", label: "Settings" },
@@ -66,7 +84,7 @@ export function CheatSheet() {
               {g.rows.map((r) => (
                 <li key={r.combo}>
                   <span className="cs-label">{r.label}</span>
-                  <kbd className="cs-kbd">{r.combo}</kbd>
+                  <kbd className="cs-kbd">{comboLabel(r.combo)}</kbd>
                 </li>
               ))}
             </ul>

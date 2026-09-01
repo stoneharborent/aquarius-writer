@@ -1,4 +1,4 @@
-/* ── THE PAGED CANVAS (PARITY row 12, SWIFT-AUDIT §2.1, NOTES §27) ────────
+/* ── THE PAGED CANVAS (PARITY row 12, SWIFT-AUDIT §2.1, NOTES §27/§27k) ────
  *
  * Grow-to-content embed: the surrounding article (.mw-prose) is the scroll
  * container. A fixed-height editor with its own internal scroller broke CM's
@@ -13,7 +13,8 @@
  *
  *   • `.cm-content` is exactly one page wide (`--sp-page-w`) with the real
  *     industry margins as its padding — 1.5" left, 1" right, 1" top.
- *   • Its `background-image` is a REPEATING gradient whose period is
+ *   • `.cm-content::before` — a dedicated, absolutely-positioned background
+ *     layer at `inset: 0` — carries a REPEATING gradient whose period is
  *     `--sp-page-h + --sp-gap`: one sheet, then a strip of desk.
  *   • Every page break line carries `--sp-fill`, the number of blank rows owed
  *     to the foot of the page above it, and turns it into padding-top:
@@ -30,6 +31,28 @@
  * grid in `fountain-ext.ts` exists to protect: no element padding, no
  * per-line gap, no borders in the content path. Add 1px of vertical padding
  * anywhere below and the text walks off the sheets.
+ *
+ * ── WHY THE GRADIENT MOVED TO ITS OWN LAYER, AND WHY IT IS ALL HARD STOPS ──
+ * (2026-08-31, the WebKitGTK scroll pass — NOTES §27k.)
+ *
+ * It used to sit on `.cm-content` itself, next to the text, under a
+ * `0 1px 14px` drop shadow. Both cost real time on every scrolled pixel:
+ *
+ *   1. Same layer as the text. CodeMirror mutates `.cm-content` constantly —
+ *      viewport re-render, caret, selection, decoration changes — and every
+ *      invalidated rectangle repainted the gradient underneath it as well.
+ *      A `::before` at `inset: 0` is by construction exactly the padding box
+ *      the gradient's origin already used, so the geometry is bit-identical,
+ *      and `contain: layout paint` keeps its repaints to itself.
+ *   2. A BLURRED shadow on a 100,000px-tall box. A blur is a per-pixel
+ *      convolution and it cannot be cached across the element, so WebKit
+ *      re-rasterises it for every tile the scroll exposes, for the whole
+ *      length of the document. Final Draft does not draw one anyway.
+ *
+ * So the gradient is now nothing but SOLID colour-stop pairs — paper, a 1px
+ * edge, a 2px offset shadow, desk — with no alpha ramp anywhere. Every band
+ * rasterises as a fill rather than as an interpolation. Keep it that way: a
+ * single soft stop here is paid back on every frame of every scroll.
  */
 
 /* A block, not a flex row. The sheet is centred by `margin: 0 auto` on the
@@ -50,9 +73,7 @@
   overflow: visible;
 }
 
-/* One page wide, with the real margins as padding. `background-origin` is
-   `padding-box` by default, so the gradient's zero is the top edge of page 1 —
-   which is exactly where the top margin starts. */
+/* One page wide, with the real margins as padding. */
 .screenplay-editor .cm-editor .cm-content {
   /* border-box: the page is 816px INCLUDING its margins, leaving a 576px text
      column — exactly 432pt, exactly 60 Courier columns.
@@ -79,27 +100,70 @@
     var(--sp-tailrows, 0) * var(--sp-line, 16px) + var(--sp-margin-b, 96px)
   ));
 
-  background-color: transparent;
-  background-image: repeating-linear-gradient(
-    to bottom,
-    var(--surface) 0,
-    var(--surface) calc(var(--sp-page-h, 1056px) - 1px),
-    var(--line) calc(var(--sp-page-h, 1056px) - 1px),
-    var(--line) var(--sp-page-h, 1056px),
-    /* the shadow one sheet casts on the one under it */
-    rgba(0, 0, 0, 0.18) var(--sp-page-h, 1056px),
-    rgba(0, 0, 0, 0) calc(var(--sp-page-h, 1056px) + 6px),
-    transparent calc(var(--sp-page-h, 1056px) + 6px),
-    transparent calc(var(--sp-page-h, 1056px) + var(--sp-gap, 24px))
-  );
+  /* Paper is paper on every theme (NOTES §27k). The ink token is restated in
+     `fountainTheme`; it is here too so an undecorated line — the split second
+     before the ViewPlugin runs — is never theme-coloured text on a white
+     sheet. */
+  color: var(--page-ink);
+  background: transparent;
 
-  /* One shadow around the whole stack — a box-shadow cannot be repeated, and
-     the gradient above already separates the sheets. Matches `.mw-sheet`. */
-  box-shadow: 0 0 0 1px var(--line), 0 1px 14px rgba(0, 0, 0, 0.22);
+  /* The containing block + stacking context for the sheet layer below.
+     `.cm-scroller` is `position: relative; z-index: 0` in CodeMirror's base
+     theme, so WITHOUT this the `z-index: -1` layer would escape past
+     `.cm-content` and paint behind `.mw-screenplay`'s desk — i.e. vanish.
+     `position: relative` with no offsets changes no geometry and nothing CM
+     measures; `.cm-aq-pagebreak-line` already relies on the same trick. */
+  position: relative;
+  z-index: 0;
+
+  /* The left / right / outer edges of the stack. A spread-only ring, so there
+     is no blur to re-rasterise. It runs continuously down the side of the
+     stack, including alongside the desk gaps — that is a deliberate
+     simplification: per-page side rails would need a second background layer
+     that cannot be clipped to the sheet bands with one gradient, and a bound
+     stack of pages is what it reads as. */
+  box-shadow: 0 0 0 1px var(--page-line);
 }
 
-:root[data-theme="ice"] .screenplay-editor .cm-editor .cm-content {
-  box-shadow: 0 0 0 1px var(--line), 0 1px 14px rgba(16, 40, 66, 0.1);
+/* The sheets. See the header comment for why this is a separate layer and why
+   every stop is hard. */
+.screenplay-editor .cm-editor .cm-content::before {
+  content: "";
+  position: absolute;
+  /* Exactly the padding box, which is exactly where `background-origin:
+     padding-box` put the gradient's zero before. Nothing to re-derive, and
+     nothing that can round differently from the content it sits behind. */
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  /* Paint containment: this layer's repaints do not escape it, and the text's
+     do not reach into it. NOT `contain: strict` — size containment would buy
+     nothing here (the box is already definite from `inset: 0`) and it is the
+     one part of `strict` with a real chance of collapsing the layer on an
+     engine that gets the abs-positioned case wrong. NOT force-composited
+     either: a translateZ layer 100,000px tall is a backing store WebKitGTK
+     would rather not be asked for. */
+  contain: layout paint;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    /* the sheet's head: a 1px edge, so pages 2+ get a top border too and not
+       only the outer ring around the whole stack */
+    var(--page-line) 0,
+    var(--page-line) 1px,
+    /* the sheet */
+    var(--page-surface) 1px,
+    var(--page-surface) calc(var(--sp-page-h, 1056px) - 1px),
+    /* its foot: a crisp 1px edge, like Final Draft's */
+    var(--page-line) calc(var(--sp-page-h, 1056px) - 1px),
+    var(--page-line) var(--sp-page-h, 1056px),
+    /* a 2px OFFSET hairline, not a blur — the whole shadow, and it costs one
+       solid fill per page instead of a convolution per tile */
+    var(--page-shadow) var(--sp-page-h, 1056px),
+    var(--page-shadow) calc(var(--sp-page-h, 1056px) + 2px),
+    /* flat desk to the next sheet */
+    transparent calc(var(--sp-page-h, 1056px) + 2px),
+    transparent calc(var(--sp-page-h, 1056px) + var(--sp-gap, 24px))
+  );
 }
 
 /* ── the break between two pages ──────────────────────────────────────────
@@ -127,8 +191,9 @@
 
 /* The page number, 0.5" down from the new sheet's top edge and flush with the
    right text margin — which is where `right: 0` already is, because a line
-   element spans the text column. Absolutely positioned, so it contributes no
-   layout and cannot disturb the grid. */
+   element spans the text column. That is where Final Draft puts it: inside the
+   margin, on the paper, in the page's own face. Absolutely positioned, so it
+   contributes no layout and cannot disturb the grid. */
 .cm-aq-pagebreak-line::before {
   content: attr(data-page);
   position: absolute;
@@ -139,9 +204,9 @@
     + var(--sp-gap, 24px)
     + var(--sp-pagenum-top, 48px)
   );
-  font-family: var(--font-mono);
+  font-family: var(--font-screenplay);
   font-size: var(--sp-line, 16px);
   line-height: var(--sp-line, 16px);
-  color: var(--ink-mute);
+  color: var(--page-ink-soft);
   pointer-events: none;
 }

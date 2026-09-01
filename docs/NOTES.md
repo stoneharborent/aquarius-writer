@@ -134,6 +134,51 @@ either, so Ice/Midnight on Linux landed on DejaVu Sans Mono). The bundled
 first: Courier is the industry face for a screenplay and macOS has it.
 Full mono parity wants a bundled Courier Prime, and that is a follow-up.
 
+##### Addendum, 2026-08-31: the follow-up landed, and it split the token in two
+
+**Courier Prime is bundled** — `src/fonts/courier-prime-{,bold-,italic-}latin{,-ext}.woff2`,
+six slices, SIL OFL 1.1 with `LICENSE-CourierPrime-OFL.txt` beside them, from
+the same `fonts.googleapis.com/css2` source as the other four families (v11).
+Registered as **"AQ Courier Prime"** per the `AQ `-prefix rule.
+
+One token became two, because they were never one job:
+
+| token | is | leads with |
+|---|---|---|
+| `--font-screenplay` | **the page** — the paged canvas, the print-preview overlay, the Title Page tab, the scenes rail's slug chips | `AQ Courier Prime`, on **every** platform |
+| `--font-mono` | **the chrome** — keycaps, rail numbers, footer badges, the terminal | `AQ JetBrains Mono`, on every platform |
+
+Both leads are bundled, so neither surface resolves differently on the two
+engines any more. The chrome change is the smaller half but it is the same fix:
+Ice and Midnight used to draw their keycaps in Courier New on a Mac and DejaVu
+Sans Mono on Linux, where AquariusOS had always drawn JetBrains Mono.
+
+**The 0.6em assertion, checked rather than assumed.** `screenplay-metrics.ts`
+sets `CHAR_PT = 7.2` — 0.6 × 12pt — and every column count in
+`fountain-pages.ts` is `floor(width / 7.2pt)` on that basis. Measured out of
+these exact files with fontTools: `unitsPerEm` is **2048** and every glyph in
+all three faces has one advance, **1228**.
+
+```
+1228 / 2048 = 0.599609375 em     (0.6 × 2048 = 1228.8, rounded down)
+```
+
+So the advance is 0.6em rounded onto Courier Prime's own grid, 0.00039em short
+— and short is the direction we want. At the 16px base line box a full-width
+60-column action line paints **575.625px** inside a text column that is exactly
+**576px** (verified in the browser, not calculated: `getBoundingClientRect` on a
+60-glyph run in the loaded face). An advance of exactly 0.6em would paint
+576.000px into a 576px box and sit on the knife edge where one device pixel of
+rounding wraps the last glyph and desynchronises `wrapRows` from the paint.
+**If the face is ever swapped, re-run that check**: the column model is only
+correct while `60 × advance ≤ 576px`.
+
+Roman, bold and italic are all bundled — bold is the cue and the slug, italic
+is the parenthetical and the synopsis, and a synthesised weight or oblique has
+different metrics again. Bold-italic is deliberately not bundled: no screenplay
+element asks for both. The character cue's weight moved 600 → **700** at the
+same time, because 700 is a real file and 600 was a synthesis request.
+
 #### What was already clean
 
 `src/lib/markdown/wysiwyg.ts` hides markdown syntax with
@@ -3416,3 +3461,313 @@ window:
 12. **Both themes and AquariusOS.** The sheet is `--surface` on a `--bg` desk
     with a `--line` hairline at each page edge; the gap shadow should read as a
     shadow on all three, not as a black band on Midnight.
+
+### 27k. Addendum — Final Draft chrome, and the scroll that was not a renderer problem
+
+*Bench, 2026-08-31, v0.4.0 on AquariusOS: "scrolling still feels sluggish", and
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` made no difference. That last part is the
+useful half of the report — it rules out the compositor and says the cost is in
+**what we paint and what we recompute**, not in how it gets to the screen. Plus
+three chrome findings: the sheets did not look like Final Draft, scene headings
+were underlined, and ⌘1–⌘7 did not reach the editor.*
+
+Nothing in §27's arithmetic changed. The row model, the 54-row page, the
+`u(pt)` conversion, the `--sp-fill` padding and the gradient's period are
+untouched, and were re-verified after the change: the painted top of every
+page's first line lands at exactly `n × (pageH + gap) + marginT`, with a
+constant zero drift across pages.
+
+#### The scroll cost was three whole-document rebuilds per frame
+
+This is the finding, and it is not subtle once it is written down.
+
+`watchAncestorScroll` (`cm-embed.ts`) calls `view.requestMeasure()` on **every
+scroll event of the surrounding article**. It has to: both editors are
+grow-to-content embeds where the article scrolls, and without that nudge
+CodeMirror never re-renders below the initial fold. Every measure that moves
+the viewport raises `viewportChanged` on the next update — and three
+`ViewPlugin`s were rebuilding their **entire** decoration set on it:
+
+| plugin | what ran, per scrolled frame |
+|---|---|
+| `fountainDecorations` | `doc.toString()` + `split` + a full `paginate` + `classify` of every line + a `RangeSetBuilder` pass over every line |
+| `wysiwygDecorations` | a full `syntaxTree` iteration over the document |
+| `wikilinks` | a full regex scan of the document — **and** `collectMarkdown()`, a walk of the whole vault tree, on *every* update, rebuild or not |
+
+None of the three is viewport-scoped. `build()` returns a decoration set for
+the whole document in all three cases, and a whole-document decoration set is
+**already correct for any viewport** — so a viewport change had literally
+nothing to recompute. Dropping the trigger is exact, not an approximation.
+NOTES §1 said the wysiwyg restyle was viewport-scoped; it never was. What hid
+it on macOS is that nothing there forces a measure per scroll event.
+
+What replaced each trigger:
+
+- `fountainDecorations` and `wikilinks` → `docChanged` only. `wikilinks` also
+  compares the vault tree by identity (it is replaced wholesale by the store)
+  instead of re-walking it, so a scroll costs nothing at all there now.
+- `wysiwygDecorations` → `docChanged || selectionSet || syntaxTree(startState)
+  !== syntaxTree(state)`. That third clause is the one that is easy to lose:
+  Lezer parses a long document in the background and hands the rest of the tree
+  over in an update that changed neither doc nor selection, and rebuilding on
+  every scroll used to cover that case by accident.
+
+**The rule for anything added to these plugins:** if the work is O(document),
+it belongs behind `docChanged`. If it is genuinely scoped to
+`view.visibleRanges`, it may watch the viewport — and then it must.
+
+Two smaller ones in the same family:
+
+- **`paginate` ran twice per keystroke.** `fountainDecorations` wants the break
+  positions and their fill; `pageBreaks` wants the page count and the tail
+  rows. `paginateDoc(text)` is a one-entry memo on the document text, so the
+  second caller pays a string compare. A single entry is the right size — there
+  is one screenplay per editor and the question is always "again, for the
+  document I just asked about" — and keying on the text means it cannot go
+  stale.
+- **`pageBreaks` is debounced at 120ms.** Both of its outputs are slow-moving:
+  a page count in a footer badge, and the bottom padding of the last sheet
+  ninety pages below the caret. Neither can visibly change mid-word, and
+  recomputing them inside every keystroke's update cycle put an O(document)
+  pass on the typing path. 120ms is under the autosave debounce, so the badge
+  is always settled before a save.
+
+#### The paint taxes, which are the same change as the Final Draft look
+
+The two goals turned out to be one edit. Final Draft draws flat near-white
+paper, a crisp 1px edge, and **no soft drop shadow at all** — and a soft drop
+shadow is precisely what costs a scroll frame.
+
+- **The 14px blurred `box-shadow` is gone from both canvases.** A blur is a
+  per-pixel convolution that cannot be cached across the element, so WebKit
+  re-rasterises it for every tile a scroll exposes, down both edges, for the
+  full length of the document — and `.mw-sheet` (prose) and `.cm-content`
+  (screenplay) are single elements as tall as the whole chapter or script.
+  Screenplay: a spread-only `0 0 0 1px var(--page-line)` ring, no blur at all.
+  Prose: the brief said cap anything over 4px, so the audit's `r14` is now
+  `0 1px 3px` — the same shadow at a glance, a fraction of the work.
+- **The sheet gradient is all hard stops now.** It carried a 6px
+  `rgba(0,0,0,0.18) → transparent` ramp between sheets, which is a real
+  interpolation across the full page width, once per page period, per tile.
+  It is a 2px solid offset hairline instead. Every band in the repeating
+  gradient is now a solid colour-stop pair, so the whole thing rasterises as
+  fills. **Keep it that way**: one soft stop here is paid on every frame of
+  every scroll.
+- **The gradient moved off `.cm-content` onto `.cm-content::before`.**
+  CodeMirror mutates `.cm-content` constantly — viewport re-render, caret,
+  selection, decorations — and every invalidated rectangle was repainting the
+  sheets underneath it. A pseudo-element at `inset: 0` is *by construction*
+  exactly the padding box whose origin the gradient already used, so the
+  geometry is bit-identical and cannot round apart from the text the way an
+  independently-centred sibling layer could.
+  Two deliberate non-choices: `contain: layout paint`, **not** `contain:
+  strict` (size containment buys nothing when `inset: 0` already gives a
+  definite size, and it is the one part of `strict` with a real chance of
+  collapsing the layer on an engine that gets the absolutely-positioned case
+  wrong); and **no forced compositing** — a `translateZ` layer 100,000px tall
+  is a backing store WebKitGTK would rather not be asked for.
+  This needs `position: relative; z-index: 0` on `.cm-content`, and the
+  `z-index` is load-bearing, not decoration: `.cm-scroller` is `position:
+  relative; z-index: 0` in CodeMirror's base theme, so without a stacking
+  context on `.cm-content` the `z-index: -1` layer escapes past it and paints
+  *behind the desk*, i.e. vanishes.
+- **`will-change: transform` came off every scene row.** It was standing on
+  `.rail-item.rail-scene` — a permanent compositing layer and backing store per
+  row, two hundred of them sitting idle on the same GPU the editor scrolls on.
+  It is scoped to `.rail-list.rail-dragging` now, a class the rail puts on
+  while a drag is live, so the promotion is in place before the first row
+  slides (which `.sliding` alone would not have managed — it arrives with the
+  transform) and gone again on drop.
+
+**Swept and found clean:** no `filter`, no `mix-blend-mode`, no
+`background-attachment` anywhere in `src/`. The desktop gradient is on `body`,
+which has `overflow: hidden` and does not scroll; the scrolling article
+(`.mw-prose`) has no background of its own and its children paint a flat
+`var(--bg)` desk. The sidebar's `backdrop-filter` was already removed on
+2026-08-30. The only other `will-change` is on xterm's screen, where it belongs.
+
+#### The chrome, before → after
+
+| | was | is |
+|---|---|---|
+| sheet | `--surface` (a theme colour: pale blue on Ice, navy on Midnight, `#10121C` on AquariusOS) | `--page-surface` — paper on every theme. `#FFFFFF` on Ice, `#DFE4EA` on Midnight, `#DCDFE8` on AquariusOS: dimmed so a full-window white page is not punishing on a dark desk, but unmistakably paper |
+| ink | `--ink-prose` (Midnight's is a pale blue) | `--page-ink` — `#0B0D12` / `#10141B` / `#0C0E15`. Near-black on every theme, because ink is |
+| page edge | a 1px `--line` ring + a 14px blurred shadow | a 1px `--page-line` ring, a 1px hairline at the head **and** the foot of every sheet, a 2px `--page-shadow` offset hairline. No blur |
+| desk gap | 24px, with 6px of blur ramp eating into it | 24px of flat desk |
+| page number | `--font-mono`, `--ink-mute` | `--font-screenplay` (Courier Prime), `--page-ink-soft`, same place: 0.5" down, flush right, inside the margin — where Final Draft puts it |
+| scene heading | bold caps **+ an inset `box-shadow` rule under it** | bold caps. Nothing else — see below |
+| character cue | weight 600 | weight **700** (a real file rather than a synthesis; FD sets cues bold) |
+| parenthetical / synopsis | `--ink-soft` | `--page-ink-soft` |
+| `#` section / `=` synopsis colour | `--accent` (Midnight's electric cyan, illegible on paper) | `--page-accent`, one steel blue for all three themes. These are notes to the writer, not script |
+| Title Page sheet | `--surface`, 14px blur | the same paper tokens as the script's sheets, 2px offset hairline |
+| preview overlay | `--font-mono`, 14px blur, `--ink*` on a `#fff` page | `--font-screenplay`, 2px offset hairline, ink literals. It stays a literal white page: it is a picture of the printed PDF, not a writing surface |
+| prose sheet | unchanged look, `0 1px 14px` | unchanged look, `0 1px 3px` |
+
+**One cosmetic compromise, recorded so nobody rediscovers it as a bug.** The
+1px ring runs continuously down the left and right of the *stack*, including
+alongside the desk gaps, rather than closing each sheet individually. Per-page
+side rails need a second background layer that a single vertical gradient
+cannot clip to the sheet bands, and a bound stack of pages is what it reads as.
+The sheets' own top and foot hairlines are in the gradient and are per-page.
+
+#### The spacing audit against Final Draft
+
+Royce: *"spacing is all off."* Audited, and the grid itself was already right —
+what was wrong was one decoration and one weight. What was checked, and what it
+was checked against:
+
+1. **Set solid.** `font-size == line-height == --sp-line` in `fountainTheme`,
+   `.cm-line { padding: 0; margin: 0 }`. Verified in a browser against the
+   built CSS: a dialogue row measures exactly **16px**, a wrapped action line
+   exactly **32px**. Single-spaced Courier, as FD.
+2. **No element padding-top survives anywhere.** §27 removed scene 18px,
+   character 9px, transition 15px, section 15px and the 2px per-line gap from
+   `fountainTheme`, and the matching 24/12/12px from `ScreenplayPreview.css`.
+   Re-checked both files and every theme block: none has come back, and no
+   `[data-theme]` rule reaches into `.cm-fnt-*`. Fountain's blank lines are the
+   spacing; they are in the document and they are counted as rows.
+3. **Scene headings get no extra top space.** They are one line box tall like
+   everything else. The blank line above a slug in a script is a blank line the
+   writer typed.
+4. **THE UNDERLINE IS GONE.** Final Draft does not rule a scene heading — a
+   slug is bold uppercase Courier and nothing else. This port drew one from the
+   beginning (a `border-bottom`, which §27 converted to an inset `box-shadow`
+   because a border is 1px of layout). Removed from `fountainTheme`; there was
+   never one in `ScreenplayPreview.css` or anywhere else — `.sp-scene` is
+   `font-weight: 700` and no more — so this was the only site.
+5. **Weight is FD's.** Bold on scene headings, character cues and transitions.
+   Action and dialogue are regular. Nothing else is emphasised.
+6. **Horizontal geometry unchanged.** 60 / 37 / 25 / 35 columns off the point
+   margins, and the text column measured at exactly 576px with a 60-glyph run
+   at 575.625px inside it.
+
+#### ⌘1–⌘7 in the screenplay, and why `defaultPrevented` was not enough
+
+The app binds ⌘1/⌘2/⌘3 to Editor / Outline / Corkboard on `window`; the
+screenplay binds `Mod-1`…`Mod-7` to the seven elements inside CodeMirror. Both
+are real bindings on the same keys, and the collision is settled at the window
+listener — CM's element keymap is already `Prec.highest` *in its own editor*
+and cannot outrank a listener it never sees.
+
+In theory `if (e.defaultPrevented) return` settles it: CM's keymap handler is
+on `contentDOM`, the global listener is on `window` in the bubble phase, so CM
+runs first and calls `preventDefault()`. In practice there is a hole, and it is
+the case a writer lands in. CodeMirror's DOM observer defers `runHandlers` to a
+**microtask** when a keystroke arrives while the view is mid-update
+(`Promise.resolve().then(…)` in `DOMObserver.handleEvent`), and a microtask
+runs after the whole synchronous dispatch of the event — i.e. after the global
+listener has already switched the view out from under the editor. On a paged
+screenplay, where every keystroke schedules measure work, "mid-update" is most
+of the time.
+
+So the digits yield explicitly: `screenplayOwnsDigit` in `lib/shortcuts.ts`
+returns early for `mod + 1…7` when the event target is an **editable** content
+box inside a `.screenplay-editor`. Deliberately narrow — the read-only
+reference pane (whose `contentDOM` is `contenteditable=false`), the rails, the
+sidebar and every prose editor are untouched, and ⌘0 (zoom reset) and ⌘8/⌘9
+(unbound) are untouched too.
+
+While in there:
+
+- **The global handler already accepted Ctrl on Linux.** `mod(e)` is
+  `e.metaKey || e.ctrlKey` and always was, and it accepts either on both
+  platforms on purpose — a Mac keyboard on a Linux box, and the `?platform=`
+  preview, both want the other one to work. CodeMirror's `Mod-` resolves the
+  same way. Nothing needed fixing; it is now commented so the next reader does
+  not have to re-derive it.
+- **Modifier glyphs are platform-correct now.** Every combo in the app is
+  authored in the macOS glyphs, because that is what the Swift app shows and
+  what SWIFT-AUDIT quotes. `comboLabel()` rewrites them at render time rather
+  than duplicating the strings — `⌘E → Ctrl+E`, `⇧⌘F → Ctrl+Shift+F`, `⌘⌥\ →
+  Ctrl+Alt+\` — applied to the element pills, the cheat sheet and the command
+  palette's hints. `⌃⌘O` collapses to `Ctrl+O` on Linux, which is what the key
+  combination actually is there.
+- **The cheat sheet lists the seven element keys**, which it never did. They
+  are the only keys in the app a writer could not discover from a menu.
+
+#### The frame meter — `AQ_PERF=1`
+
+Everything above is a claim about paint cost, and none of it can be checked
+from the Mac: Apple Silicon runs the same CSS through CoreAnimation and reports
+a flat 120fps whatever we do. So there is a meter, and it runs on the shipped
+build.
+
+```
+AQ_PERF=1 ./AquariusWriter*.AppImage        # the bench command
+npm run dev -- and open ?perf=1              # the browser preview
+```
+
+A chip in the bottom-right corner — tokens, mono, 10px, no shadow and no blur,
+because a meter that costs a frame to draw is measuring itself. Three numbers,
+from one `requestAnimationFrame` loop and nothing else (no `PerformanceObserver`,
+no long-task API, nothing WebKitGTK might not have):
+
+- **fps** — frames in the last half second, scaled to the second.
+- **ms worst** — the slowest single frame in that window. This is the number
+  that matters for "sluggish": an average of 60 with one 90ms frame in it *is*
+  a stutter, and the average hides it. The chip colours itself off this
+  number, not the average.
+- **jank** — a running count of dropped frames since launch. It only goes up,
+  so the bench move is: scroll a long script, note what it climbed by, change
+  something, scroll the same distance again.
+
+The frame budget is learned from the fastest frame observed rather than
+assumed to be 16.7ms, so a 144Hz handheld is not permanently reported as
+janking.
+
+A rAF callback runs immediately before its frame's style/layout/paint, so a
+long gap between two callbacks means the *previous* frame's work — paint and
+compositing included — overran. That is exactly the quantity this section is
+about.
+
+**Zero cost when it is off**, and that is structural rather than a promise: the
+meter is a dynamic `import()`, so it builds as its own 1.3 kB chunk that a
+normal launch never fetches, parses or evaluates. The flag is read through the
+`dev_context` command that `installLogBridge` already invokes — one new `perf:
+bool` field off `AQ_PERF`, read in **release** builds too, because the whole
+point is to measure the AppImage on the machine that feels slow.
+
+#### Bench checklist (Linux, on top of §1a's, §22e's and §27j's)
+
+1. **The meter itself.** `AQ_PERF=1 ./AquariusWriter*.AppImage` — the chip
+   should appear bottom-right and read something. Nothing here could be
+   exercised on this Mac: the review harness runs with the tab backgrounded and
+   the browser suspends `requestAnimationFrame` in a hidden tab, so the loop
+   was never allowed to tick. It mounts, it is positioned and styled, and it
+   code-splits — that much is verified. The numbers are not.
+2. **The actual question.** Open a 40+ page screenplay, put the caret in it,
+   and scroll from the top to the bottom with the wheel at a steady rate.
+   Watch `jank`. Then do the same in a long prose chapter. This is the whole
+   reason for the pass; if it is still bad, the next suspects are CM's own
+   viewport re-render and the measure cycle, not the decorations.
+3. **Type a paragraph in the middle of a 40+ page script.** The debounced
+   pagination should mean the page-count badge settles ~120ms after you stop,
+   and typing itself should not stutter. If the badge never updates, the
+   debounce is firing into a destroyed view.
+4. **Scroll to the bottom of a long screenplay, then scroll back up.** Every
+   page break must still be decorated and every sheet must still line up. This
+   is the test for the dropped `viewportChanged`: if a page-break rule or a
+   `--sp-fill` were viewport-dependent after all, the symptom is a break that
+   renders correctly once and then not again.
+5. **Scroll a long markdown chapter to the bottom.** The syntax marks must
+   still hide on lines that were never on screen when the file opened. That is
+   the `syntaxTree` clause in `wysiwygDecorations` — if it is wrong, the far
+   end of a big document shows raw `**bold**`.
+6. **Courier Prime is actually loading.** The script body should be Courier
+   Prime, not Courier New and not DejaVu Sans Mono. Check a `(parenthetical)` —
+   it must be a true italic Courier, not a slanted roman. Then check a
+   full-width action line ends at the right margin at 60 characters.
+7. **The paper, all three themes.** Ice, Midnight, AquariusOS. The sheet must
+   read as paper on a desk in every one, the ink must be black-ish, the page
+   edges crisp, and there must be **no** soft glow around the stack. Midnight
+   and AquariusOS should be dimmed paper, not white.
+8. **No rule under a scene heading**, in the editor and in the print preview.
+9. **⌘1–⌘7 with the caret in the script.** Each must set its element and the
+   view must NOT switch to Outline or Corkboard. Then click the file tree and
+   press ⌘2 — the view *must* switch. Then open the split pane's read-only
+   half, click in it, press ⌘2 — the view must switch there too.
+10. **The element pills and the cheat sheet on Linux** should read `Ctrl+1`,
+    not `⌘1`.
+11. **Drag a scene in the rail.** It must still slide, and the promotion is now
+    scoped to the drag — if the slide became janky, `will-change` is arriving
+    too late and belongs back on the row.

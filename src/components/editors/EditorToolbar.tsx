@@ -8,6 +8,7 @@ import {
   applyElement,
   type FountainElement,
 } from "@/lib/markdown/fountain-smart";
+import { comboLabel } from "@/lib/shortcuts";
 import "./EditorToolbar.css";
 
 interface MdBtn {
@@ -17,8 +18,8 @@ interface MdBtn {
 }
 
 const INLINE: MdBtn[] = [
-  { cmd: "bold", label: <b>B</b>, title: "Bold (⌘B)" },
-  { cmd: "italic", label: <i>I</i>, title: "Italic (⌘I)" },
+  { cmd: "bold", label: <b>B</b>, title: `Bold (${comboLabel("⌘B")})` },
+  { cmd: "italic", label: <i>I</i>, title: `Italic (${comboLabel("⌘I")})` },
   { cmd: "strike", label: <s>S</s>, title: "Strikethrough" },
   { cmd: "code", label: <code>{"<>"}</code>, title: "Inline code" },
 ];
@@ -40,6 +41,11 @@ const INSERT: MdBtn[] = [
   { cmd: "table", label: "⊞", title: "Table" },
 ];
 
+/* The `kb` strings are authored in macOS glyphs and rendered through
+   `comboLabel`, which writes them as Ctrl+N on Linux and Windows — the pills
+   are the only place a writer learns these keys, so they have to name the key
+   the writer actually has. The bindings themselves are CodeMirror `Mod-N`,
+   which resolves the same way. */
 export const FOUNTAIN_ELEMENTS: { el: FountainElement; label: string; kb: string }[] = [
   { el: "scene", label: "Scene", kb: "⌘1" },
   { el: "action", label: "Action", kb: "⌘2" },
@@ -82,16 +88,16 @@ export function EditorToolbar({
             <button
               key={el}
               className={`ed-tb-pill${activeElement === el ? " on" : ""}`}
-              title={`${label} (${kb})`}
+              title={`${label} (${comboLabel(kb)})`}
               onClick={() => element(el)}
             >
               {label}
-              <span className="ed-tb-kb">{kb}</span>
+              <span className="ed-tb-kb">{comboLabel(kb)}</span>
             </button>
           ))}
         </div>
         <span className="ed-tb-spacer" />
-        <button className="ed-tb-btn" title="Undo (⌘Z)" onClick={() => md("undo")}>
+        <button className="ed-tb-btn" title={`Undo (${comboLabel("⌘Z")})`} onClick={() => md("undo")}>
           <UndoIcon size={13} />
         </button>
       </div>
@@ -120,11 +126,11 @@ export function EditorToolbar({
       <span className="ed-tb-sep" />
       {group(INSERT)}
       <span className="ed-tb-spacer" />
-      <button className="ed-tb-btn" title="Undo (⌘Z)"
+      <button className="ed-tb-btn" title={`Undo (${comboLabel("⌘Z")})`}
         onMouseDown={(e) => e.preventDefault()} onClick={() => md("undo")}>
         <UndoIcon size={13} />
       </button>
-      <button className="ed-tb-btn ed-tb-redo" title="Redo (⇧⌘Z)"
+      <button className="ed-tb-btn ed-tb-redo" title={`Redo (${comboLabel("⇧⌘Z")})`}
         onMouseDown={(e) => e.preventDefault()} onClick={() => md("redo")}>
         <UndoIcon size={13} />
       </button>

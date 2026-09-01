@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { comboLabel } from "@/lib/shortcuts";
 import { Overlay } from "./Overlay";
 import { useVault } from "@/state/vaultStore";
 import { useOverlay } from "@/state/overlayStore";
@@ -176,7 +177,7 @@ export function CommandPalette() {
               <span className="cp-icon">{i.icon}</span>
               <span className="cp-label">{i.label}</span>
               <span className="cp-group">{i.group}</span>
-              {i.hint && <span className="cp-hint">{i.hint}</span>}
+              {i.hint && <span className="cp-hint">{comboLabel(i.hint)}</span>}
             </li>
           ))}
         </ul>

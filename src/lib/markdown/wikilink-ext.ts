@@ -40,18 +40,30 @@ export function wikilinks(treeRef: { current: VaultNode | null }, onOpen: (path:
     },
   });
 
+  /* Two scroll taxes were paid here, and both are gone (NOTES §27k):
+     `collectMarkdown` walked the entire vault tree on EVERY update — every
+     scroll-driven measure, every caret move — and `build` re-scanned the whole
+     document whenever the viewport moved. `build` covers the whole document,
+     so a viewport change has nothing to recompute; and the vault tree is an
+     immutable object replaced wholesale by the store, so an identity compare
+     is an exact test for "the file list could have changed". */
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       files: ReturnType<typeof collectMarkdown>;
+      tree: VaultNode | null;
       constructor(view: EditorView) {
-        this.files = treeRef.current ? collectMarkdown(treeRef.current) : [];
+        this.tree = treeRef.current;
+        this.files = this.tree ? collectMarkdown(this.tree) : [];
         this.decorations = build(view.state, this.files);
       }
       update(u: ViewUpdate) {
-        // refresh file list once per update — tree may have changed
-        this.files = treeRef.current ? collectMarkdown(treeRef.current) : [];
-        if (u.docChanged || u.viewportChanged) {
+        const treeChanged = treeRef.current !== this.tree;
+        if (treeChanged) {
+          this.tree = treeRef.current;
+          this.files = this.tree ? collectMarkdown(this.tree) : [];
+        }
+        if (u.docChanged || treeChanged) {
           this.decorations = build(u.state, this.files);
         }
       }

@@ -13,12 +13,12 @@ import {
   type Transaction,
   type TransactionSpec,
 } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, ViewPlugin, keymap } from "@codemirror/view";
 import { type FountainLineKind } from "@/lib/fountain";
 import {
   classifyLines,
   isShotLine,
-  paginate,
+  paginateDoc,
   type Pagination,
 } from "@/lib/markdown/fountain-pages";
 
@@ -26,7 +26,7 @@ import {
 // the estimate became a real pagination engine (PARITY row 12). They are
 // re-exported here because half the app imports them from this module, and a
 // rename across six files buys nothing.
-export { classifyLines, isShotLine, estimatePages, paginate } from "@/lib/markdown/fountain-pages";
+export { classifyLines, isShotLine, estimatePages, paginate, paginateDoc } from "@/lib/markdown/fountain-pages";
 export type { PageEstimate, Pagination, Page } from "@/lib/markdown/fountain-pages";
 
 export type FountainElement =
@@ -318,17 +318,49 @@ export function fountainSmartTyping(
 // ── the page model, pushed out to React ───────────────────────────────────
 
 /**
- * Report the live pagination to the host on every document change.
+ * Report the live pagination to the host on document change, coalesced.
  *
  * The visible page-break rules render as **line decorations** inside
  * `fountainDecorations` (fountain-ext.ts) — widget decorations wedged CM's
  * viewport updates in this nested-scroll embed — and the sheets themselves are
  * a repeating background, so nothing here paints. What the host needs is the
  * page count for the footer and `tailRows` for the canvas's bottom padding.
+ *
+ * Two things about the timing (NOTES §27k):
+ *
+ *   • It watches `docChanged` ONLY. Scrolling never reaches it, and never did.
+ *   • It is debounced, because both of its outputs are slow-moving: a page
+ *     count in a footer badge and the bottom padding of the last sheet, 90
+ *     pages below wherever the writer is typing. Recomputing them inside every
+ *     keystroke's update cycle put an O(document) pass on the typing path for
+ *     a number that cannot visibly change mid-word. 120ms is under the
+ *     autosave debounce, so the badge is always settled before a save.
+ *
+ * `paginateDoc` is memoised on the document text, so when this fires and
+ * `fountainDecorations` has already paginated the same buffer, it is a string
+ * compare rather than a second pass.
  */
+const PAGINATE_DEBOUNCE_MS = 120;
+
 export function pageBreaks(onPages?: (p: Pagination) => void): Extension {
-  return EditorView.updateListener.of((u) => {
-    if (!onPages || !u.docChanged) return;
-    onPages(paginate(u.state.doc.toString().split("\n")));
-  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return [
+    EditorView.updateListener.of((u) => {
+      if (!onPages || !u.docChanged) return;
+      if (timer !== undefined) clearTimeout(timer);
+      const view = u.view;
+      timer = setTimeout(() => {
+        timer = undefined;
+        onPages(paginateDoc(view.state.doc.toString()));
+      }, PAGINATE_DEBOUNCE_MS);
+    }),
+    // A pending timer holding a destroyed view would fire into nothing; drop
+    // it with the editor rather than leaving it to run once after teardown.
+    ViewPlugin.define(() => ({
+      destroy() {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = undefined;
+      },
+    })),
+  ];
 }

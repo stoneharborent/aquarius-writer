@@ -960,6 +960,11 @@ pub struct DevContext {
     /// `AQ_WRITER_DEBUG=1` — mirror the WebView console to stderr as well as
     /// the errors that are forwarded unconditionally.
     pub debug: bool,
+    /// `AQ_PERF=1` — show the frame / jank meter (docs/NOTES.md §27k). Read in
+    /// RELEASE builds too, on purpose: the whole point is to measure the
+    /// shipped AppImage on the machine that feels slow, which is never a
+    /// `npm run dev` on the Mac.
+    pub perf: bool,
 }
 
 #[tauri::command]
@@ -970,6 +975,7 @@ pub fn dev_context(state: State<'_, AppState>) -> R<DevContext> {
         smoke: smoke == "1",
         smoke_welcome: smoke == "welcome",
         debug: std::env::var("AQ_WRITER_DEBUG").map(|v| v == "1").unwrap_or(false),
+        perf: std::env::var("AQ_PERF").map(|v| v == "1").unwrap_or(false),
     })
 }
 

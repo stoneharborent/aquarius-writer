@@ -228,6 +228,30 @@ export function paginate(lines: readonly string[]): Pagination {
   };
 }
 
+/* ── one-entry memo (NOTES §27k) ──────────────────────────────────────────
+ *
+ * Two independent consumers paginate the same buffer on the same keystroke:
+ * `fountainDecorations` needs the break positions and their fill, and
+ * `pageBreaks` needs the page count and the tail rows. Before the memo that
+ * was two full passes over the script per edit.
+ *
+ * A single entry is the right size: there is one screenplay open per editor
+ * and the question is always "again, for the document I just asked about".
+ * The key is the document text, so the cache cannot go stale — a miss costs
+ * one string comparison, which V8 settles on the length or the first
+ * differing byte long before `paginate` would have finished a line.
+ */
+let memoKey: string | null = null;
+let memoValue: Pagination | null = null;
+
+/** `paginate`, memoised on the document text. Prefer this from a CM plugin. */
+export function paginateDoc(text: string): Pagination {
+  if (memoKey === text && memoValue) return memoValue;
+  memoValue = paginate(text.split("\n"));
+  memoKey = text;
+  return memoValue;
+}
+
 export interface PageEstimate {
   pageCount: number;
   /** 0-based line indices that START a new page (page 2+). */

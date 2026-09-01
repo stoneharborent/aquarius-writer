@@ -1,5 +1,11 @@
 /* Print-layout preview — white US-Letter pages, Courier 12, industry indents.
-   Rendered at 612×792 CSS px (1pt = 1px). */
+   Rendered at 612×792 CSS px (1pt = 1px).
+
+   This sheet is a picture of the printed PDF rather than a writing surface, so
+   it stays a literal #fff page with #000 ink in every theme. What it DOES
+   share with the editor's paged canvas is the face: `--font-screenplay` is the
+   bundled Courier Prime (NOTES §1a addendum), so the preview and the page it
+   previews wrap at the same 60 columns. */
 .sp-scroll {
   overflow: auto;
   max-height: 70vh;
@@ -18,10 +24,13 @@
   min-height: 792px;
   background: #fff;
   color: #000;
-  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.18);
+  /* A 2px offset hairline, not a 14px blur. These sheets scroll inside
+     `.sp-scroll`, and a blurred shadow is re-rasterised tile by tile down the
+     whole stack (NOTES §27k). Final Draft draws no soft shadow either. */
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.16);
   border: 1px solid rgba(0, 0, 0, 0.5);
   padding: 72px 0;
-  font: 12px/12px var(--font-mono);
+  font: 12px/12px var(--font-screenplay);
   flex: none;
 }
 
@@ -29,7 +38,7 @@
   position: absolute;
   top: 30px;
   right: 72px;
-  font: 12px/12px var(--font-mono);
+  font: 12px/12px var(--font-screenplay);
 }
 
 .sp-line { white-space: pre-wrap; word-wrap: break-word; min-height: 12px; }
@@ -49,5 +58,5 @@
 .sp-paren { padding: 0 216px; color: #333; }
 .sp-dialogue { padding: 0 180px; }
 .sp-transition { padding: 0 101px 0 396px; text-align: right; font-weight: 700; }
-.sp-section { padding: 0 72px 0 108px; color: var(--accent); font-weight: 700; }
+.sp-section { padding: 0 72px 0 108px; color: var(--page-accent); font-weight: 700; }
 .sp-synopsis { padding: 0 72px 0 108px; font-style: italic; color: #555; }

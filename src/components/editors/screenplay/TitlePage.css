@@ -1,19 +1,23 @@
-/* The read-only title-page render, used by the print-preview overlay. */
+/* The read-only title-page render, used by the print-preview overlay.
+   It sits on `.sp-page`, which is a literal `#fff` sheet with `#000` ink —
+   the preview is a picture of the printed PDF, not a writing surface — so
+   every colour here is an ink literal too. Theme `--ink*` tokens would put
+   Midnight's pale blue text on white paper. */
 .tp {
-  font-family: var(--font-mono);
+  font-family: var(--font-screenplay);
   text-align: center;
   padding: 28px 0 32px;
   margin-bottom: 28px;
-  border-bottom: 1px dashed var(--line);
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.35);
 }
 
 .tp-title {
-  font-family: var(--font-mono);
+  font-family: var(--font-screenplay);
   font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--ink);
+  color: #000;
   margin: 0 0 28px;
 }
 
@@ -21,19 +25,19 @@
 .tp-author,
 .tp-source {
   font-size: 12px;
-  color: var(--ink-soft);
+  color: #333;
   margin: 0 0 6px;
 }
 
 .tp-author {
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--ink);
+  color: #000;
 }
 
 .tp-source {
   font-style: italic;
-  color: var(--ink-mute);
+  color: #555;
 }
 
 .tp-foot {
@@ -41,7 +45,7 @@
   justify-content: space-between;
   margin-top: 24px;
   font-size: 11px;
-  color: var(--ink-mute);
+  color: #555;
   letter-spacing: 0.04em;
 }
 
@@ -70,17 +74,17 @@
   min-height: var(--sp-page-h, 1056px);
   padding: var(--sp-margin-t, 96px) var(--sp-margin-r, 96px)
            var(--sp-margin-b, 96px) var(--sp-margin-l, 144px);
-  background: var(--surface);
-  box-shadow: 0 0 0 1px var(--line), 0 1px 14px rgba(0, 0, 0, 0.22);
-  font-family: var(--font-mono);
+  /* Paper, on every theme, exactly like the script's sheets — a title page is
+     the first page of the same document (NOTES §27k). Crisp 1px edge, a 2px
+     offset hairline instead of the old 14px blur. */
+  background: var(--page-surface);
+  color: var(--page-ink);
+  box-shadow: 0 0 0 1px var(--page-line), 0 2px 0 var(--page-shadow);
+  font-family: var(--font-screenplay);
   font-size: var(--sp-line, 16px);
   line-height: var(--sp-line, 16px);
   display: flex;
   flex-direction: column;
-}
-
-:root[data-theme="ice"] .tpe-sheet {
-  box-shadow: 0 0 0 1px var(--line), 0 1px 14px rgba(16, 40, 66, 0.1);
 }
 
 /* Industry convention puts the title block a little above centre. */
@@ -99,8 +103,8 @@
   width: 100%;
   border: none;
   background: transparent;
-  color: var(--ink);
-  font-family: var(--font-mono);
+  color: var(--page-ink);
+  font-family: var(--font-screenplay);
   font-size: var(--sp-line, 16px);
   line-height: calc(var(--sp-line, 16px) * 1.25);
   padding: 4px 6px;
@@ -109,12 +113,15 @@
 }
 
 .tpe-field::placeholder {
-  color: var(--ink-mute);
+  color: var(--page-ink-soft);
   opacity: 0.6;
 }
 
+/* The field only looks like a field once the caret is in it — and the hover
+   wash is a tint of the paper, not the app's `--bg-soft`, which would be a
+   dark rectangle on a white sheet under Midnight. */
 .tpe-field:hover:not(:focus):not([readonly]) {
-  background: var(--bg-soft);
+  background: rgba(0, 0, 0, 0.045);
 }
 
 .tpe-field:focus {
@@ -143,7 +150,7 @@
 
 .tpe-source {
   font-style: italic;
-  color: var(--ink-soft);
+  color: var(--page-ink-soft);
 }
 
 .tpe-feet {

@@ -73,10 +73,14 @@
   position: relative;
 }
 
-/* Scenes rail variant — replace the status dot column with a prefix chip. */
+/* Scenes rail variant — replace the status dot column with a prefix chip.
+   The slug prefix is set in the PAGE face, not the chrome face: it is a piece
+   of the script quoted into the rail (INT. / EXT. / EST.), and it should look
+   like what the writer sees on the sheet. `--font-screenplay` is the bundled
+   Courier Prime — see NOTES §1a addendum. */
 .rail-item .rail-scene-prefix {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-family: var(--font-screenplay);
+  font-size: 10px;
   color: var(--ink-mute);
   letter-spacing: 0.04em;
   background: var(--line);
@@ -124,9 +128,21 @@
  * nothing here can leave the rail and the document disagreeing.
  *
  * The transition is on `transform` alone, so it composites and never triggers
- * layout; a rail of two hundred scenes still slides at frame rate. */
+ * layout; a rail of two hundred scenes still slides at frame rate.
+ *
+ * `will-change` is scoped to a drag in progress, and is NOT a standing
+ * property on every scene row (NOTES §27k). A permanent `will-change:
+ * transform` asks the compositor for a permanent layer and a permanent backing
+ * store per row — two hundred of them, sitting idle on the same GPU the editor
+ * is scrolling on — and the spec's own advice is to set it shortly before the
+ * change and remove it after. `.rail-dragging` goes on the list the moment a
+ * drag starts, which is before any row has moved, so the promotion is in place
+ * ahead of the first slide and gone again on drop. */
 .rail-item.rail-scene {
   background-clip: padding-box;
+}
+
+.rail-list.rail-dragging .rail-item.rail-scene {
   will-change: transform;
 }
 

@@ -32,14 +32,27 @@
      everywhere. Iowan stays behind it as a webfont-failure fallback only —
      the visual consistency is worth more than the Iowan look. */
   --font-serif: "AQ Source Serif", "Iowan Old Style", Palatino, "Palatino Linotype", "Source Serif 4", "Source Serif Pro", Georgia, serif;
-  /* The screenplay face, and the chrome's numeric face. Courier Prime is not
-     bundled either, so Ice/Midnight on Linux used to fall through to whatever
-     fontconfig calls `monospace` (DejaVu Sans Mono) — the same unbundled-chain
-     hazard the serif had (NOTES §1a). The bundled AQ JetBrains Mono now sits
-     ahead of the generics as the deterministic floor. It is NOT put first:
-     Courier is the industry face for a screenplay and macOS has it. Full
-     mono parity wants a bundled Courier Prime; that is a follow-up. */
-  --font-mono: "Courier Prime", "Courier New", "AQ JetBrains Mono", ui-monospace, monospace;
+  /* ── two mono faces, because they are two different jobs ──────────────
+   *
+   * `--font-mono` is CHROME mono: keycaps, the rail's numbers, the terminal,
+   * the footer badges. `--font-screenplay` is the PAGE, and the page is
+   * Courier.
+   *
+   * Both used to be one token that read `"Courier Prime", "Courier New",
+   * "AQ JetBrains Mono", …` with nothing bundled at the front, so macOS set a
+   * screenplay in Courier New and Linux fell through to DejaVu Sans Mono — the
+   * unbundled-chain hazard §1a found in the serif, still live in the mono.
+   * Courier Prime is bundled now (src/fonts/), so:
+   *
+   *   • the page gets it FIRST on every platform. Identical advance, identical
+   *     wrap, identical height map on macOS and WebKitGTK — which is the whole
+   *     point, because `fountain-pages.ts` counts columns the paint has to
+   *     agree with. The 0.6em advance assertion is in fonts.css.
+   *   • the chrome gets the already-bundled JetBrains Mono first, which is
+   *     what the AquariusOS theme has always used. Ice and Midnight now match
+   *     it instead of drawing Courier New on a Mac and DejaVu on Linux. */
+  --font-mono: "AQ JetBrains Mono", ui-monospace, "SF Mono", Menlo, "Courier New", monospace;
+  --font-screenplay: "AQ Courier Prime", "Courier Prime", "Courier New", Courier, "AQ JetBrains Mono", monospace;
   /* Display / heading face. Ice and Midnight have no separate display font —
      their headings are the serif — so it resolves to the serif. AquariusOS
      overrides it with Sora. */
@@ -94,6 +107,33 @@
   --sp-margin-r: 96px;  /* 72pt */
   --sp-gap: 24px;       /* desk showing between two sheets */
   --sp-pagenum-top: 48px; /* 36pt down from the sheet's top edge */
+
+  /* ── THE PAPER (Final Draft chrome, NOTES §27k) ────────────────────────
+   *
+   * A screenplay page is PAPER, and paper does not have a theme. Final Draft
+   * draws a near-white sheet with black ink and a crisp hairline edge in every
+   * appearance it ships, and it draws no soft drop shadow at all. So the page
+   * gets its own five-token palette, overridden per theme only far enough to
+   * stop a pure-white sheet burning a hole in a dark desk:
+   *
+   *   --page-surface  the sheet
+   *   --page-ink      the script. Near-black on every theme, because ink is.
+   *   --page-ink-soft parentheticals and the page number — grey ink, not a
+   *                   theme's `--ink-mute`, which is tuned for its own bg
+   *   --page-line     the 1px sheet edge and the page-foot hairline
+   *   --page-shadow   a 2px OFFSET hairline, never a blur. See §27k: a blurred
+   *                   box-shadow on a 100,000px-tall element is re-rasterised
+   *                   tile by tile for the whole length of a scroll.
+   *
+   * `--page-accent` is theme-independent on purpose: it colours the Fountain
+   * meta-lines (`# section`, `= synopsis`) that are notes to the writer rather
+   * than script, and Midnight's electric `--accent` is illegible on paper. */
+  --page-surface: #FFFFFF;
+  --page-ink: #0B0D12;
+  --page-ink-soft: #4C525C;
+  --page-line: rgba(16, 40, 66, 0.30);
+  --page-shadow: rgba(16, 40, 66, 0.18);
+  --page-accent: #2D6CA2;
 
   /* Radius + motion, declared for every theme.
      AquariusOS overrides them with the tokens.md values (7/9/12/16px,
@@ -192,6 +232,16 @@
   --shadow-window: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 0.5px rgba(220, 243, 255, 0.07);
   --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 0.5px rgba(220, 243, 255, 0.09);
 
+  /* Paper, dimmed. Still unmistakably a sheet of paper on a navy desk, but a
+     full #FFFFFF page fills most of the window on a dark theme and is
+     genuinely painful for an hour of drafting. The ink darkens to match, so
+     the contrast ratio is if anything higher than Ice's. */
+  --page-surface: #DFE4EA;
+  --page-ink: #10141B;
+  --page-ink-soft: #4A5261;
+  --page-line: rgba(8, 14, 24, 0.34);
+  --page-shadow: rgba(0, 0, 0, 0.45);
+
   --accent-alpha-soft: 0.18;
   --accent-alpha-selection: 0.22;
   --accent-alpha-ring: 0.4;
@@ -246,6 +296,16 @@
 
   --shadow-window: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 0.5px rgba(237, 239, 247, 0.08);  /* pop shadow + border-1 hairline */
   --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(237, 239, 247, 0.08);  /* card shadow + border-1 hairline */
+
+  /* Paper on void. The same exception `--surface` already makes for the
+     writing surface, taken one step further: the OS identity is the chrome
+     around the page, never the page. Cooler and a shade darker than
+     Midnight's, because the desk behind it is nearly black. */
+  --page-surface: #DCDFE8;
+  --page-ink: #0C0E15;
+  --page-ink-soft: #474C5C;
+  --page-line: rgba(6, 7, 12, 0.34);
+  --page-shadow: rgba(0, 0, 0, 0.5);
 
   --accent-alpha-soft: 0.16;        /* selection wash — starlight @ 16% */
   --accent-alpha-selection: 0.16;   /* selection */

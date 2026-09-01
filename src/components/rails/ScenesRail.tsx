@@ -47,7 +47,10 @@ export function ScenesRail({ scenes, activeIndex, onSelect, onReorder }: ScenesR
         <button className="rail-toggle" onClick={() => setCollapsed(true)} aria-label="Collapse scenes rail">›</button>
       </header>
 
-      <ol className="rail-list">
+      {/* `rail-dragging` is what turns `will-change: transform` ON for the
+          scene rows, and only for the length of a drag — see Rail.css. It
+          lands before the first row moves, which is the point. */}
+      <ol className={`rail-list${dragFrom !== null ? " rail-dragging" : ""}`}>
         {scenes.map((s, idx) => {
           const isSelected = idx === activeIndex;
           const slug = parseSlug(s.slug);

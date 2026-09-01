@@ -11,7 +11,7 @@ import {
   ViewUpdate,
 } from "@codemirror/view";
 import { classify, FountainLineKind } from "@/lib/fountain";
-import { paginate } from "@/lib/markdown/fountain-pages";
+import { paginateDoc } from "@/lib/markdown/fountain-pages";
 
 const LINE = (kind: FountainLineKind) =>
   Decoration.line({ class: `cm-fnt cm-fnt-${kind}` });
@@ -26,7 +26,7 @@ function build(view: EditorView): DecorationSet {
   // the padding that makes every painted sheet exactly `--sp-page-h` tall,
   // which is what lets the sheets be a repeating background instead of a
   // measured layout (docs/NOTES.md §27).
-  const { breaks, breakFill } = paginate(view.state.doc.toString().split("\n"));
+  const { breaks, breakFill } = paginateDoc(view.state.doc.toString());
   const breakAt = new Map(
     breaks.map((lineIdx, n) => [lineIdx + 1, { page: n + 2, fill: breakFill[n] ?? 0 }]),
   );
@@ -53,6 +53,27 @@ function build(view: EditorView): DecorationSet {
   return b.finish();
 }
 
+/**
+ * ── WHY THIS DOES NOT REBUILD ON `viewportChanged` (NOTES §27k) ───────────
+ *
+ * `build` decorates the WHOLE document — it has to, because `classify` reads
+ * the two lines above each line and because the page breaks come from a
+ * pagination of the entire script. A whole-document decoration set is already
+ * correct for any viewport, so a viewport change has nothing to recompute.
+ *
+ * It used to rebuild on one anyway, and that was the screenplay's scroll cost
+ * on WebKitGTK. `watchAncestorScroll` (cm-embed.ts) calls `requestMeasure()`
+ * on every scroll event of the surrounding article — it must, or CM never
+ * re-renders below the initial fold in this grow-to-content embed — and each
+ * measure that moved the viewport landed here. So every scrolled frame ran a
+ * full `doc.toString()`, a full `split`, a full `paginate`, a `classify` of
+ * every line in the script and a `RangeSetBuilder` pass over all of them,
+ * before anything was painted. On a 90-page script that is the sluggishness.
+ *
+ * The rule for anything added here: if the work is O(document), it belongs
+ * behind `docChanged`. If it is genuinely viewport-scoped, scope it to
+ * `view.visibleRanges` and then it may watch the viewport.
+ */
 export function fountainDecorations() {
   return ViewPlugin.fromClass(
     class {
@@ -61,7 +82,7 @@ export function fountainDecorations() {
         this.decorations = build(view);
       }
       update(u: ViewUpdate) {
-        if (u.docChanged || u.viewportChanged) {
+        if (u.docChanged) {
           this.decorations = build(u.view);
         }
       }
@@ -101,13 +122,30 @@ export function fountainDecorations() {
  * writes whole-pixel overrides for all of them, scoped to one editor's host
  * element (`applyEditorZoom` in theme.ts, PARITY row 14), so an unzoomed
  * screenplay resolves every one to its fallback.
+ *
+ * ── COLOUR: THIS IS INK ON PAPER, NOT TEXT ON A THEME (NOTES §27k) ────────
+ * Every colour below is a `--page-*` token, not the theme's `--ink*`. The
+ * sheet is near-white in all three themes because Final Draft's is, and
+ * `--ink-prose` on Midnight is a pale blue that would be invisible on it. The
+ * page has its own five-colour palette; see tokens.css.
+ *
+ * ── AND THE THREE FINAL DRAFT SPACING RULES ──────────────────────────────
+ *   1. Set solid: `line-height` == `font-size`, and NO padding-top anywhere.
+ *   2. Bold on scene headings, character cues and transitions; action and
+ *      dialogue are regular weight. Nothing else is emphasised — in
+ *      particular a scene heading gets NO rule, NO underline and NO border.
+ *      FD distinguishes a slug with caps and weight alone, and the underline
+ *      this file used to draw (a `border-bottom` before §27, an inset
+ *      `box-shadow` after it) was never in the format.
+ *   3. All of Fountain's blank lines are already in the document and are
+ *      already counted as rows. CSS adds none.
  */
 export const fountainTheme = EditorView.theme(
   {
     "&": {
-      color: "var(--ink-prose)",
+      color: "var(--page-ink)",
       backgroundColor: "transparent",
-      fontFamily: "var(--font-mono)",
+      fontFamily: "var(--font-screenplay)",
       fontSize: "var(--screenplay-size)",      // 16px = 12pt at 4/3
       lineHeight: "var(--screenplay-line-px)", // 16px — set solid, like print
       // Grow with content — the article scrolls, not the editor. A fixed
@@ -118,7 +156,7 @@ export const fountainTheme = EditorView.theme(
     ".cm-content": {
       caretColor: "var(--accent)",
       // Restated so nothing from the shell reaches the content path.
-      fontFamily: "var(--font-mono)",
+      fontFamily: "var(--font-screenplay)",
       fontSize: "var(--screenplay-size)",
       lineHeight: "var(--screenplay-line-px)",
       letterSpacing: "normal",
@@ -132,20 +170,20 @@ export const fountainTheme = EditorView.theme(
     ".cm-fnt-scene-heading": {
       fontWeight: "700",
       textTransform: "uppercase",
-      color: "var(--ink)",
-      // An inset shadow, not a border: a border is 1px of layout and the row
-      // model says a heading is exactly one line box tall.
-      boxShadow: "inset 0 -1px 0 var(--line)",
+      color: "var(--page-ink)",
+      // NO rule under a slug. See rule 2 in the header comment — Final Draft
+      // does not draw one, and a `box-shadow` here is one more thing painted
+      // per visible line for no format reason.
     },
     ".cm-fnt-character": {
-      fontWeight: "600",
+      fontWeight: "700",
       textTransform: "uppercase",
-      color: "var(--ink)",
+      color: "var(--page-ink)",
       paddingLeft: "var(--fnt-character-indent, 192px)",   // 252pt − 108pt
       paddingRight: "var(--fnt-character-pr, 24px)",       // 540pt − 522pt
     },
     ".cm-fnt-parenthetical": {
-      color: "var(--ink-soft)",
+      color: "var(--page-ink-soft)",
       paddingLeft: "var(--fnt-paren-indent, 144px)",       // 216pt − 108pt
       paddingRight: "var(--fnt-paren-pr, 192px)",          // 540pt − 396pt
       fontStyle: "italic",
@@ -153,19 +191,22 @@ export const fountainTheme = EditorView.theme(
     ".cm-fnt-dialogue": {
       paddingLeft: "var(--fnt-dialogue-indent, 96px)",     // 180pt − 108pt
       paddingRight: "var(--fnt-dialogue-pr, 144px)",       // 540pt − 432pt
-      color: "var(--ink-prose)",
+      color: "var(--page-ink)",
     },
     ".cm-fnt-transition": {
       fontWeight: "700",
       textTransform: "uppercase",
       textAlign: "right",
-      color: "var(--ink-soft)",
+      color: "var(--page-ink)",
       paddingRight: "var(--fnt-transition-pr, 39px)",      // 540pt − 510.98pt
     },
+    // `#` sections and `=` synopses are Fountain's notes-to-self. They are not
+    // script and they do not print, so they are the one place on the page that
+    // is allowed to look like an annotation rather than like Courier.
     ".cm-fnt-section": {
       fontFamily: "var(--font-ui)",
       fontWeight: "700",
-      color: "var(--accent)",
+      color: "var(--page-accent)",
       // was 0.04em = 0.56px; a fraction of a pixel per glyph is exactly what
       // the two engines disagree about, so it is a whole pixel now.
       letterSpacing: "1px",
@@ -174,9 +215,9 @@ export const fountainTheme = EditorView.theme(
     ".cm-fnt-synopsis": {
       fontFamily: "var(--font-serif)",
       fontStyle: "italic",
-      color: "var(--ink-soft)",
+      color: "var(--page-ink-soft)",
     },
-    ".cm-fnt-action": { color: "var(--ink-prose)" },
+    ".cm-fnt-action": { color: "var(--page-ink)" },
 
     ".cm-selectionBackground": { backgroundColor: "var(--selection) !important" },
     ".cm-cursor": { borderLeftColor: "var(--accent)" },

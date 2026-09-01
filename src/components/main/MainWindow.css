@@ -173,13 +173,20 @@
   border: 0.5px solid var(--line);
   border-radius: var(--radius-card);
   padding: 64px 96px;
-  /* Dark themes carry the audit's `black @ 22%, r14, y1`; Ice needs far less
-     to read as paper on a desk. */
-  box-shadow: 0 1px 14px rgba(0, 0, 0, 0.22);
+  /* The prose canvas keeps the look it has always had — one continuous sheet
+     on a desk — with ONE change (NOTES §27k): the blur radius came down from
+     14px to 3px.
+     `.mw-sheet` is a single element as tall as the whole chapter, and this
+     element scrolls. A blurred box-shadow is a per-pixel convolution that
+     cannot be cached across the box, so WebKit re-rasterises it for every tile
+     a scroll exposes, down both edges, for the full length of the document.
+     At 3px it is the same shadow to the eye at a glance and a fraction of the
+     work; the audit's `black @ 22%, r14, y1` is not worth a scroll frame. */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
 }
 
 :root[data-theme="ice"] .mw-sheet {
-  box-shadow: 0 1px 14px rgba(16, 40, 66, 0.10);
+  box-shadow: 0 1px 3px rgba(16, 40, 66, 0.14);
 }
 
 /* Narrow editor columns: the 1" margins would eat the line. Shrink them
