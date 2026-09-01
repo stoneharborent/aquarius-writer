@@ -6,6 +6,49 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## v0.4.0 — 2026-09-01
+
+Faster on Linux, smarter in the editor, and a rounder toolbox for AI.
+
+### Faster on Linux
+
+- **Scrolling and navigation should feel noticeably quicker on AquariusOS.**
+  Two invisible costs were removed: the window no longer asks the system to
+  composite it as translucent (it never looked translucent anyway), and the
+  sidebar no longer runs a live blur effect that Linux's web engine pays for
+  on every frame.
+
+### In the editor
+
+- **Type `[[` and start a name** — Aquarius suggests your documents and
+  completes the link. Arrow keys to pick, Enter to accept.
+- **Zoom one document at a time** with ⌘+ / ⌘− (⌘0 resets). Each document
+  remembers its own zoom, and it plays nicely with your Body size setting.
+
+### Around the app
+
+- The welcome screen shows your five most recent workflows and wears the app
+  icon properly.
+- Pop a document out into its own window (⌃⌘O) — now working in the shipped
+  app, not just development.
+- **The trash never empties itself anymore.** Items past 30 days are marked,
+  but nothing is deleted until you press "Empty trash" and confirm.
+- A−/A+ in the sidebar scales the file tree to your eyes.
+- Empty views (no stars yet, an empty trash, no search hits, a fresh
+  workflow) now explain themselves with a small illustration instead of
+  showing a blank pane.
+
+### For AI tools
+
+- The MCP server grows from 21 to 31 tools: editing a synopsis, inserting or
+  replacing exact lines, find-and-replace, taking and diffing named
+  snapshots, marking manuscript and draft folders, and listing or reordering
+  screenplay scenes. Every editing tool snapshots the document before it
+  touches it.
+- Two data-safety bugs found and fixed along the way: alternate draft cuts
+  could lose their chapter order, and two snapshots taken in the same second
+  could collide. Both are covered by tests now.
+
 ## v0.3.1 — 2026-08-31
 
 The caret goes where you point it.
