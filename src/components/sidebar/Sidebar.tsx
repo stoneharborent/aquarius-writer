@@ -20,14 +20,15 @@ import {
   useRef,
   useState,
 } from "react";
-import type { DragEvent as ReactDragEvent } from "react";
+import type { CSSProperties, DragEvent as ReactDragEvent } from "react";
 import type { ChapterStatus, NewFileKind, NodeKind, VaultNode } from "@/types/vault";
 import { useVault } from "@/state/vaultStore";
 import { useOverlay } from "@/state/overlayStore";
-import { useShell } from "@/state/shellStore";
+import { useShell, ZOOM_MAX, ZOOM_MIN } from "@/state/shellStore";
 import { useFavorites } from "@/state/favoritesStore";
 import { trashFile } from "@/lib/vault/aux";
 import { useEditor } from "@/state/editorStore";
+import { EmptyState } from "@/components/shell/EmptyState";
 import "./Sidebar.css";
 
 const STATUS_COLOR: Record<ChapterStatus, string> = {
@@ -211,6 +212,17 @@ function collectFolders(node: VaultNode, out: string[] = []): string[] {
 const parentOf = (path: string) =>
   path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 
+/**
+ * A pixel measurement that follows the navigator zoom.
+ *
+ * Indents are computed per-row in JS (`10 + depth * 14`), so they cannot be a
+ * plain CSS rule like the row's font and padding are. Handing the arithmetic
+ * to `calc()` keeps the one variable in charge of all of it: outside
+ * `.sb-tree` the variable is unset, `var(--sb-zoom, 1)` falls back to 1, and
+ * the number is exactly what it was before this existed.
+ */
+const scaled = (px: number) => `calc(${px}px * var(--sb-zoom, 1))`;
+
 /** The node at `path`, or null when the tree no longer has one. */
 function findNode(node: VaultNode, path: string): VaultNode | null {
   if (node.path === path) return node;
@@ -259,6 +271,7 @@ export function Sidebar() {
   } = useVault();
   const overlay = useOverlay();
   const query = useShell((s) => s.query);
+  const sidebarZoom = useShell((s) => s.sidebarZoom);
   const [composer, setComposer] = useState<Composer | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -302,10 +315,18 @@ export function Sidebar() {
 
       <div className="sb-eyebrow">
         <span className="sb-eyebrow-label">Workflow</span>
+        <NavigatorZoom />
         <AddMenu onPick={(what) => setComposer({ what, parent: target })} />
       </div>
 
-      <div className="sb-tree" onClick={() => setMenuFor(null)}>
+      {/* `--sb-zoom` scales only what is inside this container. The quick views
+          above and the rail below keep their size on purpose: this is the
+          *navigator* zoom, the way Swift means it, not an app-wide text size. */}
+      <div
+        className="sb-tree"
+        style={{ "--sb-zoom": sidebarZoom } as CSSProperties}
+        onClick={() => setMenuFor(null)}
+      >
         {composer && (
           <Composer
             what={composer.what}
@@ -314,10 +335,29 @@ export function Sidebar() {
           />
         )}
         {q && (!shown || (shown.children?.length ?? 0) === 0) && (
-          <p className="sb-quick-empty sb-no-hits">
-            No file name matches “{query.trim()}”. Press Enter to search inside
-            the documents.
-          </p>
+          <EmptyState
+            size="inline"
+            art="search"
+            headline="No file name matches"
+            subline={<>Nothing here is called “{query.trim()}”. Press Enter to search
+              inside the documents instead.</>}
+          />
+        )}
+
+        {/* A brand-new workflow. Not the same emptiness as a filter with no
+            hits, so not the same words: there is nothing to find because
+            nothing has been written yet, and the answer is a button. */}
+        {!q && !composer && (shown?.children?.length ?? 0) === 0 && (
+          <EmptyState
+            size="inline"
+            art="folder"
+            headline="An empty workflow"
+            subline="Every document lives in this folder. Make the first one and it opens straight away."
+            action={{
+              label: "New document",
+              onClick: () => setComposer({ what: "file", parent: target }),
+            }}
+          />
         )}
         <TreeOpsContext.Provider
           value={{
@@ -436,9 +476,12 @@ function QuickViews() {
 
       {showStarred && (
         rows.length === 0 ? (
-          <p className="sb-quick-empty">
-            Nothing starred yet — star a row from its ⋯ menu.
-          </p>
+          <EmptyState
+            size="inline"
+            art="star"
+            headline="Nothing starred yet"
+            subline="Star a row from its ⋯ menu and it will wait for you up here."
+          />
         ) : (
           rows.map(({ node }) => (
             <button
@@ -474,6 +517,42 @@ function QuickViews() {
         <span className="sb-label">Manuscript</span>
         <span className="sb-quick-key">⌘2</span>
       </button>
+    </div>
+  );
+}
+
+/**
+ * A− / A+ beside the WORKFLOW eyebrow — SWIFT-AUDIT §1.4's navigator zoom.
+ *
+ * Two buttons, no menu and no slider, because the thing being adjusted is
+ * right underneath them and the only useful interaction is "a bit bigger" a
+ * couple of times. Clicking A− at the floor (or A+ at the ceiling) does
+ * nothing and the button says so by going quiet; a middle-click on either
+ * resets to 1×, which is the escape hatch for someone who has scrolled the
+ * scale somewhere strange.
+ */
+function NavigatorZoom() {
+  const zoom = useShell((s) => s.sidebarZoom);
+  const step = useShell((s) => s.stepSidebarZoom);
+  const pct = `${Math.round(zoom * 100)}%`;
+  return (
+    <div className="sb-zoom" role="group" aria-label="Navigator text size">
+      <button
+        className="sb-zoom-btn"
+        disabled={zoom <= ZOOM_MIN}
+        title={`Smaller tree text (now ${pct}) — middle-click to reset`}
+        aria-label="Smaller tree text"
+        onClick={() => step(-1)}
+        onAuxClick={(e) => { if (e.button === 1) step(0); }}
+      >A−</button>
+      <button
+        className="sb-zoom-btn"
+        disabled={zoom >= ZOOM_MAX}
+        title={`Larger tree text (now ${pct}) — middle-click to reset`}
+        aria-label="Larger tree text"
+        onClick={() => step(1)}
+        onAuxClick={(e) => { if (e.button === 1) step(0); }}
+      >A+</button>
     </div>
   );
 }
@@ -671,7 +750,7 @@ function TreeBranch({
         <div className={wrapClass} {...source} {...target}>
           <button
             className={`sb-row sb-folder${isSelected ? " selected" : ""}`}
-            style={{ paddingLeft: indent }}
+            style={{ paddingLeft: scaled(indent) }}
             onClick={() => { ops.noteTarget(node.path); onToggle(node.path); }}
             onContextMenu={(e) => { e.preventDefault(); ops.setMenuFor(node.path); }}
           >
@@ -708,7 +787,7 @@ function TreeBranch({
     <div className={wrapClass} {...source}>
       <button
         className={`sb-row sb-file${isSelected ? " selected" : ""}`}
-        style={{ paddingLeft: indent }}
+        style={{ paddingLeft: scaled(indent) }}
         onClick={() => { ops.noteTarget(parentOf(node.path)); onSelect(node.path); }}
         onContextMenu={(e) => { e.preventDefault(); ops.setMenuFor(node.path); }}
       >
@@ -753,7 +832,7 @@ function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
   }
 
   return (
-    <div className="sb-row sb-renaming" style={{ paddingLeft: indent }}>
+    <div className="sb-row sb-renaming" style={{ paddingLeft: scaled(indent) }}>
       {node.kind === "folder"
         ? <FolderIcon size={12} color="var(--ink-soft)" />
         : <FileGlyph kind={node.kind} />}

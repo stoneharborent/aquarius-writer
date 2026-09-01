@@ -52,6 +52,21 @@ export interface AuxBackend {
   trashFile(wf: string, path: string, body: string): Promise<void>;
   restoreTrash(wf: string, id: string): Promise<string | null>;
   purgeTrash(wf: string, id: string): void;
+  /**
+   * Destroy every deletion. Resolves to how many went.
+   *
+   * This is the *only* bulk destruction in the app, and since 2026-08-31 the
+   * only thing that empties the trash at all — the 30-day sweep that used to
+   * run on workflow load is gone (SWIFT-AUDIT §4, NOTES §24c). Callers confirm
+   * first; this does not ask.
+   */
+  emptyTrash(wf: string): Promise<number>;
+  /**
+   * How old a deletion has to be before the sheet calls it old. Display only —
+   * nothing expires by itself. Resolves from the backend so the number has one
+   * home (`fs_ops::trash::RETENTION_DAYS`).
+   */
+  trashRetentionDays(): Promise<number>;
   listSearches(wf: string): string[];
   saveSearches(wf: string, list: string[]): void;
   /**
@@ -138,6 +153,17 @@ function createBrowserAuxBackend(): AuxBackend {
     purgeTrash(wf, id) {
       writeLS(TKEY(wf), readLS<TrashEntry[]>(TKEY(wf), []).filter((t) => t.id !== id));
     },
+
+    async emptyTrash(wf) {
+      const n = readLS<TrashEntry[]>(TKEY(wf), []).length;
+      writeLS(TKEY(wf), []);
+      return n;
+    },
+
+    // The preview has no Rust to ask, so it repeats the number. Nothing acts
+    // on it in either backend — the cost of drift here is a mislabelled row in
+    // a browser mock.
+    async trashRetentionDays() { return 30; },
 
     listSearches: (wf) => readLS<string[]>(SKEY(wf), []),
     saveSearches: (wf, list) => writeLS(SKEY(wf), list),
@@ -252,6 +278,17 @@ function createDiskAuxBackend(): AuxBackend {
       trash.set(wf, (trash.get(wf) ?? []).filter((t) => t.id !== id));
       bg("purgeTrash", invoke("trash_purge", { workflowId: wf, id }));
     },
+
+    // Awaited, not backgrounded like the single purge: emptying the trash is
+    // the one action here a writer might close the app straight after, and it
+    // is also the one whose failure they need to hear about.
+    async emptyTrash(wf) {
+      const n = await invoke<number>("trash_empty", { workflowId: wf });
+      await refreshTrash(wf);
+      return n;
+    },
+
+    trashRetentionDays: () => invoke<number>("trash_retention_days"),
 
     listSearches: (wf) => searches.get(wf) ?? [],
 

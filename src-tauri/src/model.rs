@@ -18,6 +18,18 @@ pub struct Draft {
     pub active: Option<bool>,
     #[serde(default)]
     pub chapter_order: Vec<String>,
+    /// The folder this draft's chapters come from, when it is a *folder-backed*
+    /// draft — one a caller marked with `toggle_draft_folder`, the Swift app's
+    /// `draftFolders` idea (SWIFT-AUDIT §2.8) mapped onto this side's richer
+    /// `Draft`. `None` is the ordinary case: a draft that is just a named cut
+    /// of the manuscript's chapters, which is what `workflow::infer` creates.
+    ///
+    /// It matters to `reconcile_chapter_order`: a folder-backed draft is
+    /// reconciled against *its own* folder, never against the manuscript's, or
+    /// the open-time pass would replace an alternate cut with the main one.
+    /// The renderer does not read this key; it round-trips through the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

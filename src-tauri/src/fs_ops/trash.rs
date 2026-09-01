@@ -10,8 +10,18 @@
 //!     Drafts/Ch_04.md                ← the file, at its original relative path
 //! ```
 //!
-//! Restore puts the bytes back at the original path; the sweep on workflow
-//! load removes deletions older than 30 days.
+//! Restore puts the bytes back at the original path.
+//!
+//! **Nothing in here deletes anything the writer did not ask to delete.**
+//! Until 2026-08-31 a sweep ran on every workflow load and unlinked whatever
+//! was past 30 days, silently. The Swift app has never done that — it keeps
+//! everything until someone confirms "Empty trash" (SWIFT-AUDIT §4) — and of
+//! the two behaviors, the one that deletes a writer's chapter while they were
+//! only opening a folder is the surprising one. So `RETENTION_DAYS` is now
+//! **display only**: the Recently Deleted sheet reads it (over
+//! `trash_retention_days`) to mark old rows, and `purge` / `purge_all` are the
+//! only two functions in this file that destroy bytes, both reached from a
+//! click the writer confirmed.
 
 use super::atomic::write_atomic;
 use crate::vault::paths::aq_dir;
@@ -19,6 +29,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// How long a deletion is considered "recent". Nothing acts on this — see the
+/// module note. It exists so the sheet can say "kept since August" about a row
+/// that has been sitting there a while, and so the number has one home.
 pub const RETENTION_DAYS: i64 = 30;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -138,23 +151,24 @@ pub fn purge(root: &Path, id: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Drop anything past the retention window. Runs on every workflow load, so a
-/// vault that sits closed for a year still cleans itself up the next time it
-/// is opened. Returns how many deletions were swept.
-pub fn sweep_expired(root: &Path, now_ms: i64) -> std::io::Result<usize> {
-    let mut index = read_index(root);
-    let cutoff = now_ms - RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    let (expired, kept): (Vec<TrashRecord>, Vec<TrashRecord>) =
-        index.entries.into_iter().partition(|e| e.deleted_at < cutoff);
-    if expired.is_empty() {
+/// Empty the whole trash. The one bulk destruction in the app, and it is only
+/// ever reached from a confirmed click in Recently Deleted. Returns how many
+/// deletions were destroyed.
+///
+/// The index is rewritten *after* the payload folders are gone, so a crash
+/// half way through leaves rows that still point at something (restorable, or
+/// at worst empty) rather than orphaned folders no UI can reach.
+pub fn purge_all(root: &Path) -> std::io::Result<usize> {
+    let index = read_index(root);
+    if index.entries.is_empty() {
         return Ok(0);
     }
-    for record in &expired {
+    for record in &index.entries {
         let _ = fs::remove_dir_all(trash_dir(root).join(&record.stored_as));
     }
-    index.entries = kept;
-    write_index(root, &index)?;
-    Ok(expired.len())
+    let n = index.entries.len();
+    write_index(root, &TrashIndex::default())?;
+    Ok(n)
 }
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -235,23 +249,50 @@ mod tests {
         assert!(!trash_dir(t.path()).join(&rec.stored_as).exists());
     }
 
+    /// The behavior this file used to have, inverted. Nothing expires on its
+    /// own any more: a deletion from last year is still there, still
+    /// restorable, and only *marked* as past its window.
     #[test]
-    fn the_sweep_drops_only_deletions_past_thirty_days() {
-        let t = TempDir::new("trash-sweep");
+    fn age_alone_never_destroys_a_deletion() {
+        let t = TempDir::new("trash-no-sweep");
         t.write("old.md", "old");
         t.write("recent.md", "recent");
         let now = now();
-        let old = soft_delete(t.path(), "old.md", now - 31 * DAY_MS).unwrap();
+        let old = soft_delete(t.path(), "old.md", now - 400 * DAY_MS).unwrap();
         let recent = soft_delete(t.path(), "recent.md", now - 29 * DAY_MS).unwrap();
 
-        assert_eq!(sweep_expired(t.path(), now).unwrap(), 1);
-
+        // Reading the index — which is all opening a workflow does now — must
+        // leave both payloads exactly where they were.
         let index = read_index(t.path());
-        assert_eq!(index.entries.len(), 1);
-        assert_eq!(index.entries[0].id, recent.id);
-        assert!(!trash_dir(t.path()).join(&old.stored_as).exists(), "expired payload is gone");
-        assert!(trash_dir(t.path()).join(&recent.stored_as).exists(), "in-window payload stays");
-        assert_eq!(sweep_expired(t.path(), now).unwrap(), 0, "sweeping twice changes nothing");
+        assert_eq!(index.entries.len(), 2, "nothing was dropped from the index");
+        assert!(trash_dir(t.path()).join(&old.stored_as).exists(),
+            "a year-old deletion is still on disk — only a confirmed empty removes it");
+        assert!(trash_dir(t.path()).join(&recent.stored_as).exists());
+
+        assert_eq!(restore(t.path(), &old.id).unwrap().as_deref(), Some("old.md"),
+            "and it is still restorable");
+    }
+
+    /// The number is display-only now, so it can only be changed on purpose.
+    #[test]
+    fn the_retention_window_is_thirty_days() {
+        assert_eq!(RETENTION_DAYS, 30);
+    }
+
+    #[test]
+    fn empty_trash_destroys_everything_and_only_when_asked() {
+        let t = TempDir::new("trash-empty");
+        t.write("a.md", "a");
+        t.write("b.md", "b");
+        let now = now();
+        let a = soft_delete(t.path(), "a.md", now).unwrap();
+        let b = soft_delete(t.path(), "b.md", now - 90 * DAY_MS).unwrap();
+
+        assert_eq!(purge_all(t.path()).unwrap(), 2);
+        assert!(read_index(t.path()).entries.is_empty());
+        assert!(!trash_dir(t.path()).join(&a.stored_as).exists());
+        assert!(!trash_dir(t.path()).join(&b.stored_as).exists());
+        assert_eq!(purge_all(t.path()).unwrap(), 0, "emptying an empty trash is a no-op");
     }
 
     #[test]

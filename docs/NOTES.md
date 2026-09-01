@@ -2047,3 +2047,585 @@ today does not rewrite what last week was measured against.
   edit and no self-write ledger entry was needed. The conflict-guard save path
   is untouched: the session note happens *after* a successful write, off the
   result, and a refused save records nothing.
+
+## 22. Wiki-link autocomplete, and a zoom that keeps whole pixels
+
+PARITY rows 13 and 14, both from SWIFT-AUDIT §2.1 ("wiki-link autocomplete;
+per-document zoom (⌘+/⌘−/⌘0, persisted per path)"). They shipped together
+because only one of them is interesting, and it is the zoom.
+
+### 22a. `[[` completion — `@codemirror/autocomplete` was already in the tree
+
+The package was **already installed at 6.20.2**, pulled in transitively by
+`@codemirror/lang-markdown` (and by `lang-html`, `lang-css`,
+`lang-javascript` under it). It is now a **direct dependency** in
+`package.json` — the same version, resolved from the same lock entry, so no
+install changes and nothing new is downloaded. Declaring it is not ceremony:
+importing a package you only get by accident means a future `lang-markdown`
+bump can delete your feature.
+
+The source lives beside the rendering it completes, in
+`src/lib/markdown/wikilink-ext.ts` (`wikilinkCompletion`), and is wired into
+the **prose and note editors only** — a screenplay has no wiki links.
+
+What it does: caret inside an unclosed `[[` → every markdown document in the
+vault by display name, the current document excluded. It bails out the moment
+the caret is not really inside a link — a `]]` already passed, a second `[`,
+a newline, or the alias half of `[[Name|alias]]`. Accepting inserts the name
+and the closing `]]`, unless a `]]` is already sitting there (re-editing an
+existing link must not double it), and leaves the caret after the brackets.
+
+Filtering is CodeMirror's own — prefix beats word-boundary beats fuzzy
+subsequence, with the matched characters highlighted — plus a `boost` so a
+true prefix hit wins its ties. Arrow keys, Enter and **Esc to dismiss** come
+from `autocompletion`'s own high-precedence keymap, which is why the
+extension can sit *after* the editors' `defaultKeymap` and still get Escape
+first. Two files with the same display name show their folder as the detail;
+one file shows nothing, because a disambiguator that is always there
+disambiguates nothing.
+
+`override` is used deliberately, so the popup can only ever be this: the
+markdown language package ships HTML completions that would otherwise appear
+inside embedded blocks.
+
+The popover is themed through `EditorView.theme` in tokens — `--surface` on a
+`--line` border, `--accent-soft` for the selected row, `--font-ui` at 12px —
+matching the sidebar's menu idiom. CodeMirror mounts a tooltip inside
+`.cm-editor` when no `parent` is configured, so the theme class reaches it,
+and base themes are `Prec.lowest`, so these rules win.
+
+**It touches nothing in the content path.** No decoration, no widget, no
+styling inside `.cm-content`; the popup is a tooltip in the editor's chrome.
+The `Decoration.replace` hiding in `wysiwyg.ts` and the `Decoration.mark`
+wiki-link rendering are exactly as §1a left them.
+
+### 22b. Zoom is a multiplier that never reaches CSS
+
+This is the part §1a constrains. A zoom step **cannot** be a CSS
+multiplication: `calc(var(--prose-size) * 1.25)` is 21.25px, `calc(21.25px *
+1.65)` is a 35.06px line box, and a fractional line box is the v0.3.0 caret
+bug with a new coat of paint. CSS cannot round.
+
+So the arithmetic is in TypeScript and there is exactly one path to the DOM:
+
+1. `proseMetrics(sizePx, leading)` in `src/theme/theme.ts` is now the shared
+   rounding step. `applyProseMetrics` (the Settings sliders) calls it; so does
+   the zoom. Same function, same three integers, so a zoom of 1 is
+   arithmetically identical to no zoom at all.
+2. `applyEditorZoom(host, kind, zoom)` multiplies **the writer's own body
+   size** by the step — `proseMetrics(base.size × zoom, base.leading)` — and
+   writes `--prose-size`, `--prose-line-px` and `--prose-para-gap` as whole
+   pixels. The zoom **composes with** Settings → Reading; it does not replace
+   it. 17px at 1.65 zoomed to 125% is 21px on a 35px line box, both integral.
+3. Every other content length is a design-time constant, so each one is
+   multiplied by the step and rounded once: the four heading sizes / line
+   boxes / paddings, inline code, and the whole Fountain grid — element
+   padding-tops, the character / parenthetical / dialogue indents, and the
+   page-break rule's 32px.
+
+Those constants used to be literals in `wysiwyg.ts`, `fountain-ext.ts` and
+`ScreenplayEditor.css`. They are now `var(--token, <the same literal>)`, and
+**nothing defines those tokens globally** — only `applyEditorZoom` does, on
+one editor's host element. An unzoomed document therefore resolves every one
+of them to the fallback and is byte-for-byte the layout v0.3.1 shipped. At
+zoom 1 the overrides are *removed* rather than restated, so that is literally
+true of the DOM as well.
+
+The variables being scoped to the host is also why **the page canvas does not
+move**: `.mw-sheet` is 850px with 96/64px margins in the sheet's own CSS, and
+the zoom never reaches it. The text grows inside a stationary page.
+
+After every apply, `view.requestMeasure()`. The height map is built from
+measurement; changing the line box without telling CodeMirror to measure
+again would leave the caret computed against the old geometry, which is the
+original bug.
+
+### 22c. Where the zoom lives
+
+`src/lib/markdown/editor-zoom.ts`, and it owns three things:
+
+- **The persisted map.** One localStorage key, `aquarius.editorZoom`, holding
+  `{ "<vault-relative path>": <step> }`. A document at 100% is *absent* from
+  the map rather than stored as 1, so the file stays small and a reset is a
+  delete. Reads snap onto the ladder and treat anything unparseable as 100% —
+  a corrupt preference is not worth an error. Writes are wrapped, so a webview
+  with storage off loses the persistence and keeps the feature.
+- **The ladder.** `0.8 · 0.9 · 1 · 1.1 · 1.25 · 1.4 · 1.6 · 1.8`, matching the
+  Swift range. ⌘+ and ⌘− step it and clamp at the ends; ⌘0 returns to 1.
+- **The live panes.** Each editor registers `{path, kind, host, view}` on
+  mount (which is where the saved zoom is *restored*) and unregisters on
+  unmount. A ⌘+ lands on the focused pane — the same focus signal the editors
+  already send to `formatBus` — falling back to the most recently mounted one.
+  Both halves of a split showing the same document zoom together, because they
+  are the same document.
+
+`onProseBaseChange` re-applies every open pane when the Settings sliders move,
+because a zoomed pane's numbers are a product of the base and would otherwise
+be stale.
+
+### 22d. ⌘+ / ⌘− / ⌘0 are global, on purpose
+
+They are three additive entries in `App.tsx`'s shortcut list, not CodeMirror
+keymap bindings, because the target is "the active editor" and that is a shell
+question. `useGlobalShortcuts` calls `preventDefault()` on every match, which
+is the thing that stops the **webview** from zooming instead — and a webview
+zoom scales the whole page by a fraction, which is precisely the surface §1a
+says the editor must never be.
+
+Matching goes through `key` *and* `code`: ⌘+ is an unshifted `=` on a US
+layout, a shifted `+` elsewhere, and `NumpadAdd` on a third. All three are
+in the cheat sheet, with the `[[` completion under Editing.
+
+### 22e. Bench checklist (Linux, on top of §1a's)
+
+1. **Zoom a long chapter to 180%, scroll to the bottom, click.** The caret
+   must land on the character clicked. This is §1a's test at a new line box,
+   and it is the only test that really matters here.
+2. **Hold ↓ through a zoomed document**, across an H1, H2 and H3. No skipped
+   or doubled lines.
+3. **⌘0, then reopen the document.** It comes back at 100%; another document
+   left at 125% comes back at 125%.
+4. **Zoom, then move Settings → Reading → Body size.** The zoomed pane
+   follows the slider and the pixel value stays whole.
+5. **Zoom a screenplay past a page break.** The `p. N` rule's gap must scale
+   with the grid and the caret must stay accurate below it.
+6. **The sheet must not move.** At every step the page canvas keeps its width
+   and its margins; only the type changes.
+7. **Type `[[` in a note and in a chapter.** The popup appears, ↑↓ walks it,
+   ⏎ inserts `Name]]`, Esc dismisses without inserting. Then type `[[` inside
+   an existing `[[…]]` and confirm the closer is not doubled.
+
+### 22f. What this did not do
+
+- **No zoom for the sidebar tree.** The navigator's A−/A+ (SWIFT-AUDIT §1.3)
+  is still open, and is a different control on a different surface.
+- **No caret-anchored zoom.** Swift's screenplay keeps the caret's line under
+  the cursor while the type scales; that belongs with the paged canvas
+  (PARITY row 12).
+- **A rename does not carry the zoom yet.** `remapZoomPath` exists and is
+  correct; nothing calls it, because the rename path is `vaultStore` and
+  `editorStore.remapPath`, which this wave deliberately did not touch.
+
+---
+
+## 23. The MCP surface caught up — ten tools, and the line numbers they count
+
+*PARITY row 17, closed 2026-08-31. The surface went from 21 tools to 31.*
+
+The Swift app has 33 MCP tools; this side had 21. The gap was never the
+plumbing — it was ten operations that existed in Swift's `WriterToolbox` and
+had no counterpart here: `set_synopsis`, `insert_text`, `replace_lines`,
+`replace_in_document`, `take_snapshot`, `diff_version`,
+`toggle_manuscript_folder`, `toggle_draft_folder`, `list_scenes` and
+`reorder_scenes`. All ten now exist, all ten live in `vault::ops` where the
+UI's Tauri commands can reach them too, and the tool functions in
+`mcp/tools.rs` stayed what they have always been: argument shuffling and a
+`json()` call.
+
+### 23a. What was deliberately not ported
+
+Swift has four appearance setters — `set_theme`, `set_accent`, `set_body_size`,
+`set_line_height`. They are **not** here and are not an oversight. They are
+Spark-era: they existed because an in-app assistant sat next to the editor and
+"make it darker" was a thing you said to it. Spark was removed by decision on
+2026-08-25, and what is left is a remote client on the other side of a socket
+reaching into an app the writer is looking at. Changing the theme under
+someone's hands is not an edit to their manuscript; it is an edit to their
+room. A model that wants a different font size can say so.
+
+`export_pdf` is not missing either — `compile_document` does PDF along with
+four other formats, and doing it twice would mean two answers to "where did the
+file go" (NOTES §19i).
+
+The browser Web UI at `/ui`, the other half of row 17, **stays deferred**.
+Nothing in the app depends on it, Claude Code is the client that matters, and
+a self-hosted HTML console is a surface to maintain rather than a capability
+to gain.
+
+### 23b. Line numbers count body lines, and that is the whole footgun
+
+`insert_text` and `replace_lines` address a document by line. The question
+that decides whether they are usable is *which* lines, and there are two
+honest answers:
+
+- **File lines**, which is what Swift does. Simple, and wrong here for one
+  reason: a document with a five-line YAML frontmatter block would have its
+  first paragraph at line 7, and a client that read the body — which is what
+  `read_document` hands back as `body`, and what the writer sees in the editor
+  — would be off by six every time.
+- **Body lines**, which is what this side does. Line 1 is the first line of
+  the body, `frontmatter::parse`'s definition of body. The frontmatter block
+  is carried across untouched, and a client can count lines in the `body` it
+  was given and be right.
+
+`ops::split_body` does the split, and it is arithmetic rather than a re-render:
+the parser only ever drops leading lines, so `body` is a byte-exact suffix of
+`content` and `prefix + body == content` holds. There is a `debug_assert` on
+exactly that and a test for the empty case.
+
+The rule is shouted in three places, because a client that gets it wrong edits
+the wrong paragraph *silently*: the tool descriptions (`LINES ARE 1-BASED AND
+COUNT BODY LINES ONLY`), each field's own schema doc, and the server's
+`INSTRUCTIONS`. A test asserts all three still say it.
+
+`fountain::collect_scenes` numbers scenes the same way, which is the point: a
+scene's `startLine`/`endLine` can be handed straight to `replace_lines` to
+rewrite that scene, with no conversion in between.
+
+### 23c. Every write goes through the one guarded door
+
+`insert_text`, `replace_lines`, `replace_in_document` and `reorder_scenes` all
+end at `ops::agent_write_document` — the same function `write_document` has
+used since NOTES §20. So all four get, without any of them implementing it:
+
+- the auto-snapshot of what they replaced ("Before AI write" in the Versions
+  panel),
+- the optional `expected_hash` guard, returning `status: "conflict"` with the
+  on-disk text rather than overwriting,
+- the self-write ledger stamp, without which the watcher reports the app's own
+  save as an external edit and the tree reloads in a loop (§3c),
+- and the no-op rule: byte-identical content does not touch the file at all,
+  and takes no snapshot.
+
+That last one is why `replace_in_document` finding nothing is **not an error**.
+Swift refuses with "no occurrences of…". Here it writes the identical bytes,
+which is a no-op all the way down, and answers `replacements: 0` with the
+current stamp. A model that asked a reasonable question gets an answer instead
+of an exception, and the file is provably untouched.
+
+### 23d. A folder mark is a manifest edit, and the two models did not match
+
+Swift stores manuscripts and drafts as two flat lists of folder paths on the
+workflow (`manuscriptFolders`, `draftFolders`). This side has a richer
+manifest: a `Manuscript` carries an id, a title and a chapter order, and a
+`Draft` carries an id, a name, an active flag and a cut. So "mark this folder"
+could not be a string appended to a set — it builds or removes a record.
+
+Marking seeds the chapter order from the markdown already in the folder, in
+name order, which is exactly what `reconcile_chapter_order` would have
+produced on the next open. Unmarking removes the record **and never touches a
+file**; unmarking a manuscript also drops the draft folders that were only
+drafts by virtue of sitting under it, which is Swift's rule. Drafts that are
+*not* folder-backed are left alone — those are the writer's own named cuts.
+
+Two rules came across unchanged, and one thing had to be added:
+
+- **A draft folder needs a manuscript strictly above it.** A draft is an
+  alternate cut *of something*. The refusal names the fix
+  ("mark its parent as a manuscript first").
+- **The manuscript folder cannot be its own draft.** Two records fighting over
+  the same chapters on every reconcile is not a feature.
+- **`Draft` gained an optional `folder`.** Without it there is nowhere to
+  record *which* folder a folder-backed draft came from. It is
+  `skip_serializing_if = "Option::is_none"`, so an existing `workflow.json`
+  round-trips unchanged and the renderer — which never writes the manifest
+  itself, only through Rust commands — does not need to know about it.
+
+### 23e. The bug the `folder` field exists to prevent
+
+`workflow::reconcile_chapter_order` runs on every open. For each manuscript it
+lists the folder's markdown, merges that against the recorded order, and then
+brings the drafts along: a draft that mirrored the manuscript follows it, and
+any other draft gets `merge_order`'d against **the manuscript folder's**
+listing.
+
+That last step is fine when every draft is a cut of the manuscript's own
+chapters. It is destructive the moment a draft's chapters live somewhere else:
+an alternate cut in `Drafts/Second Pass/` has none of its files in
+`markdown_paths_in(root, "Drafts")` — the listing is one level, not recursive —
+so `merge_order` would drop every one of them as "gone from disk" and then
+append the manuscript's chapters in their place. The writer's second pass would
+be silently replaced by the first, on open, with no event to notice.
+
+So the reconcile now skips folder-backed drafts in the manuscript pass and
+gives them a pass of their own against their own folder. `ops::reorder_chapters`
+got the same exemption, for the same reason. There is a test that adds a file
+to each folder, runs the reconcile and checks that the two cuts stayed
+separate.
+
+### 23f. A snapshot bug found on the way through
+
+`take_snapshot` and `diff_version` both lean on `aux_store::snapshot_document`,
+and writing a test that took two snapshots in a row turned up something older
+and worse than anything in this wave.
+
+Version bodies are stored as files named `{stamp(at)}-{short(id)}.{ext}`.
+`stamp` has **one-second** resolution. `short` keeps the first six alphanumeric
+characters of the id — and `snapshot_document` builds its ids as `"s"` plus the
+timestamp in hex, so those six characters are `s` plus five hex digits of a
+clock that only changes them every few hours. Two backend snapshots of the same
+document within the same second therefore resolved to **the same file**: the
+second write clobbered the first one's body, the index kept both rows, and the
+version history listed two versions and served the same text for both.
+
+The fix is in `write_versions`, not in the id scheme: a generated file name is
+de-duplicated against the names already in use (`-2`, `-3`, …), which closes
+the hole for any id scheme rather than for this one. `aux_store` has a
+regression test that takes two snapshots 4ms apart and reads both bodies back.
+
+### 23g. The Fountain scanner is a scanner, not a parser
+
+The renderer parses Fountain properly, through `fountain-js`. None of that is
+reachable from Rust, and `list_scenes` / `reorder_scenes` need exactly one
+thing out of a script: where the headings are. So `vault::fountain` is ~90
+lines of line scanning, mirroring `SCENE_HEAD_RE` in `src/lib/fountain.ts`:
+`INT.` / `EXT.` / `EST.` / `INT./EXT.` / `I/E.` at the start of a trimmed line,
+or a forced heading — a single `.` followed by something that is neither a dot
+nor whitespace.
+
+One deliberate asymmetry: this side matches the prefixes **case-insensitively**
+and the TypeScript regex does not. A tool that cannot see a scene the writer
+can see is worse than one that sees a scene the syntax highlighter missed.
+
+`reorder_scenes` takes a permutation of the scene indices rather than Swift's
+`from`/`to` pair. A permutation is checkable — every index once, none invented,
+refused otherwise — where a from/to pair can only be clamped, and "moved scene
+7 to 40, which became 12" is not an answer anyone wants. Two details that are
+easy to get wrong and are tested:
+
+- **Everything above the first heading does not move.** In a screenplay that is
+  the Fountain title page and any opening `FADE IN:`.
+- **A moved last scene gets the blank line a heading needs.** The last scene in
+  a script has no trailing blank of its own; moving it anywhere but the end
+  would glue the next heading onto the line above and that heading would stop
+  being a heading. One blank line is inserted only where that would happen, so
+  an identity permutation is still byte-identical.
+
+### 23h. What `diff_version` is for, and what it refuses to be
+
+It answers "what has changed since this version" without pulling two full
+texts into a model's context. Line counts, then the changed passages: each hunk
+carries the line it starts at on both sides, the lines that went, and the lines
+that came. No unified-diff header, no context lines, no rename detection —
+`read_snapshot` and `read_document` are right there when the actual words are
+wanted.
+
+Two caps, both reported in the answer rather than silent. `truncated` means the
+hunk list stopped (60 hunks, 40 lines per side); `approximate` means the two
+texts were too large to align line by line (past a million LCS cells) and the
+middle is reported as one replacement. **The counts are always the real ones.**
+Common prefix and suffix are trimmed before the table is built, which is what
+keeps the quadratic part small for the actual case — one paragraph changed in a
+chapter.
+
+### 23i. What this did not do
+
+- **No `revert_to_version` tool.** Swift has one. Here it is `read_snapshot`
+  followed by `write_document`, which is two calls and one auto-snapshot of
+  what was replaced — strictly safer than a single tool that overwrites.
+- **No UI for the folder marks yet.** Swift's sidebar has "Mark as
+  manuscript" / "Mark as draft" in a row's context menu; ours does not, so for
+  the moment these two tools can do something a human cannot do by clicking.
+  That is a sidebar gap, written down in PARITY's closing section, not a
+  capability the agent was given over the writer.
+- **`replace_in_document` is one document.** A vault-wide rename is
+  `search` + a loop, which keeps the per-file conflict guard meaningful.
+- **Permanent deletion is still absent**, and nothing here moved it.
+
+---
+
+## 24. The shell and welcome polish — and one thing a webview cannot do
+
+Wave 3's small-and-visible bundle: PARITY rows 15 (welcome), 16 (popouts), 21
+(theme write-back) and 22 (empty states), plus the navigator zoom Wave 1 left
+behind and the trash behavior SWIFT-AUDIT §4 said was the wrong way round.
+
+### 24a. A folder dropped on the welcome window cannot be opened, and why
+
+Swift's welcome screen lets you drag a folder from Finder anywhere onto the
+window and it opens as a workflow (SWIFT-AUDIT §2.6). **This side cannot do
+that, and it is not for want of trying.** Written down here so nobody spends
+another afternoon on it.
+
+The *events* are fine. `dragDropEnabled` is `false` in both window configs
+(§18a), so Tauri's native file-drop handler is out of the way and the page
+receives real HTML5 `dragover` / `drop`. What the drop carries is the problem.
+Everything a webview will tell you about a dropped directory:
+
+| What you can ask | What you get for a folder |
+|---|---|
+| `DataTransferItem.webkitGetAsEntry()` | a `FileSystemDirectoryEntry` whose `fullPath` is `/TheFolderName` — a path inside the drag's *own* sandbox root. Never the parent, never the volume. |
+| `DataTransfer.files` | usually empty; at best a 0-byte `File` whose `name` is the leaf again |
+| `File.path` | **not present.** This is Electron's nonstandard property. WKWebView does not have it, WebKitGTK does not have it, and Tauri 2 does not inject it. |
+| `FileSystemHandle` (`showDirectoryPicker`) | not a path either — an opaque handle, and unimplemented in WebKit anyway |
+
+The supported route to a real path is Tauri's **native** drop event
+(`tauri://drag-drop`), which is precisely the thing that had to be switched off
+to make tree drag work at all (§18a). One or the other, and tree drag is the
+one Royce asked for.
+
+So the drop **degrades instead of failing silently**, which is the actual
+deliverable here:
+
+- The window visibly reacts while a folder is over it — a dashed accent ring
+  and a card. A window that lets a folder fall straight through it reads as a
+  broken app, which is the impression this screen exists to stop giving.
+- On drop it names the folder (`Can't open "My Novel" from a drop`), gives the
+  one true reason — "this window can see the folder's name but not where it is
+  on disk" — and then puts both ways in under the pointer: "Open existing", and
+  the type-a-path box, revealed and focused.
+- A dropped **file** gets a different sentence ("A workflow is a folder, not a
+  file"), because being told the wrong thing about your own action is worse
+  than being told nothing.
+
+`readDroppedFolder` in `SelectWorkflow.tsx` still *asks* for `File.path` rather
+than assuming it is absent. It costs one line, and if a future Tauri or WebKit
+exposes it the feature starts working with no other change.
+
+### 24b. Popouts, and the second half of the capability
+
+⌃⌘O had been permission-blocked since §15d. Two things were needed, and the
+second is the one that is easy to miss:
+
+```jsonc
+"windows": ["main", "aquarius-*"],        // ← not just the grant
+"permissions": [ …, "core:webview:allow-create-webview-window" ]
+```
+
+`new WebviewWindow(...)` is `plugin:webview|create_webview_window`, so the
+grant is obvious. But a Tauri capability applies **to the windows it names**,
+and the popout is a *different window*: without the glob it would open and
+then be a window with no permissions at all — no `core:event` listener for
+`vault://changed`, no `data-tauri-drag-region`, no working reattach. The labels
+are `aquarius-<flattened path>`, produced by the exported `popoutLabel()` in
+`popoutStore.ts` so the glob has exactly one thing to match.
+
+Three smaller repairs went in with it:
+
+- **The ghost no longer lies.** `popped` used to flip the instant ⌃⌘O was
+  pressed, so a refused window left the host showing a placeholder for a
+  document that had gone nowhere. It now flips on `tauri://created`, and
+  `tauri://error` raises a notice with the refusal's own words — which is how
+  a missing permission will announce itself next time instead of being silent.
+- **Reattach closes the real window.** The store kept a `Map` of `window.open`
+  handles, which is a browser-only thing; the Tauri branch had nothing to
+  close. It now keeps the `WebviewWindow` too. `close()` is
+  `core:window:allow-close`, which the title bar already needed — nothing new
+  granted.
+- **The popout inherits the platform's chrome.** It was hardcoded
+  `decorations: false, transparent: true`, which on macOS means an undecorated
+  window with no traffic lights next to a main window that has native ones
+  (§15c), plus the `macOSPrivateApi` warning §6 got rid of. It now matches the
+  platform, and sets `dragDropEnabled: false` for the same reason the main
+  window does.
+
+### 24c. The trash never empties itself any more
+
+SWIFT-AUDIT §4: *"Swift's trash never auto-purges (user confirms); the port
+sweeps on load. Pick one — silent deletion after 30 days is the more surprising
+behavior."* Swift's behavior wins.
+
+`fs_ops::trash::sweep_expired` is gone, and with it the call at the top of
+`vault_load_workflow`. Opening a workflow now destroys nothing. `RETENTION_DAYS`
+survives as a **label**: `trash_retention_days` hands the number to the
+Recently Deleted sheet, which marks anything older as "kept past 30 days" and
+then leaves it exactly where it is, still restorable.
+
+The one bulk destruction is `trash::purge_all`, behind `trash_empty` and behind
+a confirm that counts what is about to go ("Permanently delete 41 items from
+the trash?" is a different question from "Empty the trash?"). It rewrites the
+index *after* the payload folders are gone, so a crash half way leaves rows
+that still point at something rather than folders no UI can reach. Unlike the
+single-row purge it is awaited rather than backgrounded — it is the one action
+here a writer might quit straight after, and the one whose failure they need
+to hear about.
+
+Tests changed with the behavior: `the_sweep_drops_only_deletions_past_thirty_days`
+became `age_alone_never_destroys_a_deletion` (a 400-day-old deletion is still
+on disk and still restorable after a read), plus
+`empty_trash_destroys_everything_and_only_when_asked` and a test pinning
+`RETENTION_DAYS` at 30 — a number that no longer *does* anything can drift
+without anyone noticing, so it is nailed down.
+
+### 24d. The theme is global. Row 21 closed as "matches Swift"
+
+PARITY row 21 asked whether the port should write `workflow.json`'s
+`settings.theme` back. The answer is neither: **stop reading it**.
+
+Swift keeps the theme in `UserDefaults` under `aquarius.theme` — one value for
+the app — and has no concept of a per-workflow look at all (SWIFT-AUDIT §4).
+The port was reading a field that nothing on either side has ever written, so
+`themeStore.adoptWorkflow` implemented a behavior nobody could observe and the
+only thing it could ever do was change the app's appearance under someone who
+had not asked. It is gone, along with its `useEffect` in `App.tsx`.
+
+`settings.theme` and `settings.accent` are still **tolerated**: the Rust struct
+keeps them, `workflow.json` round-trips them untouched (unknown-key
+preservation covers the rest), and an older file loses nothing. localStorage is
+the truth. If Swift ever grows a per-workflow theme, the field is still there
+to read.
+
+### 24e. Navigator zoom is one CSS variable
+
+A− / A+ in the WORKFLOW eyebrow, 0.8–1.8× in 0.1 steps, persisted as
+`aquarius.sidebarZoom` — the same key Swift uses (SWIFT-AUDIT §4).
+
+The whole mechanism is `--sb-zoom`, set inline on `.sb-tree`. `.sb-row` reads
+it for its font size and vertical padding; the per-row indent, which is
+computed in JS (`10 + depth * 14`) and so cannot be a plain rule, goes through
+a `scaled()` helper that hands the arithmetic to `calc()`. Every reader uses
+`var(--sb-zoom, 1)`, which is what keeps the blast radius at zero: the quick
+views, the rail and the rename field all use `.sb-row` from *outside* the tree,
+the variable is unset there, and they render exactly as they did before this
+existed. Middle-click either button to reset to 1×.
+
+Deliberately not scaled: the row icons. They are 12–13px glyphs whose props
+take numbers, and threading a scale through them would have meant touching the
+tree-row internals that §18's drag code lives in. Text and spacing are what
+the zoom is for.
+
+### 24f. Empty states are a component now, and one of them was lying
+
+`components/shell/EmptyState.tsx` — inline SVG line illustration (folder, book,
+star, search; `currentColor`, 44–60px), serif headline, italic subline,
+optional single CTA, in `page` and `inline` sizes. Tokens only, so Ice,
+Midnight and the AquariusOS skin all come out right with no second rule.
+SWIFT-AUDIT §1.6: *empty states are never a shrug*.
+
+Applied to the empty Starred quick view, a fresh workflow's empty tree (with a
+"New document" button — the only one of these with something to *do*), a name
+filter with no hits, an empty trash, an empty recents list on the welcome
+screen, and the editor placeholder.
+
+That last one is why this row was worth more than its size. The no-document
+pane said *"Phase 4 wires up the WYSIWYG note editor for non-chapter
+markdown"* — Phase 4 shipped months ago, and the sentence had been quietly
+lying about the app's own state ever since. The case it was covering is real
+but different: markdown, Fountain, images, PDFs, HTML and video all route
+above it, so anything reaching that branch is a file type the app genuinely
+has no editor for, and it now says so and names the extension.
+
+### 24g. The sidebar is opaque, and that is a performance fix
+
+Royce, on the Linux bench: navigation and scrolling felt sluggish. The sidebar
+was the only frosted surface in the app — a translucent `--sidebar` plus
+`backdrop-filter: blur(20px)`, behind an `@supports` test meant to catch
+WebKitGTK builds that lack the property.
+
+The test asked the wrong question. WebKitGTK *claims* support and then pays
+for it in its compositor: a 20px backdrop blur beneath a scrolling file tree is
+re-blurred every frame, over the full height of the column. `@supports` cannot
+ask "and is it fast", so the honest answer was to stop asking. The block is
+**deleted, not guarded** — a blur that runs only where it happens to be quick
+is two sidebars to look at and one of them untested — and `.sidebar` now uses
+`--sidebar-solid` unconditionally on every theme and platform. The translucent
+`--sidebar` token went with it (nothing else consumed it; `--sidebar-solid`
+stays and is now simply "the sidebar's background").
+
+This pairs with `transparent: false` on the Linux window: there is nothing
+behind the sidebar to blur either way now.
+
+### 24h. What this did not do
+
+- **Drag a folder in from the OS file manager.** Not deferred — *not possible*
+  from the webview, for the reasons in §24a. It stays open on PARITY row 6 as
+  a native-drop question, which is a different mechanism and a different
+  trade-off against tree drag.
+- **Popouts verified on real hardware.** The capability is correct against the
+  generated ACL manifest and the label glob matches what `popoutLabel()`
+  produces, but ⌃⌘O opening a real second window has not been watched on the
+  Linux bench. §15e's `invoke("plugin:…")` probe is still the cheapest way to
+  confirm it.
+- **Row icons do not follow the navigator zoom** (§24e).
+- **Empty states for the corkboard, the graph and the version list.** The
+  component is there; those three panes were not in this bundle.

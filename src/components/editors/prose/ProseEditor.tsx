@@ -4,6 +4,9 @@ import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { proseTheme, wysiwygDecorations } from "@/lib/markdown/wysiwyg";
+import { wikilinkCompletion } from "@/lib/markdown/wikilink-ext";
+import { focusZoomPane, registerZoomPane } from "@/lib/markdown/editor-zoom";
+import { useVault } from "@/state/vaultStore";
 import { formatBus } from "@/lib/format/formatBus";
 import { watchAncestorScroll } from "@/lib/cm-embed";
 import { applyMdCommand } from "@/lib/format/mdCommands";
@@ -29,6 +32,13 @@ export function ProseEditor({ value, onChange, path }: ProseEditorProps) {
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
+  // The vault tree is the completion source for `[[`. Held in a ref and read
+  // at query time so a file created since mount is offered without rebuilding
+  // the editor.
+  const tree = useVault((s) => s.tree);
+  const treeRef = useRef<typeof tree>(tree);
+  treeRef.current = tree;
+
   // Create the view once.
   useEffect(() => {
     if (!host.current) return;
@@ -41,6 +51,7 @@ export function ProseEditor({ value, onChange, path }: ProseEditorProps) {
         markdown(),
         EditorView.lineWrapping,
         wysiwygDecorations(),
+        ...wikilinkCompletion(treeRef, path),
         proseTheme,
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current(u.state.doc.toString());
@@ -52,10 +63,18 @@ export function ProseEditor({ value, onChange, path }: ProseEditorProps) {
     if (path) formatBus.register(path, view);
     const unwatchScroll = watchAncestorScroll(view);
     const focusPath = path;
-    const onFocus = () => { if (focusPath) formatBus.focus(focusPath); };
+    // Restores this document's saved zoom, and makes ⌘+/⌘−/⌘0 land here while
+    // the caret is in this pane.
+    const unzoom = focusPath
+      ? registerZoomPane({ path: focusPath, kind: "prose", host: host.current, view })
+      : undefined;
+    const onFocus = () => {
+      if (focusPath) { formatBus.focus(focusPath); focusZoomPane(focusPath); }
+    };
     view.contentDOM.addEventListener("focus", onFocus);
     return () => {
       unwatchScroll();
+      unzoom?.();
       view.contentDOM.removeEventListener("focus", onFocus);
       if (path) formatBus.unregister(path, view);
       view.destroy();

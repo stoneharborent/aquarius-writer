@@ -5,18 +5,17 @@ import { SelectWorkflow } from "@/components/workflows/SelectWorkflow";
 import { OverlayRoot } from "@/components/overlays/OverlayRoot";
 import { ConflictDialog } from "@/components/safety/ConflictDialog";
 import { Notices } from "@/components/notices/Notices";
-import { useTheme } from "@/state/themeStore";
 import { useVault } from "@/state/vaultStore";
 import { useUpdates } from "@/state/updateStore";
 import { useOverlay } from "@/state/overlayStore";
 import { usePopout } from "@/state/popoutStore";
 import { useShell } from "@/state/shellStore";
 import { useGlobalShortcuts, type Shortcut, mod } from "@/lib/shortcuts";
+import { stepEditorZoom } from "@/lib/markdown/editor-zoom";
 import { getPopoutPath } from "@/lib/popout";
 import { PopoutWindow } from "@/components/popout/PopoutWindow";
 
 export default function App() {
-  const { adoptWorkflow } = useTheme();
   const { current, setView, selectedPath, bootstrap, booted } = useVault();
   const overlay = useOverlay();
   const popout = usePopout();
@@ -67,6 +66,24 @@ export default function App() {
       match: (e) => mod(e) && e.key === "2", run: () => setView("outline") },
     { id: "view-corkboard", combo: "⌘3", group: "view", label: "Corkboard",
       match: (e) => mod(e) && e.key === "3", run: () => setView("corkboard") },
+    /* Per-document zoom (PARITY row 14). `useGlobalShortcuts` calls
+       `preventDefault()` on every match, which is what keeps the WEBVIEW from
+       zooming instead — ⌘+ and ⌘− are its own default bindings, and once the
+       whole page scales, the editor is no longer the whole-pixel surface
+       NOTES §1a requires it to be. Matching goes through both `key` and `code`
+       because ⌘+ is an unshifted `=` on a US layout, a shifted `+` on others,
+       and a numpad key on a third. */
+    { id: "zoom-in", combo: "⌘+", group: "view", label: "Zoom this document in",
+      match: (e) => mod(e) && !e.altKey &&
+        (e.key === "+" || e.key === "=" || e.code === "NumpadAdd"),
+      run: () => { stepEditorZoom(1); } },
+    { id: "zoom-out", combo: "⌘−", group: "view", label: "Zoom this document out",
+      match: (e) => mod(e) && !e.altKey &&
+        (e.key === "-" || e.key === "_" || e.code === "NumpadSubtract"),
+      run: () => { stepEditorZoom(-1); } },
+    { id: "zoom-reset", combo: "⌘0", group: "view", label: "Reset this document's zoom",
+      match: (e) => mod(e) && !e.altKey && (e.key === "0" || e.code === "Numpad0"),
+      run: () => { stepEditorZoom(0); } },
     { id: "popout", combo: "⌃⌘O", group: "navigation", label: "Pop out / reattach",
       match: (e) => mod(e) && e.ctrlKey && e.key.toLowerCase() === "o",
       run: () => {
@@ -99,16 +116,10 @@ export default function App() {
     void startUpdates();
   }, [startUpdates]);
 
-  // Adopt the workflow's own theme / accent on open — unless the writer has
-  // picked a theme themselves, in which case their choice stands.
-  useEffect(() => {
-    if (current?.settings) {
-      adoptWorkflow({
-        theme: current.settings.theme,
-        accent: current.settings.accent,
-      });
-    }
-  }, [current?.id, current?.settings, adoptWorkflow]);
+  // No theme adoption on open. The theme is global — Swift keeps one value in
+  // UserDefaults and has no per-workflow look at all (SWIFT-AUDIT §4) — so
+  // opening a workflow no longer changes how the app looks. PARITY row 21;
+  // `settings.theme` / `settings.accent` still round-trip on disk, unread.
 
   // No status bar. Swift has none (SWIFT-AUDIT §1.3) and everything that used
   // to live in the port's went somewhere it reads better: the version number

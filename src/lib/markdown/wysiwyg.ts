@@ -180,14 +180,33 @@ export const proseTheme = EditorView.theme(
       letterSpacing: "normal",
       margin: "0",
     },
-    ".cm-h1": { fontSize: "31px", lineHeight: "37px", paddingTop: "34px", paddingBottom: "15px" },
-    ".cm-h2": { fontSize: "25px", lineHeight: "30px", paddingTop: "26px", paddingBottom: "12px" },
-    ".cm-h3": { fontSize: "20px", lineHeight: "24px", paddingTop: "20px", paddingBottom: "10px" },
-    ".cm-h4, .cm-h5, .cm-h6": { fontSize: "18px", lineHeight: "21px", paddingTop: "16px", paddingBottom: "9px" },
+    //
+    // The `var(…, Npx)` fallbacks below ARE the numbers in that table. Nothing
+    // defines these properties globally: per-document zoom writes them, scoped
+    // to one editor's host element, already rounded to whole pixels
+    // (`applyEditorZoom` in theme.ts, PARITY row 14). An unzoomed document
+    // resolves every one of them to the fallback and is byte-for-byte the
+    // layout above.
+    ".cm-h1": {
+      fontSize: "var(--prose-h1-size, 31px)", lineHeight: "var(--prose-h1-line, 37px)",
+      paddingTop: "var(--prose-h1-pt, 34px)", paddingBottom: "var(--prose-h1-pb, 15px)",
+    },
+    ".cm-h2": {
+      fontSize: "var(--prose-h2-size, 25px)", lineHeight: "var(--prose-h2-line, 30px)",
+      paddingTop: "var(--prose-h2-pt, 26px)", paddingBottom: "var(--prose-h2-pb, 12px)",
+    },
+    ".cm-h3": {
+      fontSize: "var(--prose-h3-size, 20px)", lineHeight: "var(--prose-h3-line, 24px)",
+      paddingTop: "var(--prose-h3-pt, 20px)", paddingBottom: "var(--prose-h3-pb, 10px)",
+    },
+    ".cm-h4, .cm-h5, .cm-h6": {
+      fontSize: "var(--prose-h4-size, 18px)", lineHeight: "var(--prose-h4-line, 21px)",
+      paddingTop: "var(--prose-h4-pt, 16px)", paddingBottom: "var(--prose-h4-pb, 9px)",
+    },
     ".cm-em": { fontStyle: "italic" },
     ".cm-inline-code": {
       fontFamily: "var(--font-mono)",
-      fontSize: "14px", // was 0.85em = 14.45px
+      fontSize: "var(--prose-code-size, 14px)", // was 0.85em = 14.45px
       backgroundColor: "var(--bg-soft)",
       borderRadius: "3px",
       padding: "0 3px",

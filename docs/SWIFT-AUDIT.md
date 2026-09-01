@@ -290,6 +290,11 @@ when it lands, this is the bar.
   `reorder_scenes`, `set_synopsis`, `insert_text`, `replace_lines`,
   `replace_in_document`, `diff_version`, `take_snapshot`, theme/appearance
   setters, and `export_pdf`.
+  **Closed 2026-08-31 (PARITY row 17, NOTES §23):** the port now has 31 tools.
+  Everything on that list is ported except the four appearance setters
+  (dropped on purpose — Spark-era) and `export_pdf` (which is
+  `compile_document` here). The browser Web UI stays deferred. The port also
+  has `writing_stats`, which Swift does not.
 
 ### 2.9 Pricing
 

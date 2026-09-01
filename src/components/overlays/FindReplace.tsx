@@ -5,6 +5,7 @@ import { useVault } from "@/state/vaultStore";
 import { useOverlay } from "@/state/overlayStore";
 import { useEditor } from "@/state/editorStore";
 import { replaceInFile, searchWorkflow, type SearchHit } from "@/lib/vault/aux";
+import { EmptyState } from "@/components/shell/EmptyState";
 import "./FindReplace.css";
 
 export function FindReplace() {
@@ -63,7 +64,12 @@ export function FindReplace() {
         <div className="fr-hits">
           {busy && <p className="fr-idle">Searching…</p>}
           {!busy && query.trim().length >= 2 && hits.length === 0 && (
-            <p className="fr-idle">No matches.</p>
+            <EmptyState
+              art="search"
+              headline="Nothing in this workflow says that"
+              subline={<>No document contains “{query.trim()}”. Try a shorter
+                phrase, or check the spelling.</>}
+            />
           )}
           {hits.map((h) => (
             <div key={h.path} className="fr-hit">

@@ -219,13 +219,13 @@ pub fn vault_load_workflow(
 ) -> R<LoadedWorkflow> {
     let root = root_of(&state, &id)?;
 
-    // 30-day retention, applied on open: a vault that sat closed for a year
-    // still tidies itself the next time the writer comes back to it.
-    match trash::sweep_expired(&root, registry::now_ms()) {
-        Ok(n) if n > 0 => eprintln!("trash sweep: purged {n} expired deletion(s) in {}", root.display()),
-        Err(e) => eprintln!("trash sweep failed in {}: {e}", root.display()),
-        _ => {}
-    }
+    // Opening a workflow does not delete anything. There used to be a 30-day
+    // sweep here; it went on 2026-08-31 because the Swift app has never had one
+    // (SWIFT-AUDIT §4) and because "I opened my folder and my deleted chapter
+    // was gone for good" is not a thing a writing app should ever cause. The
+    // window is display-only now — `trash::is_expired` marks old rows in
+    // Recently Deleted, and `trash_empty` below is the only bulk destruction,
+    // behind a confirm.
 
     let (mut wf, _) = workflow::read_or_create(&root).map_err(io)?;
     if workflow::reconcile_chapter_order(&root, &mut wf) {
@@ -609,6 +609,25 @@ pub fn trash_restore(
 pub fn trash_purge(state: State<'_, AppState>, workflow_id: String, id: String) -> R<()> {
     let root = root_of(&state, &workflow_id)?;
     trash::purge(&root, &id).map_err(io)
+}
+
+/// Empty the trash. Returns how many deletions were destroyed.
+///
+/// The confirm lives in the renderer, where the writer can read what they are
+/// about to lose. This command does not ask; it is the click's other half.
+#[tauri::command]
+pub fn trash_empty(state: State<'_, AppState>, workflow_id: String) -> R<usize> {
+    let root = root_of(&state, &workflow_id)?;
+    trash::purge_all(&root).map_err(io)
+}
+
+/// How old a deletion has to be before Recently Deleted calls it old.
+///
+/// Display only — nothing expires on its own (see `fs_ops::trash`). The sheet
+/// asks rather than hardcoding 30, so the number has exactly one home.
+#[tauri::command]
+pub fn trash_retention_days() -> i64 {
+    trash::RETENTION_DAYS
 }
 
 // ── compile / export ─────────────────────────────────────────────────────

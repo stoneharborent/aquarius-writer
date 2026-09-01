@@ -21,7 +21,7 @@ import { RightPane } from "@/components/rightpane/RightPane";
 import { TopBar } from "@/components/shell/TopBar";
 import { Gutter } from "@/components/shell/Gutter";
 import { Splitter } from "@/components/shell/Splitter";
-import { BookIcon } from "@/icons";
+import { EmptyState } from "@/components/shell/EmptyState";
 import { useVault } from "@/state/vaultStore";
 import { useEditor } from "@/state/editorStore";
 import { useOverlay } from "@/state/overlayStore";
@@ -476,18 +476,37 @@ function SaveBadge({ status }: { status: string }) {
   return <span className={`mw-save mw-save-${status}`}>{label}</span>;
 }
 
+/**
+ * The editor pane with nothing in it — two different nothings.
+ *
+ * With no selection it is an invitation; with a selection it is a file this
+ * app has no editor or viewer for. The second case used to promise that
+ * "Phase 4 wires up the WYSIWYG note editor", which shipped in Phase 4 and
+ * left the sentence behind as a lie about the app's own state. Markdown,
+ * Fountain, images, PDFs, HTML and video all route above this; anything
+ * reaching here is genuinely unhandled, and saying so is the honest answer.
+ */
 function EditorPlaceholder({ selectedPath }: { selectedPath: string | null }) {
+  const ext = selectedPath?.includes(".")
+    ? selectedPath.slice(selectedPath.lastIndexOf(".")).toLowerCase()
+    : null;
   return (
     <div className="mw-editor-placeholder">
-      <BookIcon size={28} color="var(--ink-mute)" />
-      <h1 className="mw-editor-title">
-        {selectedPath ? "Open this in the right editor" : "Pick a chapter from the sidebar"}
-      </h1>
-      <p className="mw-editor-sub">
-        {selectedPath
-          ? "Phase 4 wires up the WYSIWYG note editor for non-chapter markdown."
-          : "Drafts/ holds the prose editor; everything else opens in the note editor."}
-      </p>
+      {selectedPath ? (
+        <EmptyState
+          art="folder"
+          headline="No editor for this kind of file"
+          subline={<>Aquarius opens Markdown, Fountain, images, PDFs, HTML and
+            video. {ext ? <><code>{ext}</code> files</> : "This file"} stays where
+            it is, untouched.</>}
+        />
+      ) : (
+        <EmptyState
+          art="book"
+          headline="Nothing open yet"
+          subline="Pick a document from the sidebar. Chapters in Drafts open on the page canvas; everything else opens in the note editor."
+        />
+      )}
     </div>
   );
 }

@@ -100,29 +100,35 @@ export const fountainTheme = EditorView.theme(
 
     // Each `marginTop` below became a `paddingTop` of the same rounded value
     // less the 2px the previous line already contributes as padding-bottom.
+    //
+    // The `var(…, Npx)` fallbacks ARE those numbers. Nothing defines these
+    // properties globally: per-document zoom writes them — already rounded to
+    // whole pixels — scoped to one editor's host element (`applyEditorZoom` in
+    // theme.ts, PARITY row 14), so an unzoomed screenplay resolves every one to
+    // the fallback and is exactly the grid it was.
     ".cm-fnt-scene-heading": {
       fontWeight: "700",
       textTransform: "uppercase",
       color: "var(--ink)",
-      paddingTop: "18px", // was marginTop 1.4em = 19.6px
+      paddingTop: "var(--fnt-scene-pt, 18px)", // was marginTop 1.4em = 19.6px
       borderBottom: "1px solid var(--line)",
-      paddingBottom: "2px", // was 0.15em = 2.1px
+      paddingBottom: "var(--fnt-scene-pb, 2px)", // was 0.15em = 2.1px
     },
     ".cm-fnt-character": {
       fontWeight: "600",
       textTransform: "uppercase",
       color: "var(--ink)",
-      paddingLeft: "181px", // was 26% = 180.96px at the design width
-      paddingTop: "9px", // was marginTop 0.8em = 11.2px
+      paddingLeft: "var(--fnt-character-indent, 181px)", // was 26% = 180.96px at the design width
+      paddingTop: "var(--fnt-character-pt, 9px)", // was marginTop 0.8em = 11.2px
     },
     ".cm-fnt-parenthetical": {
       color: "var(--ink-soft)",
-      paddingLeft: "139px", // was 20% = 139.2px
+      paddingLeft: "var(--fnt-paren-indent, 139px)", // was 20% = 139.2px
       fontStyle: "italic",
     },
     ".cm-fnt-dialogue": {
-      paddingLeft: "97px", // was 14% = 97.44px
-      paddingRight: "97px",
+      paddingLeft: "var(--fnt-dialogue-indent, 97px)", // was 14% = 97.44px
+      paddingRight: "var(--fnt-dialogue-indent, 97px)",
       color: "var(--ink-prose)",
     },
     ".cm-fnt-transition": {
@@ -130,7 +136,7 @@ export const fountainTheme = EditorView.theme(
       textTransform: "uppercase",
       textAlign: "right",
       color: "var(--ink-soft)",
-      paddingTop: "15px", // was marginTop 1.2em = 16.8px
+      paddingTop: "var(--fnt-transition-pt, 15px)", // was marginTop 1.2em = 16.8px
     },
     ".cm-fnt-section": {
       fontFamily: "var(--font-ui)",
@@ -140,7 +146,7 @@ export const fountainTheme = EditorView.theme(
       // the two engines disagree about, so it is a whole pixel now.
       letterSpacing: "1px",
       textTransform: "uppercase",
-      paddingTop: "15px", // was marginTop 1.2em = 16.8px
+      paddingTop: "var(--fnt-section-pt, 15px)", // was marginTop 1.2em = 16.8px
     },
     ".cm-fnt-synopsis": {
       fontFamily: "var(--font-serif)",

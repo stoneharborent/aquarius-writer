@@ -24,6 +24,17 @@ export const EDITOR_MIN = 320;
 /** Every collapsed pane in the app is this wide. */
 export const GUTTER = 28;
 
+/**
+ * Navigator zoom — the A− / A+ pair in the WORKFLOW eyebrow (SWIFT-AUDIT §1.4).
+ *
+ * It scales the file tree's rows and nothing else: not the quick views above
+ * it, not the rail below, not the editor (that is ⌘+/−/0, PARITY row 14). Swift
+ * persists it as `aquarius.sidebarZoom` and so does this.
+ */
+export const ZOOM_MIN = 0.8;
+export const ZOOM_MAX = 1.8;
+export const ZOOM_STEP = 0.1;
+
 export type RightTab = "comments" | "versions";
 
 const K = {
@@ -32,6 +43,7 @@ const K = {
   rightWidth: "aquarius.rightpane.width",
   rightCollapsed: "aquarius.rightpane.collapsed",
   rightTab: "aquarius.rightpane.mode",
+  sidebarZoom: "aquarius.sidebarZoom",
 } as const;
 
 function num(key: string, fallback: number, lo: number, hi: number): number {
@@ -45,6 +57,22 @@ function num(key: string, fallback: number, lo: number, hi: number): number {
     return fallback;
   }
 }
+
+/** Like `num`, but keeps the fraction — widths round, a zoom factor must not. */
+function ratio(key: string, fallback: number, lo: number, hi: number): number {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(hi, Math.max(lo, n));
+  } catch {
+    return fallback;
+  }
+}
+
+/** Kill floating-point crumbs so 0.7999999999999999 never reaches the DOM. */
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 function bool(key: string, fallback: boolean): boolean {
   try {
@@ -70,9 +98,14 @@ interface ShellState {
   /** Bumped by ⌘K; the search capsule focuses itself when it changes. */
   focusTick: number;
 
+  /** Tree-row scale, 0.8–1.8. Only the file tree reads it. */
+  sidebarZoom: number;
+
   setSidebarWidth: (px: number) => void;
   setSidebarCollapsed: (v: boolean) => void;
   toggleSidebar: () => void;
+  /** A− / A+ — `delta` in steps, or 0 to go back to 1×. */
+  stepSidebarZoom: (delta: number) => void;
 
   setRightWidth: (px: number) => void;
   setRightCollapsed: (v: boolean) => void;
@@ -93,6 +126,7 @@ interface ShellState {
 export const useShell = create<ShellState>((set, get) => ({
   sidebarWidth: num(K.sidebarWidth, SIDEBAR_DEFAULT, SIDEBAR_MIN, SIDEBAR_MAX),
   sidebarCollapsed: bool(K.sidebarCollapsed, false),
+  sidebarZoom: ratio(K.sidebarZoom, 1, ZOOM_MIN, ZOOM_MAX),
   rightWidth: num(K.rightWidth, RIGHT_DEFAULT, RIGHT_MIN, 4000),
   rightCollapsed: bool(K.rightCollapsed, false),
   rightTab: (() => {
@@ -114,6 +148,15 @@ export const useShell = create<ShellState>((set, get) => ({
   },
   toggleSidebar() {
     get().setSidebarCollapsed(!get().sidebarCollapsed);
+  },
+
+  stepSidebarZoom(delta) {
+    const next = delta === 0
+      ? 1
+      : round2(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, get().sidebarZoom + delta * ZOOM_STEP)));
+    if (next === get().sidebarZoom) return;
+    write(K.sidebarZoom, String(next));
+    set({ sidebarZoom: next });
   },
 
   setRightWidth(px) {

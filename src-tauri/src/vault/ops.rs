@@ -737,6 +737,10 @@ fn follow_in_workflow(
         }
     }
     for draft in wf.drafts.iter_mut() {
+        if let Some(folder) = draft.folder.as_deref().and_then(remap) {
+            draft.folder = Some(folder);
+            changed = true;
+        }
         for chapter in draft.chapter_order.iter_mut() {
             if let Some(next) = remap(chapter) {
                 *chapter = next;
@@ -923,6 +927,470 @@ pub fn set_status(
     set_frontmatter(root, rel, "status", status, self_writes)
 }
 
+/// Set a document's `synopsis` frontmatter key.
+///
+/// The corkboard card and the outline row both read this key, and it is the
+/// one value a writer routinely gives more than one line — so a value with a
+/// newline in it is written as a `key: |` block rather than being flattened.
+/// Everything else in the file, frontmatter included, survives byte for byte
+/// (`frontmatter::upsert` is line surgery, not a reserialise).
+pub fn set_synopsis(
+    root: &Path,
+    rel: &str,
+    text: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<WriteReport> {
+    set_frontmatter(root, rel, "synopsis", text, self_writes)
+}
+
+// ── line-addressed edits (PARITY row 17) ─────────────────────────────────
+//
+// `write_document` replaces a whole file, which is the honest primitive but a
+// wasteful one: rewriting a 4,000-word chapter to change a sentence sends the
+// chapter twice and gives the guard the whole file to disagree about. These
+// three do the splice on this side.
+//
+// **Line numbers count body lines, not file lines.** A document's frontmatter
+// is metadata the writer does not see in the editor, and a client that counted
+// it would be off by the height of a block it never asked about. So line 1 is
+// the first line of the body, `frontmatter::parse`'s definition of body, and
+// the frontmatter block is carried across untouched. `fountain::collect_scenes`
+// numbers scenes the same way, which is what lets a scene's range be handed
+// straight to `replace_lines`.
+//
+// All three go through `agent_write_document`, so they get the same
+// auto-snapshot, the same optional `expected_hash` guard and the same ledger
+// stamping a full `write_document` does.
+
+/// Split a document into its frontmatter block and its body.
+///
+/// `prefix + body == content`, byte for byte: `body` is a suffix of `content`
+/// (the parser only ever drops leading lines), so the split is arithmetic
+/// rather than a re-render. `("", content)` when there is no frontmatter.
+pub fn split_body(content: &str) -> (&str, &str) {
+    let body_len = frontmatter::parse(content).body.len();
+    let cut = content.len() - body_len;
+    debug_assert_eq!(&content[cut..], frontmatter::parse(content).body);
+    (&content[..cut], &content[cut..])
+}
+
+/// Read a document and hand back its frontmatter prefix and body lines.
+fn body_lines(root: &Path, rel: &str) -> OpResult<(String, Vec<String>)> {
+    let content = read_file(root, rel)?.content;
+    let (prefix, body) = split_body(&content);
+    let lines = body.split('\n').map(str::to_string).collect();
+    Ok((prefix.to_string(), lines))
+}
+
+/// Insert `text` after body line `after_line` (1-based; 0 means the top).
+///
+/// `after_line` past the end of the document appends — a client that means
+/// "at the end" and guesses the line count high should not get an error for it.
+pub fn insert_text(
+    root: &Path,
+    rel: &str,
+    after_line: usize,
+    text: &str,
+    expected_hash: Option<&str>,
+    self_writes: &SelfWrites,
+) -> OpResult<WriteResult> {
+    let (prefix, mut lines) = body_lines(root, rel)?;
+    let at = after_line.min(lines.len());
+    let inserted: Vec<String> = text.split('\n').map(str::to_string).collect();
+    lines.splice(at..at, inserted);
+    agent_write_document(root, rel, &format!("{prefix}{}", lines.join("\n")), expected_hash, self_writes)
+}
+
+/// Replace body lines `from_line..=to_line` (1-based, inclusive) with `text`.
+///
+/// The range has to start inside the document; `to_line` past the end is
+/// clamped to it, so "replace from here to the end" does not need an exact
+/// line count. A `from_line` past the end is refused rather than treated as an
+/// append — that is `insert_text`, and guessing between the two would be a way
+/// to lose an edit silently.
+pub fn replace_lines(
+    root: &Path,
+    rel: &str,
+    from_line: usize,
+    to_line: usize,
+    text: &str,
+    expected_hash: Option<&str>,
+    self_writes: &SelfWrites,
+) -> OpResult<WriteResult> {
+    let (prefix, mut lines) = body_lines(root, rel)?;
+    if from_line < 1 {
+        return Err("from_line is 1-based — the first line of the body is 1".into());
+    }
+    if to_line < from_line {
+        return Err(format!("to_line ({to_line}) is before from_line ({from_line})"));
+    }
+    if from_line > lines.len() {
+        return Err(format!(
+            "{rel} has {} body lines, so there is no line {from_line} to replace — use insert_text to add to the end",
+            lines.len()
+        ));
+    }
+    let lo = from_line - 1;
+    let hi = to_line.min(lines.len());
+    let replacement: Vec<String> = text.split('\n').map(str::to_string).collect();
+    lines.splice(lo..hi, replacement);
+    agent_write_document(root, rel, &format!("{prefix}{}", lines.join("\n")), expected_hash, self_writes)
+}
+
+/// What a find-and-replace did.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceReport {
+    /// How many occurrences were replaced. Zero is a valid answer and not an
+    /// error: the file is left exactly as it was.
+    pub replacements: usize,
+    pub result: WriteResult,
+}
+
+/// Plain-string find and replace across a whole document.
+///
+/// Not a regular expression — "." and "*" match themselves, the same promise
+/// `search` makes. `all` replaces every occurrence; `false` replaces only the
+/// first. The search covers the whole file including the frontmatter block,
+/// because a client renaming a character wants the `title:` key changed too.
+pub fn replace_in_document(
+    root: &Path,
+    rel: &str,
+    find: &str,
+    replace: &str,
+    all: bool,
+    expected_hash: Option<&str>,
+    self_writes: &SelfWrites,
+) -> OpResult<ReplaceReport> {
+    if find.is_empty() {
+        return Err("the text to find cannot be empty".into());
+    }
+    let content = read_file(root, rel)?.content;
+    let count = content.matches(find).count();
+    let replacements = if all { count } else { count.min(1) };
+    let next =
+        if all { content.replace(find, replace) } else { content.replacen(find, replace, 1) };
+    // Zero occurrences still goes through the write path: it is byte-identical,
+    // so `write_atomic` leaves the file alone and no snapshot is taken, and the
+    // caller still gets the guard's verdict and the current stamp.
+    let result = agent_write_document(root, rel, &next, expected_hash, self_writes)?;
+    Ok(ReplaceReport { replacements, result })
+}
+
+// ── version history: naming one, and reading the difference ──────────────
+
+/// A snapshot row, without its body.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotReport {
+    pub path: String,
+    pub id: String,
+    pub at: i64,
+    pub label: String,
+    pub words: usize,
+}
+
+/// The default label, when a caller does not name the snapshot.
+pub const DEFAULT_SNAPSHOT_LABEL: &str = "Snapshot";
+
+/// Save a named version of a document as it is on disk right now.
+///
+/// This is the writer's own "Save a version" button, reachable from a tool: it
+/// records, it does not change the document. Named rows survive the renderer's
+/// autosave retention, so a snapshot taken here is still there tomorrow.
+pub fn take_snapshot(root: &Path, rel: &str, label: Option<&str>) -> OpResult<SnapshotReport> {
+    let content = read_file(root, rel)?.content;
+    let label = label.map(str::trim).filter(|l| !l.is_empty()).unwrap_or(DEFAULT_SNAPSHOT_LABEL);
+    let entry =
+        aux_store::snapshot_document(root, rel, label, &content, crate::vault::registry::now_ms())
+            .map_err(|e| format!("{rel}: could not save the snapshot: {e}"))?;
+    Ok(SnapshotReport {
+        path: rel.to_string(),
+        id: entry.id,
+        at: entry.at,
+        label: entry.label,
+        words: entry.words,
+    })
+}
+
+/// One end of a diff.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffSide {
+    /// The snapshot's id, or "current" for the document as it is on disk.
+    pub id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<i64>,
+    pub words: usize,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffReport {
+    pub path: String,
+    pub from: DiffSide,
+    pub to: DiffSide,
+    #[serde(flatten)]
+    pub diff: crate::vault::diff::LineDiff,
+}
+
+fn snapshot_side(root: &Path, rel: &str, id: &str) -> OpResult<(DiffSide, String)> {
+    let mut budget = usize::MAX;
+    let found = aux_store::list_versions(root, rel, &mut budget)
+        .into_iter()
+        .find(|v| v.id == id)
+        .ok_or_else(|| format!("{rel} has no snapshot {id}"))?;
+    Ok((
+        DiffSide { id: found.id, label: found.label, at: Some(found.at), words: found.words },
+        found.body,
+    ))
+}
+
+/// Compare a snapshot with the document as it is now, or with another snapshot.
+///
+/// `to_snapshot_id` omitted means "the current document" — the usual question,
+/// which is "what has the writer done since this version".
+pub fn diff_version(
+    root: &Path,
+    rel: &str,
+    snapshot_id: &str,
+    to_snapshot_id: Option<&str>,
+) -> OpResult<DiffReport> {
+    let (from, from_text) = snapshot_side(root, rel, snapshot_id)?;
+    let (to, to_text) = match to_snapshot_id {
+        Some(id) => snapshot_side(root, rel, id)?,
+        None => {
+            let content = read_file(root, rel)?.content;
+            let words = frontmatter::count_words(&frontmatter::parse(&content).body);
+            (
+                DiffSide { id: "current".into(), label: "Current document".into(), at: None, words },
+                content,
+            )
+        }
+    };
+    Ok(DiffReport {
+        path: rel.to_string(),
+        from,
+        to,
+        diff: crate::vault::diff::diff(&from_text, &to_text),
+    })
+}
+
+// ── scenes in a screenplay ───────────────────────────────────────────────
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderScenesReport {
+    pub path: String,
+    /// The scene index list that was applied.
+    pub order: Vec<usize>,
+    pub scenes: Vec<crate::vault::fountain::Scene>,
+    pub result: WriteResult,
+}
+
+/// Index a screenplay's scenes.
+///
+/// Line numbers are body lines, matching `insert_text` / `replace_lines`.
+pub fn list_scenes(root: &Path, rel: &str) -> OpResult<Vec<crate::vault::fountain::Scene>> {
+    let content = read_file(root, rel)?.content;
+    Ok(crate::vault::fountain::collect_scenes(split_body(&content).1))
+}
+
+/// Rearrange a screenplay's scenes and write the result.
+///
+/// `order` is a permutation of the scene indices `list_scenes` reported —
+/// every index once, none invented — and anything else is refused rather than
+/// half-applied. Everything above the first scene heading (the Fountain title
+/// page, an opening FADE IN:) does not move, and the frontmatter block, if the
+/// file has one, is carried across untouched.
+pub fn reorder_scenes(
+    root: &Path,
+    rel: &str,
+    order: &[usize],
+    expected_hash: Option<&str>,
+    self_writes: &SelfWrites,
+) -> OpResult<ReorderScenesReport> {
+    let content = read_file(root, rel)?.content;
+    let (prefix, body) = split_body(&content);
+    let next_body = crate::vault::fountain::reorder_scenes(body, order)?;
+    let next = format!("{prefix}{next_body}");
+    let result = agent_write_document(root, rel, &next, expected_hash, self_writes)?;
+    Ok(ReorderScenesReport {
+        path: rel.to_string(),
+        order: order.to_vec(),
+        scenes: crate::vault::fountain::collect_scenes(&next_body),
+        result,
+    })
+}
+
+// ── manuscript and draft folders ─────────────────────────────────────────
+//
+// The Swift app stores these as two flat lists of folder paths
+// (`manuscriptFolders` / `draftFolders`, SWIFT-AUDIT §2.8). This side has a
+// richer manifest — a `Manuscript` carries a title and a chapter order, a
+// `Draft` carries a name and a cut — so "mark this folder" means building or
+// removing one of those records rather than adding a string to a set.
+//
+// Two rules come across from Swift unchanged:
+//
+// * **A draft folder needs a manuscript above it.** A draft is an alternate cut
+//   *of something*, and one floating at the top of a vault has nothing to be a
+//   cut of. The refusal names the fix.
+// * **Unmarking a manuscript takes its draft folders with it.** They were only
+//   drafts by virtue of sitting under it. Drafts that are *not* folder-backed
+//   are left alone: those are the writer's own named cuts and have nothing to
+//   do with the folder mark.
+
+/// A folder's role after the mark was flipped.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderRoleReport {
+    pub path: String,
+    /// "manuscript" or "draft".
+    pub role: String,
+    /// True when the folder now has the role, false when the mark was removed.
+    pub marked: bool,
+    /// The manifest record's id, when there is one now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The chapter order the record ended up with.
+    pub chapters: Vec<String>,
+}
+
+/// The folder a role can be put on: it has to exist, be a folder, and be
+/// inside the vault proper.
+fn markable_folder(root: &Path, rel: &str) -> OpResult<()> {
+    if rel.is_empty() {
+        return Err("name a folder inside the vault — the vault root cannot be marked".into());
+    }
+    let dir = resolve(root, rel)?;
+    guard_not_metadata(root, &dir)?;
+    if !dir.is_dir() {
+        return Err(format!("no folder at {rel}"));
+    }
+    Ok(())
+}
+
+/// The display title for a folder-derived record: its last path segment.
+fn folder_title(rel: &str) -> String {
+    rel.rsplit('/').next().unwrap_or(rel).to_string()
+}
+
+/// Mark or unmark a folder as a manuscript.
+pub fn toggle_manuscript_folder(
+    root: &Path,
+    rel: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<FolderRoleReport> {
+    markable_folder(root, rel)?;
+    let (mut wf, _) = workflow::read_or_create(root).map_err(|e| e.to_string())?;
+
+    let report = match wf.manuscripts.iter().position(|m| m.folder == rel) {
+        Some(i) => {
+            wf.manuscripts.remove(i);
+            // Drafts that were only drafts because they sat under it.
+            let prefix = format!("{rel}/");
+            wf.drafts.retain(|d| !d.folder.as_deref().is_some_and(|f| f.starts_with(&prefix)));
+            ensure_one_active_draft(&mut wf);
+            FolderRoleReport {
+                path: rel.to_string(),
+                role: "manuscript".into(),
+                marked: false,
+                id: None,
+                chapters: Vec::new(),
+            }
+        }
+        None => {
+            let chapters = crate::vault::tree::markdown_paths_in(root, rel);
+            let id = workflow::new_id();
+            wf.manuscripts.push(crate::model::Manuscript {
+                id: id.clone(),
+                title: folder_title(rel),
+                folder: rel.to_string(),
+                chapter_order: chapters.clone(),
+            });
+            FolderRoleReport {
+                path: rel.to_string(),
+                role: "manuscript".into(),
+                marked: true,
+                id: Some(id),
+                chapters,
+            }
+        }
+    };
+    save_workflow(root, &wf, self_writes)?;
+    Ok(report)
+}
+
+/// Mark or unmark a folder as a draft.
+pub fn toggle_draft_folder(
+    root: &Path,
+    rel: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<FolderRoleReport> {
+    markable_folder(root, rel)?;
+    let (mut wf, _) = workflow::read_or_create(root).map_err(|e| e.to_string())?;
+
+    let report = match wf.drafts.iter().position(|d| d.folder.as_deref() == Some(rel)) {
+        Some(i) => {
+            wf.drafts.remove(i);
+            ensure_one_active_draft(&mut wf);
+            FolderRoleReport {
+                path: rel.to_string(),
+                role: "draft".into(),
+                marked: false,
+                id: None,
+                chapters: Vec::new(),
+            }
+        }
+        None => {
+            // A draft is an alternate cut of a manuscript, so one has to be
+            // above it. Strictly above: marking the manuscript folder itself as
+            // its own draft would make the two records fight over the same
+            // chapters on every reconcile.
+            let has_manuscript = wf
+                .manuscripts
+                .iter()
+                .any(|m| !m.folder.is_empty() && rel.starts_with(&format!("{}/", m.folder)));
+            if !has_manuscript {
+                return Err(format!(
+                    "{rel} is not inside a manuscript folder — mark its parent as a manuscript first (toggle_manuscript_folder), then mark this as a draft"
+                ));
+            }
+            let chapters = crate::vault::tree::markdown_paths_in(root, rel);
+            let id = workflow::new_id();
+            wf.drafts.push(crate::model::Draft {
+                id: id.clone(),
+                name: folder_title(rel),
+                active: None,
+                chapter_order: chapters.clone(),
+                folder: Some(rel.to_string()),
+            });
+            FolderRoleReport {
+                path: rel.to_string(),
+                role: "draft".into(),
+                marked: true,
+                id: Some(id),
+                chapters,
+            }
+        }
+    };
+    save_workflow(root, &wf, self_writes)?;
+    Ok(report)
+}
+
+/// Leave exactly one draft flagged active, if there are any at all.
+///
+/// Removing the active draft would otherwise leave the manifest with no active
+/// cut, and Compile's "the active draft" would have nothing to point at.
+fn ensure_one_active_draft(wf: &mut Workflow) {
+    if wf.drafts.is_empty() || wf.drafts.iter().any(|d| d.active == Some(true)) {
+        return;
+    }
+    wf.drafts[0].active = Some(true);
+}
+
 // ── chapter order ────────────────────────────────────────────────────────
 
 #[derive(Serialize, Clone, Debug)]
@@ -976,7 +1444,10 @@ pub fn reorder_chapters(
 
     let old = current;
     wf.manuscripts[idx].chapter_order = order.to_vec();
-    for draft in wf.drafts.iter_mut() {
+    // A folder-backed draft is a cut of its own folder, not of this
+    // manuscript's order, so it does not follow even if the two happen to
+    // match right now.
+    for draft in wf.drafts.iter_mut().filter(|d| d.folder.is_none()) {
         if draft.chapter_order == old {
             draft.chapter_order = order.to_vec();
         }
@@ -1775,6 +2246,505 @@ mod tests {
         let invented = vec!["Drafts/Ch_99.md".to_string()];
         assert!(reorder_chapters(t.path(), None, &invented, &writes).is_err());
         assert!(reorder_chapters(t.path(), Some("nope"), &next, &writes).is_err());
+    }
+
+    // ── set_synopsis ─────────────────────────────────────────────────────
+
+    #[test]
+    fn set_synopsis_writes_the_key_and_leaves_unknown_frontmatter_alone() {
+        let t = TempDir::new("ops-synopsis");
+        let writes = sw();
+        // Keys this side's parser does not model (a list, a nested map) plus
+        // one it does, in an order that is not alphabetical.
+        t.write(
+            "Drafts/Ch_01.md",
+            "---\ntitle: Helmreach\ntags:\n  - rain\n  - bells\nstatus: drafting\n---\n\nShe climbs.\n",
+        );
+
+        set_synopsis(t.path(), "Drafts/Ch_01.md", "She climbs the stair.", &writes).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("Drafts/Ch_01.md")).unwrap(),
+            "---\ntitle: Helmreach\ntags:\n  - rain\n  - bells\nstatus: drafting\nsynopsis: She climbs the stair.\n---\n\nShe climbs.\n",
+            "the YAML list survives and the key order is the writer's, not alphabetical"
+        );
+
+        // Setting it again replaces the one line rather than appending a second.
+        set_synopsis(t.path(), "Drafts/Ch_01.md", "The bell does not ring.", &writes).unwrap();
+        let text = std::fs::read_to_string(t.path().join("Drafts/Ch_01.md")).unwrap();
+        assert_eq!(text.matches("synopsis:").count(), 1);
+        assert!(text.contains("synopsis: The bell does not ring."));
+        assert!(text.contains("  - bells"));
+    }
+
+    #[test]
+    fn a_multi_line_synopsis_round_trips_as_a_block() {
+        let t = TempDir::new("ops-synopsis-block");
+        let writes = sw();
+        t.write("Notes/plain.md", "No frontmatter at all.\n");
+
+        set_synopsis(t.path(), "Notes/plain.md", "Fifty-three letters\nfrom her grandfather.", &writes)
+            .unwrap();
+        let read = read_document(t.path(), "Notes/plain.md").unwrap();
+        assert_eq!(
+            read.frontmatter.get("synopsis").unwrap(),
+            "Fifty-three letters\nfrom her grandfather."
+        );
+        assert_eq!(read.body, "No frontmatter at all.\n", "the body is untouched");
+
+        // Blanking it leaves a readable, parseable empty value rather than
+        // broken YAML.
+        set_synopsis(t.path(), "Notes/plain.md", "", &writes).unwrap();
+        let blanked = read_document(t.path(), "Notes/plain.md").unwrap();
+        assert_eq!(blanked.frontmatter.get("synopsis").unwrap(), "");
+        assert_eq!(blanked.body, "No frontmatter at all.\n");
+    }
+
+    // ── line-addressed edits ─────────────────────────────────────────────
+
+    #[test]
+    fn split_body_is_exact_with_and_without_frontmatter() {
+        let with = "---\ntitle: T\n---\n\none\ntwo\n";
+        let (prefix, body) = split_body(with);
+        assert_eq!(prefix, "---\ntitle: T\n---\n\n");
+        assert_eq!(body, "one\ntwo\n");
+        assert_eq!(format!("{prefix}{body}"), with, "the split loses nothing");
+
+        let without = "one\ntwo\n";
+        assert_eq!(split_body(without), ("", without));
+        assert_eq!(split_body(""), ("", ""));
+    }
+
+    fn text_of(t: &TempDir, rel: &str) -> String {
+        std::fs::read_to_string(t.path().join(rel)).unwrap()
+    }
+
+    #[test]
+    fn insert_text_counts_body_lines_and_zero_means_the_top() {
+        let t = TempDir::new("ops-insert");
+        let writes = sw();
+        let src = "---\ntitle: T\nstatus: drafting\n---\n\none\ntwo\nthree\n";
+        t.write("Ch.md", src);
+
+        // 0 = the top of the *body*, which is below the frontmatter block.
+        insert_text(t.path(), "Ch.md", 0, "zero", None, &writes).unwrap();
+        assert_eq!(text_of(&t, "Ch.md"), "---\ntitle: T\nstatus: drafting\n---\n\nzero\none\ntwo\nthree\n");
+
+        // 1-based: "after line 2" puts it between the old one and two.
+        t.write("Ch.md", src);
+        insert_text(t.path(), "Ch.md", 2, "one-and-a-half", None, &writes).unwrap();
+        assert_eq!(
+            text_of(&t, "Ch.md"),
+            "---\ntitle: T\nstatus: drafting\n---\n\none\ntwo\none-and-a-half\nthree\n"
+        );
+        // NB: body line 1 is "one" and line 2 is "two", so this landed after
+        // "two" — the frontmatter's three lines are not counted.
+
+        // Multi-line insertions keep their shape.
+        t.write("Ch.md", src);
+        insert_text(t.path(), "Ch.md", 1, "a\nb", None, &writes).unwrap();
+        assert_eq!(text_of(&t, "Ch.md"), "---\ntitle: T\nstatus: drafting\n---\n\none\na\nb\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn insert_text_past_the_end_appends_rather_than_failing() {
+        let t = TempDir::new("ops-insert-end");
+        let writes = sw();
+        t.write("Ch.md", "one\ntwo");
+        insert_text(t.path(), "Ch.md", 999, "three", None, &writes).unwrap();
+        assert_eq!(text_of(&t, "Ch.md"), "one\ntwo\nthree");
+    }
+
+    #[test]
+    fn insert_text_snapshots_and_honours_the_hash() {
+        let t = TempDir::new("ops-insert-guard");
+        let writes = sw();
+        t.write("Ch.md", "one\ntwo\n");
+        let hash = read_document(t.path(), "Ch.md").unwrap().hash;
+
+        insert_text(t.path(), "Ch.md", 1, "inserted", Some(&hash), &writes).unwrap();
+        let versions = versions_of(t.path(), "Ch.md");
+        assert_eq!(versions.len(), 1, "the previous text is recoverable");
+        assert_eq!(versions[0].body, "one\ntwo\n");
+        assert_eq!(versions[0].label, crate::aux_store::AGENT_SNAPSHOT_LABEL);
+
+        // The client's hash is stale now.
+        let stale = insert_text(t.path(), "Ch.md", 1, "again", Some(&hash), &writes).unwrap();
+        assert_eq!(expect_conflict(&stale), "one\ninserted\ntwo\n");
+        assert_eq!(text_of(&t, "Ch.md"), "one\ninserted\ntwo\n", "a refusal wrote nothing");
+    }
+
+    #[test]
+    fn replace_lines_is_inclusive_and_one_based() {
+        let t = TempDir::new("ops-replace-lines");
+        let writes = sw();
+        let src = "one\ntwo\nthree\nfour\n";
+
+        // A single line: 2..=2 replaces exactly "two".
+        t.write("Ch.md", src);
+        replace_lines(t.path(), "Ch.md", 2, 2, "TWO", None, &writes).unwrap();
+        assert_eq!(text_of(&t, "Ch.md"), "one\nTWO\nthree\nfour\n");
+
+        // The first line, and a range that spans.
+        t.write("Ch.md", src);
+        replace_lines(t.path(), "Ch.md", 1, 3, "X", None, &writes).unwrap();
+        assert_eq!(text_of(&t, "Ch.md"), "X\nfour\n");
+
+        // Replacing with several lines.
+        t.write("Ch.md", src);
+        replace_lines(t.path(), "Ch.md", 2, 3, "a\nb\nc", None, &writes).unwrap();
+        assert_eq!(text_of(&t, "Ch.md"), "one\na\nb\nc\nfour\n");
+
+        // to_line past the end is clamped: "from here to the end".
+        t.write("Ch.md", src);
+        replace_lines(t.path(), "Ch.md", 3, 900, "tail", None, &writes).unwrap();
+        assert_eq!(text_of(&t, "Ch.md"), "one\ntwo\ntail");
+    }
+
+    #[test]
+    fn replace_lines_skips_the_frontmatter_and_refuses_a_bad_range() {
+        let t = TempDir::new("ops-replace-lines-guards");
+        let writes = sw();
+        let src = "---\ntitle: T\n---\n\nbody one\nbody two\n";
+        t.write("Ch.md", src);
+
+        replace_lines(t.path(), "Ch.md", 1, 1, "BODY ONE", None, &writes).unwrap();
+        assert_eq!(
+            text_of(&t, "Ch.md"),
+            "---\ntitle: T\n---\n\nBODY ONE\nbody two\n",
+            "line 1 is the first line of the body, not the opening fence"
+        );
+
+        t.write("Ch.md", src);
+        assert!(replace_lines(t.path(), "Ch.md", 0, 1, "x", None, &writes).is_err(), "0 is not a line");
+        assert!(replace_lines(t.path(), "Ch.md", 3, 2, "x", None, &writes).is_err(), "backwards range");
+        let past = replace_lines(t.path(), "Ch.md", 50, 60, "x", None, &writes).unwrap_err();
+        assert!(past.contains("insert_text"), "the refusal names the tool that does mean append: {past}");
+        assert_eq!(text_of(&t, "Ch.md"), src, "no refusal wrote anything");
+    }
+
+    #[test]
+    fn replace_in_document_counts_what_it_did() {
+        let t = TempDir::new("ops-replace-in-doc");
+        let writes = sw();
+        let src = "---\ntitle: Imogen's Door\n---\n\nImogen waits. Imogen knocks.\n";
+        t.write("Ch.md", src);
+
+        let all = replace_in_document(t.path(), "Ch.md", "Imogen", "Neve", true, None, &writes).unwrap();
+        assert_eq!(all.replacements, 3, "the frontmatter title counts too");
+        assert_eq!(text_of(&t, "Ch.md"), "---\ntitle: Neve's Door\n---\n\nNeve waits. Neve knocks.\n");
+
+        // First-only.
+        t.write("Ch.md", src);
+        let first =
+            replace_in_document(t.path(), "Ch.md", "Imogen", "Neve", false, None, &writes).unwrap();
+        assert_eq!(first.replacements, 1);
+        assert_eq!(text_of(&t, "Ch.md"), "---\ntitle: Neve's Door\n---\n\nImogen waits. Imogen knocks.\n");
+
+        // No occurrences: not an error, not a write, and no new snapshot.
+        t.write("Ch.md", src);
+        let before = versions_of(t.path(), "Ch.md").len();
+        let none =
+            replace_in_document(t.path(), "Ch.md", "Helmreach", "Sennet", true, None, &writes).unwrap();
+        assert_eq!(none.replacements, 0);
+        assert!(!*expect_written(&none.result).0, "nothing changed");
+        assert_eq!(text_of(&t, "Ch.md"), src);
+        assert_eq!(versions_of(t.path(), "Ch.md").len(), before, "a no-op takes no snapshot");
+
+        assert!(replace_in_document(t.path(), "Ch.md", "", "x", true, None, &writes).is_err());
+    }
+
+    #[test]
+    fn replace_in_document_is_a_plain_string_not_a_pattern() {
+        let t = TempDir::new("ops-replace-literal");
+        let writes = sw();
+        t.write("Ch.md", "a.c and abc\n");
+        let r = replace_in_document(t.path(), "Ch.md", "a.c", "X", true, None, &writes).unwrap();
+        assert_eq!(r.replacements, 1, "\".\" matched a literal dot, not any character");
+        assert_eq!(text_of(&t, "Ch.md"), "X and abc\n");
+    }
+
+    // ── snapshots and diffs ──────────────────────────────────────────────
+
+    #[test]
+    fn take_snapshot_records_the_current_text_without_changing_it() {
+        let t = TempDir::new("ops-take-snapshot");
+        let src = "---\ntitle: T\n---\n\none two three\n";
+        t.write("Ch.md", src);
+
+        let report = take_snapshot(t.path(), "Ch.md", Some("Before the cut")).unwrap();
+        assert_eq!(report.label, "Before the cut");
+        assert_eq!(report.words, 7, "the whole file is recorded, frontmatter included");
+        assert_eq!(text_of(&t, "Ch.md"), src, "recording is not editing");
+
+        let versions = versions_of(t.path(), "Ch.md");
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].id, report.id);
+        assert_eq!(versions[0].body, src);
+        assert!(versions[0].named, "named, so the renderer's retention never prunes it");
+
+        // An empty or missing label falls back rather than writing a blank row.
+        take_snapshot(t.path(), "Ch.md", Some("   ")).unwrap();
+        take_snapshot(t.path(), "Ch.md", None).unwrap();
+        let labels: Vec<String> =
+            versions_of(t.path(), "Ch.md").into_iter().map(|v| v.label).collect();
+        assert_eq!(labels, ["Snapshot", "Snapshot", "Before the cut"]);
+
+        assert!(take_snapshot(t.path(), "missing.md", None).is_err());
+    }
+
+    #[test]
+    fn diff_version_compares_a_snapshot_with_the_document_and_with_another_snapshot() {
+        let t = TempDir::new("ops-diff");
+        let writes = sw();
+        t.write("Ch.md", "one\ntwo\nthree\n");
+        let first = take_snapshot(t.path(), "Ch.md", Some("v1")).unwrap();
+
+        write_document(t.path(), "Ch.md", "one\nTWO\nthree\n", &writes).unwrap();
+        let second = take_snapshot(t.path(), "Ch.md", Some("v2")).unwrap();
+        write_document(t.path(), "Ch.md", "one\nTWO\nthree\nfour\n", &writes).unwrap();
+
+        // Snapshot → current.
+        let d = diff_version(t.path(), "Ch.md", &first.id, None).unwrap();
+        assert_eq!(d.from.id, first.id);
+        assert_eq!(d.to.id, "current");
+        assert_eq!((d.diff.added, d.diff.removed), (2, 1));
+        assert!(!d.diff.identical);
+
+        // Snapshot → snapshot.
+        let between = diff_version(t.path(), "Ch.md", &first.id, Some(&second.id)).unwrap();
+        assert_eq!(between.to.id, second.id);
+        assert_eq!((between.diff.added, between.diff.removed), (1, 1));
+        assert_eq!(between.diff.hunks[0].removed, vec!["two"]);
+        assert_eq!(between.diff.hunks[0].added, vec!["TWO"]);
+
+        // A snapshot compared with itself is identical.
+        let same = diff_version(t.path(), "Ch.md", &first.id, Some(&first.id)).unwrap();
+        assert!(same.diff.identical);
+
+        assert!(diff_version(t.path(), "Ch.md", "nope", None).is_err());
+        assert!(diff_version(t.path(), "Ch.md", &first.id, Some("nope")).is_err());
+    }
+
+    // ── scenes ───────────────────────────────────────────────────────────
+
+    const SCREENPLAY: &str =
+        "Title: Helmreach\n\nINT. LIGHTHOUSE - NIGHT\n\nShe climbs.\n\nEXT. CLIFF - DAY\n\nRain.\n";
+
+    #[test]
+    fn list_scenes_indexes_a_screenplay_in_body_lines() {
+        let t = TempDir::new("ops-scenes");
+        t.write("Pilot.fountain", SCREENPLAY);
+        let scenes = list_scenes(t.path(), "Pilot.fountain").unwrap();
+        assert_eq!(scenes.len(), 2);
+        assert_eq!(scenes[0].slug, "INT. LIGHTHOUSE - NIGHT");
+        assert_eq!((scenes[0].start_line, scenes[0].end_line), (3, 6));
+        assert_eq!(scenes[1].slug, "EXT. CLIFF - DAY");
+
+        // Prose has no scenes, and that is an empty list rather than an error.
+        t.write("Ch.md", "Just prose.\n");
+        assert!(list_scenes(t.path(), "Ch.md").unwrap().is_empty());
+        assert!(list_scenes(t.path(), "missing.fountain").is_err());
+    }
+
+    #[test]
+    fn reorder_scenes_rewrites_through_the_guarded_path_and_refuses_non_permutations() {
+        let t = TempDir::new("ops-reorder-scenes");
+        let writes = sw();
+        t.write("Pilot.fountain", SCREENPLAY);
+
+        let report = reorder_scenes(t.path(), "Pilot.fountain", &[1, 0], None, &writes).unwrap();
+        assert_eq!(report.order, vec![1, 0]);
+        assert_eq!(
+            report.scenes.iter().map(|s| s.slug.as_str()).collect::<Vec<_>>(),
+            ["EXT. CLIFF - DAY", "INT. LIGHTHOUSE - NIGHT"]
+        );
+        let text = text_of(&t, "Pilot.fountain");
+        assert!(text.starts_with("Title: Helmreach\n\n"), "the title page did not move: {text:?}");
+        assert!(text.find("EXT. CLIFF").unwrap() < text.find("INT. LIGHTHOUSE").unwrap());
+        assert!(text.contains("Rain."));
+        assert!(text.contains("She climbs."));
+
+        // The previous script is recoverable.
+        let versions = versions_of(t.path(), "Pilot.fountain");
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].body, SCREENPLAY);
+
+        // Not a permutation: refused, and nothing written.
+        let before = text_of(&t, "Pilot.fountain");
+        for bad in [vec![0], vec![0, 0], vec![0, 1, 2], vec![]] {
+            assert!(
+                reorder_scenes(t.path(), "Pilot.fountain", &bad, None, &writes).is_err(),
+                "{bad:?} is not a permutation of two scenes"
+            );
+        }
+        assert_eq!(text_of(&t, "Pilot.fountain"), before);
+
+        // A document with no headings has nothing to reorder.
+        t.write("Ch.md", "Just prose.\n");
+        assert!(reorder_scenes(t.path(), "Ch.md", &[0], None, &writes).is_err());
+    }
+
+    // ── manuscript and draft folders ─────────────────────────────────────
+
+    #[test]
+    fn marking_a_folder_as_a_manuscript_seeds_its_chapter_order() {
+        let t = TempDir::new("ops-manuscript-mark");
+        let writes = sw();
+        t.write("Ideas.md", "notes");
+        t.write("Book/Ch_01.md", "a");
+        t.write("Book/Ch_02.md", "b");
+        // A plain notes folder: nothing is inferred as a manuscript.
+        let (before, _) = workflow::read_or_create(t.path()).unwrap();
+        assert!(before.manuscripts.is_empty());
+
+        let on = toggle_manuscript_folder(t.path(), "Book", &writes).unwrap();
+        assert!(on.marked);
+        assert_eq!(on.chapters, vec!["Book/Ch_01.md", "Book/Ch_02.md"]);
+        let (after, _) = workflow::read_or_create(t.path()).unwrap();
+        assert_eq!(after.manuscripts.len(), 1);
+        assert_eq!(after.manuscripts[0].folder, "Book");
+        assert_eq!(after.manuscripts[0].title, "Book");
+        assert!(writes.is_own(&workflow::workflow_json_path(t.path())));
+
+        // Toggling it off removes the record and leaves the files alone.
+        let off = toggle_manuscript_folder(t.path(), "Book", &writes).unwrap();
+        assert!(!off.marked);
+        let (gone, _) = workflow::read_or_create(t.path()).unwrap();
+        assert!(gone.manuscripts.is_empty());
+        assert!(t.path().join("Book/Ch_01.md").exists(), "unmarking is not deleting");
+    }
+
+    #[test]
+    fn a_draft_folder_needs_a_manuscript_above_it() {
+        let t = TempDir::new("ops-draft-mark");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "a");
+        t.write("Drafts/Second Pass/Ch_01.md", "a2");
+        t.write("Loose/note.md", "x");
+        workflow::read_or_create(t.path()).unwrap(); // infers "Drafts" as the manuscript
+
+        // Nothing above it.
+        let err = toggle_draft_folder(t.path(), "Loose", &writes).unwrap_err();
+        assert!(err.contains("toggle_manuscript_folder"), "the refusal names the fix: {err}");
+        // The manuscript folder cannot be its own draft.
+        assert!(toggle_draft_folder(t.path(), "Drafts", &writes).is_err());
+
+        let on = toggle_draft_folder(t.path(), "Drafts/Second Pass", &writes).unwrap();
+        assert!(on.marked);
+        assert_eq!(on.chapters, vec!["Drafts/Second Pass/Ch_01.md"]);
+
+        let (wf, _) = workflow::read_or_create(t.path()).unwrap();
+        let draft = wf.drafts.iter().find(|d| d.folder.as_deref() == Some("Drafts/Second Pass")).unwrap();
+        assert_eq!(draft.name, "Second Pass");
+        assert_eq!(draft.chapter_order, vec!["Drafts/Second Pass/Ch_01.md"]);
+
+        let off = toggle_draft_folder(t.path(), "Drafts/Second Pass", &writes).unwrap();
+        assert!(!off.marked);
+        let (after, _) = workflow::read_or_create(t.path()).unwrap();
+        assert!(after.drafts.iter().all(|d| d.folder.is_none()));
+        assert!(t.path().join("Drafts/Second Pass/Ch_01.md").exists());
+    }
+
+    #[test]
+    fn a_folder_backed_draft_is_not_replaced_by_the_manuscripts_order_on_the_next_open() {
+        // The hazard the `folder` field exists for. `reconcile_chapter_order`
+        // reconciles every draft against the manuscript folder's listing, and
+        // an alternate cut's chapters are not in that listing at all — so
+        // without the exemption the open-time pass would throw the alternate
+        // cut away and replace it with the main one.
+        let t = TempDir::new("ops-draft-reconcile");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "a");
+        t.write("Drafts/Ch_02.md", "b");
+        t.write("Drafts/Second Pass/Ch_01.md", "a2");
+        workflow::read_or_create(t.path()).unwrap();
+        toggle_draft_folder(t.path(), "Drafts/Second Pass", &writes).unwrap();
+
+        // Something changes on disk, so the reconcile actually runs.
+        t.write("Drafts/Ch_03.md", "c");
+        t.write("Drafts/Second Pass/Ch_02.md", "b2");
+        let (mut wf, _) = workflow::read_or_create(t.path()).unwrap();
+        assert!(workflow::reconcile_chapter_order(t.path(), &mut wf));
+
+        let alt = wf.drafts.iter().find(|d| d.folder.as_deref() == Some("Drafts/Second Pass")).unwrap();
+        assert_eq!(
+            alt.chapter_order,
+            vec!["Drafts/Second Pass/Ch_01.md", "Drafts/Second Pass/Ch_02.md"],
+            "the alternate cut follows its own folder, new file included"
+        );
+        let working = wf.drafts.iter().find(|d| d.folder.is_none()).unwrap();
+        assert_eq!(
+            working.chapter_order,
+            vec!["Drafts/Ch_01.md", "Drafts/Ch_02.md", "Drafts/Ch_03.md"],
+            "and the manuscript's own cut still follows the manuscript"
+        );
+
+        // A reorder of the manuscript leaves the alternate cut alone as well.
+        let next = vec![
+            "Drafts/Ch_03.md".to_string(),
+            "Drafts/Ch_01.md".to_string(),
+            "Drafts/Ch_02.md".to_string(),
+        ];
+        save_workflow(t.path(), &wf, &writes).unwrap();
+        reorder_chapters(t.path(), None, &next, &writes).unwrap();
+        let (again, _) = workflow::read_or_create(t.path()).unwrap();
+        assert_eq!(
+            again.drafts.iter().find(|d| d.folder.is_some()).unwrap().chapter_order,
+            vec!["Drafts/Second Pass/Ch_01.md", "Drafts/Second Pass/Ch_02.md"]
+        );
+        assert_eq!(again.drafts.iter().find(|d| d.folder.is_none()).unwrap().chapter_order, next);
+    }
+
+    #[test]
+    fn unmarking_a_manuscript_takes_the_draft_folders_under_it() {
+        let t = TempDir::new("ops-manuscript-unmark-drafts");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "a");
+        t.write("Drafts/Second Pass/Ch_01.md", "a2");
+        workflow::read_or_create(t.path()).unwrap();
+        toggle_draft_folder(t.path(), "Drafts/Second Pass", &writes).unwrap();
+
+        toggle_manuscript_folder(t.path(), "Drafts", &writes).unwrap();
+        let (wf, _) = workflow::read_or_create(t.path()).unwrap();
+        assert!(wf.manuscripts.is_empty());
+        assert!(
+            wf.drafts.iter().all(|d| d.folder.is_none()),
+            "a draft folder was only a draft because of the manuscript above it"
+        );
+        assert!(
+            wf.drafts.iter().any(|d| d.active == Some(true)),
+            "something is still the active cut"
+        );
+    }
+
+    #[test]
+    fn folder_marks_refuse_the_paths_that_are_not_folders_in_the_vault() {
+        let t = TempDir::new("ops-mark-guards");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "a");
+        for bad in ["", "..", "../elsewhere", ".aquarius", "Nope", "Drafts/Ch_01.md"] {
+            assert!(
+                toggle_manuscript_folder(t.path(), bad, &writes).is_err(),
+                "{bad:?} is not a folder that can hold a manuscript"
+            );
+            assert!(toggle_draft_folder(t.path(), bad, &writes).is_err());
+        }
+    }
+
+    #[test]
+    fn renaming_a_draft_folder_carries_its_mark() {
+        let t = TempDir::new("ops-draft-rename");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "a");
+        t.write("Drafts/Second Pass/Ch_01.md", "a2");
+        workflow::read_or_create(t.path()).unwrap();
+        toggle_draft_folder(t.path(), "Drafts/Second Pass", &writes).unwrap();
+
+        rename_entry(t.path(), "Drafts/Second Pass", "Polish", &writes).unwrap();
+        let (wf, _) = workflow::read_or_create(t.path()).unwrap();
+        let draft = wf.drafts.iter().find(|d| d.folder.is_some()).unwrap();
+        assert_eq!(draft.folder.as_deref(), Some("Drafts/Polish"));
+        assert_eq!(draft.chapter_order, vec!["Drafts/Polish/Ch_01.md"]);
     }
 
     #[test]

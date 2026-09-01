@@ -17,24 +17,26 @@ import {
  *   2. What the writer picked in Settings — saved here, wins forever after.
  *   3. On Linux, the OS skin. This app is AquariusOS's stock writing app; it
  *      boots looking like the OS unless the writer has said otherwise.
- *   4. The theme saved in the workflow being opened.
- *   5. Ice.
+ *   4. Ice.
  *
- * Rule 2 beating rule 4 is the point: once someone has chosen a theme, opening
- * an older workflow must not silently change the app out from under them.
+ * **The theme is global, not per-workflow** — PARITY row 21, decided
+ * 2026-08-31. There used to be a rule between 3 and 4: adopt the theme saved
+ * in `workflow.json`. It went, because the Swift app has never had it. Swift
+ * keeps the theme in `UserDefaults` under `aquarius.theme`, one value for the
+ * app, and a workflow's own look is not a thing it has a concept of
+ * (SWIFT-AUDIT §4). The port was reading a field that nothing — on either side
+ * — has ever written, so the behavior it implemented could not be observed and
+ * the only thing it could ever do was surprise someone.
  *
- * Rule 3 beating rule 4 matters more than it looks. Every workflow.json ever
- * written says `theme: "parchment"` — it is the Rust struct's default and
- * nothing in the app has ever written a different value — so without this, a
- * fresh Linux install would open its first workflow and immediately drop out of
- * the OS skin. On macOS nothing changes: the platform default is Ice there
- * (and `"parchment"` migrates to Ice), so workflow themes behave exactly as
- * they always have.
+ * `settings.theme` and `settings.accent` are still tolerated on disk: the Rust
+ * struct keeps them, `workflow.json` round-trips them, and an older file (or a
+ * future Swift build that decides to write them) loses nothing. This app just
+ * does not read them into the theme. **localStorage is the truth.**
  *
- * Every value read back — localStorage, the URL override, a workflow file —
- * goes through `normalizeTheme` / `normalizeAccent`, which map the retired
- * names (parchment / purple / sepia / sage) onto the current ones. Only the
- * new names are ever written.
+ * Every value read back — localStorage, the URL override — goes through
+ * `normalizeTheme` / `normalizeAccent`, which map the retired names
+ * (parchment / purple / sepia / sage) onto the current ones. Only the new
+ * names are ever written.
  */
 
 const KEY = "aquarius.theme";
@@ -52,12 +54,6 @@ interface Stored extends Choice {
 interface ThemeState extends Stored {
   setTheme: (t: ThemeName) => void;
   setAccent: (a: AccentName) => void;
-  /**
-   * Adopt a workflow's saved look — ignored once the writer has chosen. The
-   * values come straight off disk, so they are `unknown` here and normalized
-   * (retired names included) on the way in.
-   */
-  adoptWorkflow: (c: { theme?: unknown; accent?: unknown }) => void;
 }
 
 function load(): Stored {
@@ -88,9 +84,6 @@ function persist(s: Stored) {
 const stored = load();
 const override = themeFromQuery();
 
-/** True on the OS itself, where the stock look is not a workflow file's call. */
-const osSkinIsStock = defaultTheme() === "aquarius";
-
 const initial: Stored = {
   theme: override.theme ?? stored.theme,
   accent: override.accent ?? stored.accent,
@@ -119,15 +112,5 @@ export const useTheme = create<ThemeState>((set, get) => ({
     applyTheme(next.theme, next.accent);
     persist({ theme: next.theme, accent: next.accent, explicit: true });
     set({ accent, explicit: true });
-  },
-
-  adoptWorkflow(c) {
-    const s = get();
-    if (s.explicit || osSkinIsStock) return;
-    const theme = normalizeTheme(c.theme) ?? s.theme;
-    const accent = normalizeAccent(c.accent) ?? s.accent;
-    if (theme === s.theme && accent === s.accent) return;
-    applyTheme(theme, accent);
-    set({ theme, accent });
   },
 }));

@@ -108,6 +108,57 @@ export function themeFromQuery(): { theme?: ThemeName; accent?: AccentName } {
   }
 }
 
+/** The three whole-pixel numbers the prose content path actually reads. */
+export interface ProseMetrics {
+  /** `--prose-size` */
+  sizePx: number;
+  /** `--prose-line-px` */
+  linePx: number;
+  /** `--prose-para-gap` */
+  gapPx: number;
+}
+
+/**
+ * Body size × leading → whole pixels. **The only place that product is
+ * rounded**, and therefore the only place it is allowed to be fractional.
+ *
+ * `sizePx` may arrive unrounded (a zoom step multiplies the slider's integer
+ * by 1.25 and hands the result straight in). The line box is computed from the
+ * *unrounded* size so the ratio is honoured before rounding, exactly as it was
+ * when only the sliders called this: 17 × 1.65 = 28.05 → 28px.
+ */
+export function proseMetrics(sizePx: number, leading: number): ProseMetrics {
+  return {
+    sizePx: Math.max(1, Math.round(sizePx)),
+    // Guard the floor: a 0px line box would make every line coincide.
+    linePx: Math.max(1, Math.round(sizePx * leading)),
+    // The paragraph gap tracked the body size as 0.55em; keep the relationship
+    // and round it the same way.
+    gapPx: Math.max(0, Math.round(sizePx * 0.55)),
+  };
+}
+
+/**
+ * The global reading preference, as the Settings sliders last left it.
+ *
+ * Per-document zoom (`applyEditorZoom`) is a *multiplier on this*, not a
+ * replacement for it, so it has to be readable after the fact — and an open
+ * editor at 125% has to recompute when the slider moves underneath it, which
+ * is what the listener set is for.
+ */
+let proseBase = { size: 17, leading: 1.65 };
+const proseBaseListeners = new Set<() => void>();
+
+export function readProseBase(): { size: number; leading: number } {
+  return proseBase;
+}
+
+/** Subscribe to Settings → Reading changes. Returns the unsubscribe. */
+export function onProseBaseChange(fn: () => void): () => void {
+  proseBaseListeners.add(fn);
+  return () => { proseBaseListeners.delete(fn); };
+}
+
 /**
  * Reading preferences → editor content metrics, rounded to whole pixels.
  *
@@ -128,15 +179,95 @@ export function themeFromQuery(): { theme?: ThemeName; accent?: AccentName } {
  */
 export function applyProseMetrics(sizePx: number, leading: number) {
   const root = document.documentElement;
-  // Guard the floor: a 0px line box would make every line coincide.
-  const linePx = Math.max(1, Math.round(sizePx * leading));
-  // The paragraph gap tracked the body size as 0.55em; keep the relationship
-  // and round it the same way.
-  const gapPx = Math.max(0, Math.round(sizePx * 0.55));
-  root.style.setProperty("--prose-size", `${Math.round(sizePx)}px`);
+  const m = proseMetrics(sizePx, leading);
+  root.style.setProperty("--prose-size", `${m.sizePx}px`);
   root.style.setProperty("--prose-leading", String(leading));
-  root.style.setProperty("--prose-line-px", `${linePx}px`);
-  root.style.setProperty("--prose-para-gap", `${gapPx}px`);
+  root.style.setProperty("--prose-line-px", `${m.linePx}px`);
+  root.style.setProperty("--prose-para-gap", `${m.gapPx}px`);
+  proseBase = { size: sizePx, leading };
+  proseBaseListeners.forEach((fn) => fn());
+}
+
+/* ─── Per-document zoom (PARITY row 14) ───────────────────────────────────
+ *
+ * ⌘+ / ⌘− / ⌘0 scale ONE document's text. The mechanism is deliberately the
+ * same one §1a laid down for the sliders: a zoom step is a multiplier, every
+ * length it touches is a design-time whole pixel, and the product is rounded
+ * ONCE — here — before it is written as a scoped CSS custom property on that
+ * editor's host element. CSS cannot round, so CSS never sees a multiplication.
+ *
+ * A fractional computed line height is the v0.3.0 caret bug. There is exactly
+ * one arithmetic path to the DOM below and it ends in `Math.round`.
+ *
+ * The variables are *scoped to the host element*, so they cascade into that
+ * one editor and nothing else — the page canvas, the sheet's title and every
+ * other pane keep the global values. That is also why the sheet width does not
+ * move when the text does.
+ */
+
+export type EditorZoomKind = "prose" | "screenplay";
+
+/** Prose lengths the sliders do NOT drive — headings and inline code. */
+const PROSE_SCALED: ReadonlyArray<readonly [string, number]> = [
+  ["--prose-h1-size", 31], ["--prose-h1-line", 37], ["--prose-h1-pt", 34], ["--prose-h1-pb", 15],
+  ["--prose-h2-size", 25], ["--prose-h2-line", 30], ["--prose-h2-pt", 26], ["--prose-h2-pb", 12],
+  ["--prose-h3-size", 20], ["--prose-h3-line", 24], ["--prose-h3-pt", 20], ["--prose-h3-pb", 10],
+  ["--prose-h4-size", 18], ["--prose-h4-line", 21], ["--prose-h4-pt", 16], ["--prose-h4-pb", 9],
+  ["--prose-code-size", 14],
+];
+
+/** The prose lengths that ARE slider-driven, listed so a reset can clear them. */
+const PROSE_BASE_VARS = ["--prose-size", "--prose-line-px", "--prose-para-gap"] as const;
+
+/**
+ * The screenplay grid. Every value is the whole pixel v0.3.1 rounded it to,
+ * including the horizontal indents — those do not affect the height map, but a
+ * dialogue block that stayed at 97px while its type grew 60% would stop being
+ * a screenplay page.
+ */
+const SCREENPLAY_SCALED: ReadonlyArray<readonly [string, number]> = [
+  ["--screenplay-size", 14],
+  ["--screenplay-line-px", 22],
+  ["--screenplay-para-gap", 2],
+  ["--fnt-scene-pt", 18],
+  ["--fnt-scene-pb", 2],
+  ["--fnt-character-pt", 9],
+  ["--fnt-character-indent", 181],
+  ["--fnt-paren-indent", 139],
+  ["--fnt-dialogue-indent", 97],
+  ["--fnt-transition-pt", 15],
+  ["--fnt-section-pt", 15],
+  ["--fnt-pagebreak-pt", 32],
+];
+
+/**
+ * Write (or clear) one editor's zoom on its host element.
+ *
+ * At zoom 1 every override is *removed* rather than re-stated, so an unzoomed
+ * document is byte-for-byte the cascade it was before this feature existed —
+ * the CSS rules all carry the pre-zoom literal as their `var()` fallback.
+ */
+export function applyEditorZoom(el: HTMLElement, kind: EditorZoomKind, zoom: number) {
+  const s = el.style;
+  const scaled = kind === "screenplay" ? SCREENPLAY_SCALED : PROSE_SCALED;
+
+  if (zoom === 1) {
+    for (const [name] of scaled) s.removeProperty(name);
+    if (kind === "prose") for (const name of PROSE_BASE_VARS) s.removeProperty(name);
+    return;
+  }
+
+  if (kind === "prose") {
+    // Composes with the sliders: the zoom multiplies the *body size*, and the
+    // leading ratio is then applied to that product and rounded once.
+    const m = proseMetrics(proseBase.size * zoom, proseBase.leading);
+    s.setProperty("--prose-size", `${m.sizePx}px`);
+    s.setProperty("--prose-line-px", `${m.linePx}px`);
+    s.setProperty("--prose-para-gap", `${m.gapPx}px`);
+  }
+  for (const [name, px] of scaled) {
+    s.setProperty(name, `${Math.max(0, Math.round(px * zoom))}px`);
+  }
 }
 
 export function applyTheme(theme: ThemeName, accent: AccentName) {

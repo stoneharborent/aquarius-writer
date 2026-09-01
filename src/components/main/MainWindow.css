@@ -229,31 +229,12 @@
   gap: 14px;
 }
 
-/* placeholder */
+/* placeholder — just the box now; the words and the drawing are the shared
+   EmptyState (components/shell/EmptyState.tsx), so this pane cannot drift
+   away from the trash sheet's or the sidebar's version of "nothing here". */
 .mw-editor-placeholder {
   height: 100%;
-  display: grid;
-  place-items: center;
-  text-align: center;
-  padding: 40px;
-}
-
-.mw-editor-placeholder > * {
-  display: block;
-  margin: 0 auto 12px;
-}
-
-.mw-editor-title {
-  font-family: var(--font-serif);
-  font-size: 28px;
-  font-weight: 600;
-  color: var(--ink-prose);
-}
-
-.mw-editor-sub {
-  font-family: var(--font-serif);
-  font-size: 14px;
-  color: var(--ink-soft);
+  display: flex;
 }
 
 /* ── split editors ── */

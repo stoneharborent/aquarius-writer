@@ -35,14 +35,15 @@ app had moved on. Every row below is now closed:
 | Bottom of window | **No status bar** — nothing down there | ✅ **retired**; its four kinds of content moved (NOTES §17) |
 | Columns | Sidebar **248pt, resizable 190–560, width persisted** · editor min 320 · right pane **360pt, resizable, persisted** | ✅ **same numbers**, dragged on 7px splitters, persisted in localStorage |
 | Collapsing | Everything collapses to a **28pt gutter with a rotated label** (sidebar, rails, right pane, even the editor) | ✅ one shared `Gutter` for sidebar, right pane, chapter rail and scenes rail. The *editor* itself still does not collapse (⌃⌘E "hide editor" is not ported). |
-| Sidebar top | **Quick views: Starred · Today · Manuscript**, then a "WORKFLOW" eyebrow with A−/A+ tree zoom and an **add menu** | ✅ quick views + eyebrow + add menu (done earlier the same day). **A−/A+ tree zoom is still missing.** |
+| Sidebar top | **Quick views: Starred · Today · Manuscript**, then a "WORKFLOW" eyebrow with A−/A+ tree zoom and an **add menu** | ✅ **complete** — quick views + eyebrow + add menu (2026-08-30), and **A−/A+ navigator zoom** (2026-08-31): 0.8–1.8×, persisted as `aquarius.sidebarZoom`, the same key Swift uses |
 | Prose surface | **US-Letter page canvas** — fixed-width sheet, 1" margins, drop shadow | ✅ **shipped** — see row 3 |
 | Theme | **Ice** (light `#EAF1F8`) + ocean **Midnight** (`#0B1220`), 4 Aqua accents | ✅ shipped (row 2) |
 
-Two pieces of the audit's §1.3–1.4 are deliberately left for later and are the
-only layout debt: the **navigator zoom** (A−/A+ scaling tree rows 0.8–1.8×) and
-**collapsing the editor pane itself** (⌃⌘E). Both are additions to a shell that
-now has the right bones, not rebuilds.
+One piece of the audit's §1.3–1.4 is still outstanding, and it is the only
+layout debt left: **collapsing the editor pane itself** (⌃⌘E). The navigator
+zoom closed on 2026-08-31 — one CSS variable on the tree container, read by the
+row's font size, padding and computed indent, and unset everywhere else so the
+quick views and the rail are untouched (NOTES §24e).
 
 ### 2. ~~"There are no favorites"~~ — ✅ **done 2026-08-30**
 
@@ -82,7 +83,7 @@ throughout (SWIFT-AUDIT.md has file names).
 
 | # | Feature | Swift app | Port | Size | Notes |
 |---|---|---|---|---|---|
-| ~~1~~ | ~~**Shell layout** (top bar, ⌘K capsule, resizable + collapsible panes, no status bar)~~ | verified | ✅ **done** — 48px top bar (Files toggle · 240px ⌘K capsule · centred toolbar · Comments/Versions), splitter-resized persisted columns, 28px collapse gutters, no status bar | **L** | New: `shellStore.ts`, `toolbarStore.ts`, `shell/{TopBar,Gutter,Splitter}`. The toolbar moved out of the editor panes into the top bar, so a pane now *publishes* its kind/path to `toolbarStore` instead of rendering its own row. Left for later: navigator zoom, collapsing the editor pane. |
+| ~~1~~ | ~~**Shell layout** (top bar, ⌘K capsule, resizable + collapsible panes, no status bar)~~ | verified | ✅ **done** — 48px top bar (Files toggle · 240px ⌘K capsule · centred toolbar · Comments/Versions), splitter-resized persisted columns, 28px collapse gutters, no status bar | **L** | New: `shellStore.ts`, `toolbarStore.ts`, `shell/{TopBar,Gutter,Splitter}`. The toolbar moved out of the editor panes into the top bar, so a pane now *publishes* its kind/path to `toolbarStore` instead of rendering its own row. Left for later: collapsing the editor pane (⌃⌘E) — the navigator zoom landed 2026-08-31, NOTES §24e. |
 | 2 | **Ice / Midnight themes + Aqua accents** | verified (full hex tables in SWIFT-AUDIT §1.1) | ✅ **done** — Ice + ocean Midnight + the four Aqua accents in `tokens.css`; the AquariusOS skin untouched | **M** | Shipped 2026-08-30. |
 | ~~3~~ | ~~**Prose page canvas** (US-Letter sheet, 1" margins, shadow)~~ | verified | ✅ **done** — 850px sheet on `--bg`, 96px/64px margins, `black @ 22% r14 y1` (lighter on Ice), continuous canvas | **M** | Prose + notes only. The screenplay keeps its current surface: its *paged* canvas with real page breaks is row 12. |
 | ~~4~~ | ~~**Favorites / Starred** + quick views (Starred · Today · Manuscript)~~ | verified | ✅ **done** — row star + ⋯ menu + palette, Starred quick view, `favorites.json`, `toggle_star` | **M** | `aux_store::{read,save,set,toggle,forget}_favorite` + migration, `ops::set_star` / `ops::trash_entry`, `vault_set_star` / `vault_list_stars`, `favoritesStore`. Quick views: Starred (collapsible), Today (⌘T overlay), Manuscript (⌘2 outline). |
@@ -94,16 +95,16 @@ throughout (SWIFT-AUDIT.md has file names).
 | ~~10~~ | ~~**Chapter reorder persists**~~ | verified (rail Move up/down writes) | ✅ **done 2026-08-31** — the rail's drag and the outline's drag both write `workflow.json` through the *same* `ops::reorder_chapters` the MCP tool calls | **S** | New: `vault_reorder_chapters`, `VaultService.reorderChapters` (both services), `vaultStore.reorderChapters` is now async — optimistic paint, then the write, and a refused write puts the old order back and says so. Which drafts follow is the backend's rule mirrored in the store (a draft still showing the manuscript's order follows; a draft the writer has re-cut keeps its shape), so the screen and the file cannot disagree. `ops::a_reordered_manuscript_survives_the_next_open` pins the part that was actually at risk: the open-time `reconcile_chapter_order` must not re-sort what the writer just arranged. |
 | 11 | **Editable split editor** | verified — two live documents, independent undo/save | split is read-only reference only | **M** | Keep the read-only reference pane too (Swift has both). |
 | 12 | **Screenplay depth**: paged canvas with real page breaks, Title Page editor tab, scene drag-reorder, dual dialogue, revision marks, smart-type | verified | element buttons, scenes rail, page estimate, preview overlay | **L** | Industry page geometry is in SWIFT-AUDIT §2.1 in points. |
-| 13 | **Wiki-link autocomplete** | verified | plain `[[` typing | **S** | |
-| 14 | **Per-document editor zoom** ⌘+/−/0, persisted per path | verified | global body-size slider only | **S** | |
-| 15 | **Welcome screen: recents list + drag-a-folder-to-open + AppMark glow** | verified | three cards only | **S** | |
-| 16 | **Popouts in the real shell** (⌃⌘O) | verified (ghost-slot design) | works in browser preview; blocked by missing Tauri capability | **S** | `core:webview:allow-create-webview-window` + window scope. NOTES §15d. |
-| 17 | **MCP tool catch-up** | **33 tools + a browser Web UI** — v1 of this doc wrongly assumed Swift had no MCP | 21 tools | **M** | Rename and move landed with row 6; `toggle_star` with row 4; `compile_document` with row 7 (vault-relative output only — NOTES §19i); `writing_stats` with the Today row, and that one **Swift does not have at all**. Still missing: manuscript/draft toggles, scene tools, set_synopsis, insert/replace-lines, diff_version, take_snapshot. Web UI optional. |
+| ~~13~~ | ~~**Wiki-link autocomplete**~~ | verified | ✅ **done 2026-08-31** — caret inside an unclosed `[[` offers every markdown document by display name (current one excluded), CodeMirror's prefix→fuzzy filter with the match highlighted, ↑↓ / ⏎ / Esc, inserts the name **and** the closing `]]` without doubling one that is already there | **S** | `wikilinkCompletion` in `src/lib/markdown/wikilink-ext.ts`, wired into the prose and note editors (a screenplay has no wiki links). `@codemirror/autocomplete` was already in the tree transitively at 6.20.2 and is now a **direct dependency** at the same version — no install change. The popover is themed in tokens (`--surface` / `--line` / `--accent-soft`, `--font-ui`) to match the sidebar menu idiom. It adds nothing to the content path: no decoration, no widget, no styling inside `.cm-content`. NOTES §22a. |
+| ~~14~~ | ~~**Per-document editor zoom** ⌘+/−/0, persisted per path~~ | verified | ✅ **done 2026-08-31** — an eight-rung ladder over 0.8–1.8, ⌘0 back to 100%, persisted per path in one `aquarius.editorZoom` map and restored on open; prose, note **and** screenplay | **S** | The interesting half is the metrics contract (NOTES §1a). A zoom step is **never** a CSS multiplication — `applyEditorZoom` in `theme.ts` multiplies the writer's own body size by the step, sends it through the *same* `proseMetrics` rounding the Settings sliders use, and writes whole-pixel custom properties **scoped to that editor's host element**; every other content length (heading sizes/lines/paddings, inline code, the whole Fountain grid and the page-break rule) is a design-time constant scaled and rounded once. Those literals became `var(--token, <the same literal>)` and nothing defines the tokens globally, so an unzoomed document is byte-for-byte v0.3.1. `view.requestMeasure()` after every apply. The page canvas does not move — the sheet's 850px and its margins are outside the scope. New: `src/lib/markdown/editor-zoom.ts`; three additive shortcuts in `App.tsx` that `preventDefault()` so the *webview* never zooms. NOTES §22b–e. |
+| ~~15~~ | ~~**Welcome screen: recents list + drag-a-folder-to-open + AppMark glow**~~ | verified | ✅ **done 2026-08-31** — the app's own icon on a radial accent glow, five recents (most-recent-first, kind glyph, click to open), a real empty state, and a folder drop that is *answered* | **S** | **Drag-a-folder cannot open a workflow, and that is now known rather than pending.** A webview never learns a dropped directory's filesystem path — `webkitGetAsEntry().fullPath` is `/LeafName`, `File.path` is Electron-only, and the one supported route is Tauri's native drop event, which is off so tree drag can work (NOTES §18a). So the drop degrades: a ring while it hovers, then a notice naming the folder, the one true reason, and the type-a-path box opened and focused. NOTES §24a. |
+| ~~16~~ | ~~**Popouts in the real shell** (⌃⌘O)~~ | verified (ghost-slot design) | ✅ **done 2026-08-31** — `core:webview:allow-create-webview-window`, and the capability's `windows` widened to `["main", "aquarius-*"]` | **S** | The grant alone was not enough: a capability applies to the windows it *names*, so without the glob the popout would open with no permissions at all. Labels come from the exported `popoutLabel()`, so the glob has one thing to match. Also fixed with it: the ghost now flips on `tauri://created` rather than on the keystroke (a refusal used to leave a placeholder for a window that never opened, silently), reattach closes the real `WebviewWindow`, and the popout inherits the platform's chrome instead of hardcoding `decorations:false, transparent:true`. **Not yet watched on real hardware** — NOTES §24b, §15e. |
+| ~~17~~ | ~~**MCP tool catch-up**~~ ✅ **done 2026-08-31** | **33 tools + a browser Web UI** — v1 of this doc wrongly assumed Swift had no MCP | **31 tools** | — | NOTES §23. Rename and move landed with row 6; `toggle_star` with row 4; `compile_document` with row 7 (vault-relative output only — NOTES §19i); `writing_stats` with the Today row, and that one **Swift does not have at all**. Wave 3 added the last ten: `set_synopsis`, `insert_text`, `replace_lines`, `replace_in_document`, `diff_version`, `take_snapshot`, `toggle_manuscript_folder`, `toggle_draft_folder`, `list_scenes`, `reorder_scenes`. **Deliberately not ported:** the four theme/appearance setters (`set_theme`, `set_accent`, `set_body_size`, `set_line_height`) — Spark-era, and appearance is the writer's, not an agent's. `export_pdf` is `compile_document`'s job here. **Web UI stays deferred** (the browser `/ui`, row 17's other half) — nothing depends on it and Claude Code is the client that matters. |
 | 18 | **Terminal pane** | verified — multi-session tabs, agent config, drag-file-for-path | deliberately deferred | **M** | Still deferred; Swift sets the bar for when it lands. |
 | 19 | **Semantic search toggle in Find** | verified (on-device embeddings) | keyword only | research | Needs a Linux embedding story first — not a copy-paste. |
 | ~~20~~ | ~~macOS window buttons~~ | n/a (native) | ✅ **done** (2026-08-31) — **native traffic lights**, top-left, like the Swift original | **S** | Decision taken: re-enable decorations on macOS rather than draw our own. `src-tauri/tauri.macos.conf.json` sets `decorations: true` + `titleBarStyle: "Overlay"` + `hiddenTitle: true`; the base config keeps `decorations: false` so Linux still uses the app-drawn `WindowControls`. The title bar insets its content 78px on macOS so the lights have their space. NOTES §15c. |
-| 21 | Per-workflow theme write-back | **Swift's theme is global**, not per-workflow | `settings.theme` read, never written | **S** | May be chasing a behavior Swift doesn't have — decide, then either wire it or drop the field. |
-| 22 | Empty-state illustrations ("never a shrug") | verified — drawn `ZeroIllustration` set | plain text | **S** | |
+| ~~21~~ | ~~Per-workflow theme write-back~~ | **Swift's theme is global**, not per-workflow | ✅ **decided 2026-08-31 — matches Swift: global.** Neither written nor read: `themeStore.adoptWorkflow` and its effect in `App.tsx` are gone, and localStorage is the truth | **S** | The port was reading a field nothing on either side has ever written, so it implemented a behavior no one could observe and whose only possible effect was to change the app's look under someone who had not asked. `settings.theme` / `settings.accent` are still **tolerated on disk** — the Rust struct keeps them and `workflow.json` round-trips them untouched — so an older file loses nothing and a future Swift is free to start writing them. NOTES §24d. |
+| ~~22~~ | ~~Empty-state illustrations ("never a shrug")~~ | verified — drawn `ZeroIllustration` set | ✅ **done 2026-08-31** — one shared `EmptyState` (inline SVG line art, serif headline, italic subline, optional CTA, `page` / `inline` sizes, tokens only) | **S** | Applied to: empty Starred quick view, a fresh workflow's empty tree (with the only CTA — "New document"), a name filter with no hits, empty find results, empty trash, empty welcome recents, and the no-document editor pane. That last one had been promising that *"Phase 4 wires up the WYSIWYG note editor"* since long after Phase 4 shipped; it now says what is actually true — the file type has no editor — and names the extension. `components/shell/EmptyState.tsx`. NOTES §24f. |
 
 ### At parity (or intentionally different)
 
@@ -119,7 +120,7 @@ throughout (SWIFT-AUDIT.md has file names).
 | File watcher | **parity** |
 | **Today panel** | **port ahead since 2026-08-31.** It was *parity in fakeness* — Swift's Today is still a hardcoded `TODAY = {…}`, and so was this one. This side now runs on real data from `.aquarius/sessions/`, and since whoever built it first was going to set the contract, **the format below is the proposed shared one**. Swift can adopt it as-is: same folder, same filenames, same keys, and the Rust side ignores keys it does not know rather than dropping them. NOTES §21. |
 | **Daily word goal** | **port ahead.** `goals.dailyWords` was read by both apps and written by neither. The ring's "/ 1,000" is now editable in place and writes `workflow.json` (`vault_set_daily_goal`), and every session file records the goal that was in force on the day it describes. |
-| Trash | parity, one behavior difference: Swift never auto-purges (user confirms "Empty trash"); the port sweeps silently at 30 days. Swift's is the safer behavior. |
+| Trash | **parity since 2026-08-31.** The port used to sweep anything past 30 days on every workflow load, silently; Swift has never done that. The sweep is gone, `RETENTION_DAYS` is a **label** (`trash_retention_days` → "kept past 30 days" on the row, which then stays), and the only bulk destruction is `trash_empty` behind a confirm that counts what is about to go. NOTES §24c. |
 | Corkboard "Add card", rail filter buttons | disabled placeholders **in Swift too** — don't chase them |
 | Sync tab | philosophy-only **in both** — matches |
 | **Spark** (embedded AI) | **absent by decision** (2026-08-25). The MCP server is the replacement. **Do not port it back without asking.** |
@@ -187,18 +188,31 @@ Read side: `session_today` / `session_range(days)` in the app,
 
 ---
 
-**Counts.** 12 open rows. Everything closed on 2026-08-30, in order: the
+**Counts.** 5 open rows. Everything closed on 2026-08-30, in order: the
 workflow-switcher item from §3, then rows 4, 5 and 6 (favourites, create,
 rename/move), then row 2 (Ice / Midnight / Aqua accents), and finally rows 1
 and 3 (shell layout, page canvas) — which finishes Wave 1. **Wave 2 is
 finished**, all on 2026-08-31: row 7 (Compile), row 9 (conflict detection),
-row 10 (chapter reorder persists) and Today-on-real-data. What is left:
-1 large-and-structural (screenplay depth, row 12), 4 medium (8, 11, 17, 18),
-6 small (13, 14, 15, 16, 21, 22) and 1 research (19) — all of it Wave 3.
+row 10 (chapter reorder persists) and Today-on-real-data.
+
+**Wave 3 opened and largely emptied on 2026-08-31.** First rows 13 and 14
+(wiki-link autocomplete, per-document zoom), the two smalls that live inside
+the editor; then row 17, the MCP tool catch-up; then the shell/welcome bundle —
+rows 15 (welcome), 16 (popouts), 21 (theme, closed as a decision rather than a
+build) and 22 (empty states), with the Wave-1 navigator-zoom leftover and the
+trash's confirm-first alignment shipped alongside. **Every small row is now
+closed.** What is left is 1 large-and-structural (screenplay depth, row 12),
+3 medium (8 manuscript management, 11 editable split, 18 terminal) and
+1 research (19 semantic search).
+
 Spark and pricing stay closed. The v1 claim that the port
 was "ahead" on MCP was wrong — Swift has 33 tools and a Web UI, though the
 port is now ahead on two things Swift has not built at all: real session data
-and the `writing_stats` tool that reads it.
+and the `writing_stats` tool that reads it. With row 17 closed the counts are
+31 tools here against 33 there, and the whole of that gap is tools this side
+decided not to have: four appearance setters dropped as Spark-era, `export_pdf`
+merged into `compile_document`, `writing_stats` added. The browser Web UI —
+row 17's other half — stays deferred.
 
 ---
 
@@ -227,8 +241,10 @@ The three things Royce named, plus the file basics.
    still outstanding.
 
 Wave 1 leftovers, small enough to fold into a later wave rather than hold it
-open: sidebar navigator zoom (A−/A+), a collapse for the editor pane itself
-(⌃⌘E), and drag in and out of the OS file manager.
+open: ~~sidebar navigator zoom (A−/A+)~~ ✅ **done 2026-08-31** (NOTES §24e), a
+collapse for the editor pane itself (⌃⌘E), and drag in and out of the OS file
+manager — the *in* half of which is now known to be impossible from the webview
+and only reachable through Tauri's native drop event, which is off (NOTES §24a).
 
 ### ~~Wave 2 — the features that are pretending to work~~ ✅ done 2026-08-31
 
@@ -255,11 +271,24 @@ open: sidebar navigator zoom (A−/A+), a collapse for the editor pane itself
 ### Wave 3 — depth and shell debt
 
 11. **Screenplay depth** (row 12, L) and **editable split** (row 11, M).
-12. **MCP tool catch-up** (row 17, M).
-13. **Popouts** (row 16, S), **wiki autocomplete** (13, S), **editor zoom**
-    (14, S), **welcome recents** (15, S), **empty states** (22, S),
-    **macOS buttons** (20, S), **theme write-back decision** (21, S),
-    **trash purge behavior** (align to Swift's confirm-first, S).
+12. ~~**MCP tool catch-up** (row 17, M)~~ ✅ **done 2026-08-31** — ten tools,
+    taking the surface from 21 to 31: `set_synopsis`, `insert_text`,
+    `replace_lines`, `replace_in_document`, `take_snapshot`, `diff_version`,
+    `toggle_manuscript_folder`, `toggle_draft_folder`, `list_scenes`,
+    `reorder_scenes`. The appearance setters were dropped on purpose and the
+    browser Web UI stays deferred. NOTES §23.
+13. The smalls. ~~**wiki autocomplete** (13)~~ and ~~**editor zoom** (14)~~ ✅
+    **done 2026-08-31** — both in one change, because the zoom had to satisfy
+    the NOTES §1a whole-pixel metrics contract and that is the only part of
+    either one that is hard (NOTES §22). ~~**macOS buttons** (20)~~ ✅ done
+    2026-08-31. Then the shell/welcome bundle, all on 2026-08-31 and all in
+    NOTES §24: ~~**welcome recents + AppMark + folder drop** (15)~~ ✅,
+    ~~**popouts** (16)~~ ✅, ~~**theme write-back decision** (21)~~ ✅ closed as
+    *matches Swift: global*, ~~**empty states** (22)~~ ✅, and ~~**trash purge
+    behavior**~~ ✅ aligned to Swift's confirm-first. Shipped with them: the
+    Wave-1 navigator-zoom leftover, and the sidebar's `backdrop-filter` blur
+    removed — a WebKitGTK compositor cost Royce felt as sluggish scrolling on
+    the Linux bench (NOTES §24g).
 14. **Terminal pane** (row 18, M) — once the Wave 1 layout gives it a home.
 15. **Semantic search** (row 19) — research the Linux embedding story first.
 
@@ -289,5 +318,15 @@ are now the same `ops::reorder_chapters`, so there is nothing left the MCP
 client can do that a human cannot. The Today work ran the rule the other way
 for the first time — the panel and `writing_stats` are the same
 `sessions::view`, and the tool exists because the feature does, not the other
-way round. Row 17 shows the Swift app holds itself to the same rule with
-nearly double the tool surface.
+way round. Row 17 showed the Swift app holds itself to the same rule with
+nearly double the tool surface — and closing it **re-opened one inversion on
+purpose**, the first since row 10. Four of the ten new tools do things the UI
+has no button for yet: `toggle_manuscript_folder` / `toggle_draft_folder` (the
+Swift sidebar has both in a row's context menu; ours does not), `take_snapshot`
+under a name of the client's choosing, and `diff_version` between two saved
+versions rather than one and the present. None of them can do anything a human
+could not do by other means — a folder mark is a manifest edit, a snapshot is
+the Versions panel's own button under a different label — so this is a gap in
+the *sidebar*, tracked as such, not a capability the agent has and the writer
+does not. The other six are the same `vault::ops` functions the editor's own
+save path uses.

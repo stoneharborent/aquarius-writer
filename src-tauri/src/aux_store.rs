@@ -209,12 +209,32 @@ fn write_versions(
         .map(|e| e.to_string_lossy().to_string())
         .unwrap_or_else(|| "md".into());
 
+    // Two snapshots can want the same file name. `stamp` has one-second
+    // resolution and `short` keeps six characters of an id whose leading
+    // characters are themselves a timestamp, so two backend snapshots of the
+    // same document inside the same second used to land on the same file and
+    // the second one overwrote the first one's *body* while both rows stayed
+    // in the index — a version history that listed two entries and served the
+    // same text for both. Names are de-duplicated instead.
+    let mut taken: std::collections::HashSet<String> =
+        existing.iter().map(|r| r.file.clone()).collect();
+
     let mut rows: Vec<VersionRow> = Vec::with_capacity(entries.len());
     for entry in entries {
         let file = match existing.iter().find(|r| r.id == entry.id) {
             Some(r) => r.file.clone(),
-            None => format!("{}-{}.{}", stamp(entry.at), short(&entry.id), ext),
+            None => {
+                let base = format!("{}-{}", stamp(entry.at), short(&entry.id));
+                let mut candidate = format!("{base}.{ext}");
+                let mut n = 2;
+                while taken.contains(&candidate) {
+                    candidate = format!("{base}-{n}.{ext}");
+                    n += 1;
+                }
+                candidate
+            }
         };
+        taken.insert(file.clone());
         write_atomic(&dir.join(&file), entry.body.as_bytes())?;
         rows.push(VersionRow {
             id: entry.id.clone(),
@@ -717,6 +737,20 @@ mod tests {
 
         let all = bodies(t.path(), rel);
         assert_eq!(all, vec!["today", "yesterday"], "newest first, and the old trail is intact");
+    }
+
+    #[test]
+    fn two_snapshots_in_the_same_second_keep_separate_bodies() {
+        // `stamp` has one-second resolution and `short` keeps six characters of
+        // an id that starts with the same timestamp, so both of these used to
+        // resolve to one file: the trail listed two versions and handed back
+        // the newer text for both of them, silently losing the older one.
+        let t = TempDir::new("aux-snapshot-collision");
+        let rel = "Drafts/Ch_01.md";
+        snapshot_document(t.path(), rel, "v1", "the first text", 1_700_000_000_000).unwrap();
+        snapshot_document(t.path(), rel, "v2", "the second text", 1_700_000_000_004).unwrap();
+
+        assert_eq!(bodies(t.path(), rel), vec!["the second text", "the first text"]);
     }
 
     #[test]

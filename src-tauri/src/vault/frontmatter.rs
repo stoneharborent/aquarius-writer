@@ -124,7 +124,7 @@ fn strip_indent(line: &str) -> String {
 /// only happens because a caller explicitly asked to set a key; nothing on the
 /// read or save path calls this.
 pub fn upsert(input: &str, key: &str, value: &str) -> String {
-    let rendered = format!("{key}: {}", format_scalar(value));
+    let rendered = render(key, value);
     let lines: Vec<&str> = input.split('\n').collect();
 
     let opens = lines.first().map(|l| l.trim()) == Some(FENCE);
@@ -137,7 +137,7 @@ pub fn upsert(input: &str, key: &str, value: &str) -> String {
     let Some(close) = close else {
         // No frontmatter block (or an unterminated fence, which the reader also
         // treats as none). Put one in front of the file as it stands.
-        return format!("{FENCE}\n{rendered}\n{FENCE}\n\n{input}");
+        return format!("{FENCE}\n{}\n{FENCE}\n\n{input}", rendered.join("\n"));
     };
 
     let mut out: Vec<String> = vec![lines[0].to_string()];
@@ -148,7 +148,7 @@ pub fn upsert(input: &str, key: &str, value: &str) -> String {
         match split_key(line) {
             Some((k, raw)) if k == key => {
                 let cr = if line.ends_with('\r') { "\r" } else { "" };
-                out.push(format!("{rendered}{cr}"));
+                out.extend(rendered.iter().map(|l| format!("{l}{cr}")));
                 replaced = true;
                 // A `key: |` block owns the indented lines under it; they go
                 // with the value being replaced.
@@ -163,12 +163,28 @@ pub fn upsert(input: &str, key: &str, value: &str) -> String {
         i += 1;
     }
     if !replaced {
-        out.push(rendered);
+        out.extend(rendered);
     }
     for line in &lines[close..] {
         out.push((*line).to_string());
     }
     out.join("\n")
+}
+
+/// The line (or lines) one key becomes.
+///
+/// A value with a newline in it cannot be a YAML scalar, so it is written as a
+/// `key: |` block with each line indented two spaces — exactly what
+/// `stringify` in `src/lib/frontmatter.ts` does, and exactly what `parse`
+/// above already reads back. `set_synopsis` is why this exists: a synopsis is
+/// the one frontmatter value a writer routinely gives more than one line.
+fn render(key: &str, value: &str) -> Vec<String> {
+    if !value.contains('\n') {
+        return vec![format!("{key}: {}", format_scalar(value))];
+    }
+    let mut out = vec![format!("{key}: |")];
+    out.extend(value.split('\n').map(|line| format!("  {line}")));
+    out
 }
 
 /// Mirrors `formatScalar` in the TypeScript writer: quote only when the value
@@ -272,6 +288,42 @@ mod tests {
         // Plain words, slashes and commas stay bare — matching the TS writer.
         assert!(upsert("---\na: 1\n---\n\nb", "title", "Old Sennet").contains("title: Old Sennet"));
         assert!(upsert("---\na: 1\n---\n\nb", "title", "Ch 1: The Bell").contains("title: \"Ch 1: The Bell\""));
+    }
+
+    #[test]
+    fn a_multi_line_value_is_written_as_a_block_scalar_and_reads_back() {
+        let src = "---\ntitle: Helmreach\nstatus: drafting\n---\n\nbody\n";
+        let out = upsert(src, "synopsis", "She climbs the stair.\nThe bell does not ring.");
+        assert_eq!(
+            out,
+            "---\ntitle: Helmreach\nstatus: drafting\nsynopsis: |\n  She climbs the stair.\n  The bell does not ring.\n---\n\nbody\n"
+        );
+        let p = parse(&out);
+        assert_eq!(
+            p.frontmatter.get("synopsis").unwrap(),
+            "She climbs the stair.\nThe bell does not ring.",
+            "the block round-trips through the reader unchanged"
+        );
+        assert_eq!(p.frontmatter.get("title").unwrap(), "Helmreach");
+        assert_eq!(p.body, "body\n");
+    }
+
+    #[test]
+    fn a_block_scalar_replaces_a_block_scalar_without_leaking_its_old_lines() {
+        let src = "---\nsynopsis: |\n  one\n  two\ntitle: T\n---\n\nbody";
+        let out = upsert(src, "synopsis", "alpha\nbeta\ngamma");
+        assert_eq!(
+            out,
+            "---\nsynopsis: |\n  alpha\n  beta\n  gamma\ntitle: T\n---\n\nbody"
+        );
+    }
+
+    #[test]
+    fn a_bare_file_can_gain_a_block_scalar_too() {
+        assert_eq!(
+            upsert("Just prose.\n", "synopsis", "one\ntwo"),
+            "---\nsynopsis: |\n  one\n  two\n---\n\nJust prose.\n"
+        );
     }
 
     #[test]

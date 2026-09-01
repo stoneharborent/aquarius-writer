@@ -4,7 +4,8 @@ import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { proseTheme, wysiwygDecorations } from "@/lib/markdown/wysiwyg";
-import { wikilinks } from "@/lib/markdown/wikilink-ext";
+import { wikilinks, wikilinkCompletion } from "@/lib/markdown/wikilink-ext";
+import { focusZoomPane, registerZoomPane } from "@/lib/markdown/editor-zoom";
 import { useVault } from "@/state/vaultStore";
 import { formatBus } from "@/lib/format/formatBus";
 import { watchAncestorScroll } from "@/lib/cm-embed";
@@ -51,6 +52,7 @@ export function NoteEditor({ value, onChange, path }: NoteEditorProps) {
           { current: treeRef.current },
           (path) => { selectPath(path); setView("editor"); },
         ),
+        ...wikilinkCompletion(treeRef, path),
         proseTheme,
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current(u.state.doc.toString());
@@ -62,10 +64,16 @@ export function NoteEditor({ value, onChange, path }: NoteEditorProps) {
     if (path) formatBus.register(path, view);
     const unwatchScroll = watchAncestorScroll(view);
     const focusPath = path;
-    const onFocus = () => { if (focusPath) formatBus.focus(focusPath); };
+    const unzoom = focusPath
+      ? registerZoomPane({ path: focusPath, kind: "prose", host: host.current, view })
+      : undefined;
+    const onFocus = () => {
+      if (focusPath) { formatBus.focus(focusPath); focusZoomPane(focusPath); }
+    };
     view.contentDOM.addEventListener("focus", onFocus);
     return () => {
       unwatchScroll();
+      unzoom?.();
       view.contentDOM.removeEventListener("focus", onFocus);
       if (path) formatBus.unregister(path, view);
       view.destroy();

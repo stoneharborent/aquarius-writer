@@ -30,11 +30,14 @@
    (it measures border boxes) — a page break therefore shifted every line below
    it out from under the caret. It is folded into the padding instead; the
    painted gap is unchanged. NOTES §1a. The ::before label is absolutely
-   positioned and so contributes no layout. */
+   positioned and so contributes no layout.
+
+   The token carries the same 32px as its fallback; per-document zoom writes a
+   rounded whole-pixel override onto the editor host (PARITY row 14). */
 .cm-aq-pagebreak-line {
   border-top: 1px solid var(--line);
   margin-top: 0;
-  padding-top: 32px !important;
+  padding-top: var(--fnt-pagebreak-pt, 32px) !important;
   position: relative;
 }
 .cm-aq-pagebreak-line::before {

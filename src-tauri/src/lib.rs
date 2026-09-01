@@ -98,6 +98,8 @@ pub fn run() {
             commands::aux_trash_list,
             commands::trash_restore,
             commands::trash_purge,
+            commands::trash_empty,
+            commands::trash_retention_days,
             commands::compile_probe,
             commands::compile_run,
             commands::compile_reveal,

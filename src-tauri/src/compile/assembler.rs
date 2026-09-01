@@ -461,6 +461,7 @@ mod tests {
                 name: "Reading cut".into(),
                 active: Some(true),
                 chapter_order: vec!["Drafts/Ch_02.md".into(), "Drafts/Ch_01.md".into()],
+                folder: None,
             }],
             manuscripts: vec![Manuscript {
                 id: "m1".into(),

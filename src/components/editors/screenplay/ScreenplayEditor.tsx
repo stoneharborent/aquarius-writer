@@ -8,6 +8,7 @@ import {
   pageBreaks,
   type FountainElement,
 } from "@/lib/markdown/fountain-smart";
+import { focusZoomPane, registerZoomPane } from "@/lib/markdown/editor-zoom";
 import { formatBus } from "@/lib/format/formatBus";
 import { watchAncestorScroll } from "@/lib/cm-embed";
 import "./ScreenplayEditor.css";
@@ -56,10 +57,18 @@ export function ScreenplayEditor({ value, onChange, path, onElement, onPageCount
     if (path) formatBus.register(path, view);
     const unwatchScroll = watchAncestorScroll(view);
     const focusPath = path;
-    const onFocus = () => { if (focusPath) formatBus.focus(focusPath); };
+    // The screenplay zooms its whole grid — type, line box, the element
+    // indents — not just the font, so a page stays a page at every step.
+    const unzoom = focusPath
+      ? registerZoomPane({ path: focusPath, kind: "screenplay", host: host.current, view })
+      : undefined;
+    const onFocus = () => {
+      if (focusPath) { formatBus.focus(focusPath); focusZoomPane(focusPath); }
+    };
     view.contentDOM.addEventListener("focus", onFocus);
     return () => {
       unwatchScroll();
+      unzoom?.();
       view.contentDOM.removeEventListener("focus", onFocus);
       if (path) formatBus.unregister(path, view);
       view.destroy();

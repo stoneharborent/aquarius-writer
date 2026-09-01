@@ -100,9 +100,9 @@
 
   --bg: #EAF1F8;
   --bg-soft: #DFEAF4;
-  --sidebar: rgba(234, 241, 248, 0.86);   /* bg @ 86% */
-  /* The same colour with the transparency taken out, for browsers with no
-     `backdrop-filter` — WebKitGTK on Linux may be one. See Sidebar.css. */
+  /* The sidebar's own background. Opaque on every theme since 2026-08-31 —
+     the translucent `--sidebar` and its 20px backdrop blur were removed for
+     what they cost WebKitGTK's compositor on Linux. See Sidebar.css. */
   --sidebar-solid: #EAF1F8;
   /* Hover fill for window furniture (the Linux minimise/maximise/close). It
      has to differ from `--bg-soft`, which is what the title bar itself is. */
@@ -143,7 +143,6 @@
 
   --bg: #0B1220;
   --bg-soft: #111A2B;
-  --sidebar: rgba(11, 18, 32, 0.84);      /* bg @ 84% */
   --sidebar-solid: #0B1220;
   --chrome-hover: rgba(220, 243, 255, 0.09);
   --surface: #121C2E;
@@ -189,8 +188,7 @@
 
   --bg: #06070C;                    /* void — the app/window background */
   --bg-soft: #161A29;               /* surface-2 — raised chrome: title bar, status bar, hovers */
-  --sidebar: rgba(6, 7, 12, 0.86);  /* void, translucent behind the sidebar blur */
-  --sidebar-solid: #06070C;         /* void — the no-backdrop-filter fallback */
+  --sidebar-solid: #06070C;         /* void — the sidebar, opaque */
   --chrome-hover: #1D2236;          /* surface-3 — window-furniture hover */
 
   /* THE WRITING SURFACE EXCEPTION.

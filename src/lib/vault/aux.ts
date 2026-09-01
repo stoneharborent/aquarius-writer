@@ -137,6 +137,21 @@ export function purgeTrashEntry(wf: string, id: string) {
   auxBackend().purgeTrash(wf, id);
 }
 
+/**
+ * Destroy every deletion in this workflow's trash. Resolves to how many went.
+ *
+ * Confirm before calling — nothing downstream asks, and nothing else in the
+ * app removes a deletion on its own any more (NOTES §24c).
+ */
+export function emptyTrash(wf: string): Promise<number> {
+  return auxBackend().emptyTrash(wf);
+}
+
+/** Retention window in days, for labelling old rows. Display only. */
+export function trashRetentionDays(): Promise<number> {
+  return auxBackend().trashRetentionDays();
+}
+
 // ── workflow search ──────────────────────────────────────────────────────
 
 export interface SearchHit {

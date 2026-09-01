@@ -86,6 +86,10 @@ pub fn infer(root: &Path) -> Workflow {
             name: "Working Draft".into(),
             active: Some(true),
             chapter_order: order,
+            // Not folder-backed: this is the manuscript's own cut, and it
+            // should keep following the manuscript rather than being pinned to
+            // a folder of its own.
+            folder: None,
         });
     }
 
@@ -106,6 +110,13 @@ pub fn infer(root: &Path) -> Workflow {
 /// The writer's ordering is authoritative for files that still exist; files
 /// deleted outside the app drop out, and new ones land at the end rather than
 /// being silently invisible. Returns true when anything moved.
+///
+/// **A folder-backed draft is reconciled against its own folder.** Those
+/// arrived with `toggle_draft_folder` (an alternate cut living in, say,
+/// `Drafts/Second Pass/`), and their chapters are not in the manuscript
+/// folder's listing at all — running them through the manuscript's pass would
+/// see every one of their chapters as "gone from disk" and quietly replace the
+/// alternate cut with the main one.
 pub fn reconcile_chapter_order(root: &Path, wf: &mut Workflow) -> bool {
     let mut changed = false;
     for i in 0..wf.manuscripts.len() {
@@ -118,7 +129,7 @@ pub fn reconcile_chapter_order(root: &Path, wf: &mut Workflow) -> bool {
             changed = true;
             // Drafts that mirrored the manuscript order follow it; a draft the
             // writer has re-cut on its own keeps its own shape.
-            for d in wf.drafts.iter_mut() {
+            for d in wf.drafts.iter_mut().filter(|d| d.folder.is_none()) {
                 if d.chapter_order == old {
                     d.chapter_order = next.clone();
                 } else {
@@ -128,6 +139,14 @@ pub fn reconcile_chapter_order(root: &Path, wf: &mut Workflow) -> bool {
                     }
                 }
             }
+        }
+    }
+    for d in wf.drafts.iter_mut() {
+        let Some(folder) = d.folder.clone() else { continue };
+        let merged = merge_order(&d.chapter_order, &tree::markdown_paths_in(root, &folder));
+        if merged != d.chapter_order {
+            d.chapter_order = merged;
+            changed = true;
         }
     }
     changed

@@ -29,6 +29,7 @@ const GROUPS: { name: string; rows: ShortcutRow[] }[] = [
       { combo: "⌘I", label: "Italic" },
       { combo: "⌘F", label: "Find in document" },
       { combo: "⇧⌘F", label: "Find in workflow" },
+      { combo: "[[", label: "Wiki-link autocomplete — ↑↓ to pick, ⏎ to insert, Esc to dismiss" },
     ],
   },
   {
@@ -37,6 +38,9 @@ const GROUPS: { name: string; rows: ShortcutRow[] }[] = [
       { combo: "⌘\\", label: "Toggle sidebar" },
       { combo: "⌘⌥\\", label: "Cycle the right pane (comments → versions → hidden)" },
       { combo: "⌘⇧L", label: "Toggle theme (Ice / Midnight)" },
+      { combo: "⌘+", label: "Zoom this document in (remembered per document)" },
+      { combo: "⌘−", label: "Zoom this document out" },
+      { combo: "⌘0", label: "Reset this document's zoom to 100%" },
     ],
   },
   {

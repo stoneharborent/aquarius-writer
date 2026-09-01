@@ -79,6 +79,26 @@
 }
 .fr-replace:hover { background: var(--accent-soft); }
 .fr-replace.danger { color: var(--danger, #c8463b); }
+.fr-replace:disabled { opacity: 0.5; cursor: default; }
+
+/* Recently Deleted's footer: the honest sentence on the left, the one
+   destructive button on the right, with a rule between them and the list so
+   "Empty trash" can never be mistaken for another row's action. */
+.fr-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.fr-foot-note {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-mute);
+}
 
 /* diff */
 .vd { min-height: 0; }

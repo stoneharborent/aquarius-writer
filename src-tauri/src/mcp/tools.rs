@@ -295,6 +295,127 @@ pub struct SnapshotParam {
     pub snapshot_id: String,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct SynopsisParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// Path to the document, relative to the vault root.
+    pub path: String,
+    /// The synopsis. May be several lines; it is stored as a YAML block. Pass
+    /// "" to blank it out.
+    pub text: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct InsertParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// Path to the document, relative to the vault root.
+    pub path: String,
+    /// Insert after this line. Lines are 1-based and count BODY lines — the
+    /// frontmatter block is not counted — so 0 means the very top of the body
+    /// and 1 means after the body's first line. A number past the end appends.
+    pub after_line: usize,
+    /// The text to insert. Newlines in it become new lines in the document.
+    pub text: String,
+    /// The `hash` read_document gave you. Send it and the edit is refused if
+    /// the file changed in the meantime.
+    #[serde(default)]
+    pub expected_hash: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReplaceLinesParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// Path to the document, relative to the vault root.
+    pub path: String,
+    /// First line to replace. 1-based, counting BODY lines only (the
+    /// frontmatter block is not counted).
+    pub from_line: usize,
+    /// Last line to replace, INCLUSIVE. Pass the same number as `from_line` to
+    /// replace one line. A number past the end of the document is clamped to
+    /// it, which is how you say "from here to the end".
+    pub to_line: usize,
+    /// What goes in their place. "" deletes the range.
+    pub text: String,
+    /// The `hash` read_document gave you, to refuse a write onto a file that
+    /// moved.
+    #[serde(default)]
+    pub expected_hash: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReplaceInDocumentParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// Path to the document, relative to the vault root.
+    pub path: String,
+    /// The text to find. A plain case-SENSITIVE substring, not a regular
+    /// expression — "." and "*" match themselves.
+    pub find: String,
+    /// What to put in its place. "" deletes it.
+    pub replace: String,
+    /// Replace every occurrence (the default). false replaces only the first.
+    #[serde(default)]
+    pub all: Option<bool>,
+    /// The `hash` read_document gave you, to refuse a write onto a file that
+    /// moved.
+    #[serde(default)]
+    pub expected_hash: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct TakeSnapshotParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// Path to the document, relative to the vault root.
+    pub path: String,
+    /// What to call this version in the app's history. Defaults to "Snapshot".
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct DiffParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// Path to the document, relative to the vault root.
+    pub path: String,
+    /// The older side: a snapshot id from `list_snapshots`.
+    pub snapshot_id: String,
+    /// The newer side: another snapshot id. Omit to compare against the
+    /// document as it is on disk right now, which is the usual question.
+    #[serde(default)]
+    pub to_snapshot_id: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct MarkFolderParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// The folder, relative to the vault root — e.g. "Drafts". It must already
+    /// exist; the vault root itself cannot be marked.
+    pub path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReorderScenesParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// Path to the screenplay, relative to the vault root.
+    pub path: String,
+    /// The scene indices from `list_scenes`, in the order you want them. It
+    /// must be every index exactly once — this rearranges, it never adds or
+    /// drops a scene. To put the third scene first in a four-scene script:
+    /// [2, 0, 1, 3].
+    pub order: Vec<usize>,
+    /// The `hash` read_document gave you, to refuse a write onto a file that
+    /// moved.
+    #[serde(default)]
+    pub expected_hash: Option<String>,
+}
+
 // ── the tools ────────────────────────────────────────────────────────────
 
 #[tool_router]
@@ -519,6 +640,269 @@ frontmatter block gains one containing just this key."
         let state = self.state();
         let report = ops::set_status(&root, &path, &status, &state.self_writes).map_err(invalid)?;
         self.notify(&workflow_id);
+        json(report)
+    }
+
+    #[tool(
+        name = "set_synopsis",
+        description = "Set a document's `synopsis` frontmatter key — the one-line (or several-line) \
+summary the corkboard card and the outline row show. Pass several lines and it is stored as a YAML \
+block; pass \"\" to blank it. Every other byte of the file is left exactly as it was, key order \
+included, and a file with no frontmatter block gains one containing just this key. This does not \
+touch the body: it is metadata about the chapter, not a note inside it."
+    )]
+    fn set_synopsis(
+        &self,
+        Parameters(SynopsisParam { workflow_id, path, text }): Parameters<SynopsisParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let report = ops::set_synopsis(&root, &path, &text, &state.self_writes).map_err(invalid)?;
+        self.notify(&workflow_id);
+        json(report)
+    }
+
+    #[tool(
+        name = "insert_text",
+        description = "Insert text into a document after a given line, without resending the rest \
+of the file. LINES ARE 1-BASED AND COUNT BODY LINES ONLY — the YAML frontmatter block at the top of \
+a document is not counted, so `after_line: 0` means the top of the body (below the frontmatter, \
+which is left untouched) and `after_line: 1` means after the body's first line. A number past the \
+end of the document appends rather than failing. Newlines in `text` become new lines in the file. \
+Like write_document this SNAPSHOTS THE PREVIOUS TEXT first (it shows in the app's version history \
+as \"Before AI write\") and accepts read_document's `hash` as `expected_hash`, which makes the edit \
+refuse rather than land on a file that changed while you were thinking."
+    )]
+    fn insert_text(
+        &self,
+        Parameters(InsertParam { workflow_id, path, after_line, text, expected_hash }): Parameters<
+            InsertParam,
+        >,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let result = ops::insert_text(
+            &root,
+            &path,
+            after_line,
+            &text,
+            expected_hash.as_deref(),
+            &state.self_writes,
+        )
+        .map_err(invalid)?;
+        if !result.is_conflict() {
+            self.notify(&workflow_id);
+        }
+        json(result)
+    }
+
+    #[tool(
+        name = "replace_lines",
+        description = "Replace an inclusive range of lines in a document with new text. LINES ARE \
+1-BASED AND COUNT BODY LINES ONLY — the frontmatter block is not counted and is left untouched — so \
+`from_line: 1, to_line: 1` replaces the first line of the body. `to_line` past the end of the \
+document is clamped to it, which is how you say \"from here to the end\"; a `from_line` past the \
+end is refused rather than guessed at (use insert_text to add to the end). Passing \"\" for `text` \
+deletes the range. The PREVIOUS TEXT IS SNAPSHOTTED first, and read_document's `hash` may be sent \
+as `expected_hash` to refuse an edit onto a file that moved underneath you. Scene ranges from \
+list_scenes use these same line numbers."
+    )]
+    fn replace_lines(
+        &self,
+        Parameters(ReplaceLinesParam {
+            workflow_id,
+            path,
+            from_line,
+            to_line,
+            text,
+            expected_hash,
+        }): Parameters<ReplaceLinesParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let result = ops::replace_lines(
+            &root,
+            &path,
+            from_line,
+            to_line,
+            &text,
+            expected_hash.as_deref(),
+            &state.self_writes,
+        )
+        .map_err(invalid)?;
+        if !result.is_conflict() {
+            self.notify(&workflow_id);
+        }
+        json(result)
+    }
+
+    #[tool(
+        name = "replace_in_document",
+        description = "Find and replace plain text in one document — renaming a character, fixing \
+a spelling everywhere. `find` is a case-SENSITIVE substring, not a regular expression: \".\" and \
+\"*\" match themselves. `all` (the default) replaces every occurrence; pass false for the first \
+only. The answer reports `replacements`, how many it changed. The whole file is searched, the \
+frontmatter block included, so a renamed character's `title:` changes too. FINDING NOTHING IS NOT \
+AN ERROR: you get `replacements: 0` and the file is not touched at all. The previous text is \
+snapshotted before any real change, and `expected_hash` works as it does on write_document."
+    )]
+    fn replace_in_document(
+        &self,
+        Parameters(ReplaceInDocumentParam {
+            workflow_id,
+            path,
+            find,
+            replace,
+            all,
+            expected_hash,
+        }): Parameters<ReplaceInDocumentParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let report = ops::replace_in_document(
+            &root,
+            &path,
+            &find,
+            &replace,
+            all.unwrap_or(true),
+            expected_hash.as_deref(),
+            &state.self_writes,
+        )
+        .map_err(invalid)?;
+        if !report.result.is_conflict() {
+            self.notify(&workflow_id);
+        }
+        let mut value = serde_json::to_value(&report.result).map_err(internal)?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("replacements".into(), report.replacements.into());
+        }
+        json(value)
+    }
+
+    #[tool(
+        name = "take_snapshot",
+        description = "Save a named version of a document as it is on disk right now, so it can be \
+read back (read_snapshot) or compared (diff_version) later. This is the writer's own \"Save a \
+version\" button: it RECORDS, it does not change the document by a single byte. Take one before a \
+big restructuring you might want to undo. Named versions are never pruned by the app's autosave \
+retention. `label` defaults to \"Snapshot\"."
+    )]
+    fn take_snapshot(
+        &self,
+        Parameters(TakeSnapshotParam { workflow_id, path, label }): Parameters<TakeSnapshotParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        json(ops::take_snapshot(&root, &path, label.as_deref()).map_err(invalid)?)
+    }
+
+    #[tool(
+        name = "diff_version",
+        description = "What changed between a saved version and the document as it is now — or \
+between two saved versions, if you pass `to_snapshot_id`. Returns the number of lines added, \
+removed and unchanged, plus the changed passages themselves: each hunk gives the line it starts at \
+on both sides, the lines that went and the lines that came. Read-only. Cheaper and far easier to \
+read than pulling both full texts; use read_snapshot when you actually need the old words. Very \
+large or very scattered diffs are summarised rather than listed in full, and the answer says so \
+(`truncated`, `approximate`) — the counts are always the real ones."
+    )]
+    fn diff_version(
+        &self,
+        Parameters(DiffParam { workflow_id, path, snapshot_id, to_snapshot_id }): Parameters<
+            DiffParam,
+        >,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        json(
+            ops::diff_version(&root, &path, &snapshot_id, to_snapshot_id.as_deref())
+                .map_err(invalid)?,
+        )
+    }
+
+    #[tool(
+        name = "toggle_manuscript_folder",
+        description = "Mark a folder as a manuscript, or unmark it. A manuscript is the folder the \
+book actually lives in: it has a chapter order, it is what compile_document assembles, and it is \
+what reorder_chapters rearranges. Marking seeds the chapter order from the markdown files already \
+in the folder, in name order. Unmarking removes the manuscript record from the vault's \
+workflow.json AND any draft folders that only counted as drafts because they sat under it — IT \
+NEVER DELETES A FILE. Call it again on the same folder to flip it back; the answer says which state \
+it landed in. Use get_workflow to see which folders are manuscripts now."
+    )]
+    fn toggle_manuscript_folder(
+        &self,
+        Parameters(MarkFolderParam { workflow_id, path }): Parameters<MarkFolderParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let report =
+            ops::toggle_manuscript_folder(&root, &path, &state.self_writes).map_err(invalid)?;
+        self.notify(&workflow_id);
+        json(report)
+    }
+
+    #[tool(
+        name = "toggle_draft_folder",
+        description = "Mark a folder as a draft, or unmark it. A draft is an ALTERNATE CUT of a \
+manuscript — a second pass, a shorter version — kept in its own folder inside the manuscript's, and \
+compile_document can compile it instead of the main order. The folder must sit inside a folder that \
+is already a manuscript (toggle_manuscript_folder marks one); if it does not, this is refused and \
+says so. Marking seeds the draft's chapter order from the markdown files in that folder. Unmarking \
+removes the draft record only — IT NEVER DELETES A FILE. The draft keeps following its own folder \
+when files are added or removed there, not the manuscript's."
+    )]
+    fn toggle_draft_folder(
+        &self,
+        Parameters(MarkFolderParam { workflow_id, path }): Parameters<MarkFolderParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let report = ops::toggle_draft_folder(&root, &path, &state.self_writes).map_err(invalid)?;
+        self.notify(&workflow_id);
+        json(report)
+    }
+
+    #[tool(
+        name = "list_scenes",
+        description = "Index a screenplay's scenes. For each scene: its 0-based `index` (what \
+reorder_scenes permutes), the heading line, the slug without its scene number, the `#12#` scene \
+number if the script carries one, the 1-based line range it occupies, and its word count. A scene \
+runs from its heading to the line before the next one. Headings are Fountain's: INT. / EXT. / EST. \
+/ INT./EXT. / I/E., or a forced heading beginning with a single dot. LINE NUMBERS ARE BODY LINES, \
+the same ones replace_lines takes — so a scene's range can be handed straight to replace_lines to \
+rewrite it. A document with no headings simply reports no scenes."
+    )]
+    fn list_scenes(
+        &self,
+        Parameters(DocumentParam { workflow_id, path }): Parameters<DocumentParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        json(ops::list_scenes(&root, &path).map_err(invalid)?)
+    }
+
+    #[tool(
+        name = "reorder_scenes",
+        description = "Rearrange a screenplay's scenes and rewrite the script. Pass `order`: the \
+scene indices from list_scenes, in the order you want them. It must be exactly those indices, each \
+once — nothing added, nothing dropped — and anything else is refused rather than half-applied. Each \
+scene travels with everything under its heading. WHATEVER SITS ABOVE THE FIRST SCENE HEADING DOES \
+NOT MOVE: the Fountain title page and any opening FADE IN: stay where they are. THE PREVIOUS SCRIPT \
+IS SNAPSHOTTED first, so the writer can undo you, and `expected_hash` refuses the write if the file \
+changed underneath. The answer carries the re-indexed scene list."
+    )]
+    fn reorder_scenes(
+        &self,
+        Parameters(ReorderScenesParam { workflow_id, path, order, expected_hash }): Parameters<
+            ReorderScenesParam,
+        >,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let report =
+            ops::reorder_scenes(&root, &path, &order, expected_hash.as_deref(), &state.self_writes)
+                .map_err(invalid)?;
+        if !report.result.is_conflict() {
+            self.notify(&workflow_id);
+        }
         json(report)
     }
 
@@ -823,6 +1207,29 @@ the writer can undo you. Deleting is soft — trash_document moves the file into
 Recently Deleted, where restore_document brings it back for 30 days. There is no permanent \
 delete.
 
+For a small change, prefer the narrower tools over resending a whole chapter: insert_text adds \
+after a line, replace_lines swaps an inclusive line range, replace_in_document does a plain-string \
+find and replace and tells you how many it changed. All three take `expected_hash` and snapshot \
+what they replace, exactly as write_document does. **Their line numbers count body lines, not file \
+lines** — a document's YAML frontmatter block is not counted and is never disturbed, so line 1 is \
+the first line the writer sees in the editor. set_synopsis writes the `synopsis` frontmatter key \
+(the corkboard card's text) without touching the body.
+
+take_snapshot saves a named version of a document before you do something you might want undone; \
+diff_version tells you what changed between a version and the document now, or between two \
+versions, without pulling both full texts.
+
+A screenplay's structure has two tools of its own: list_scenes indexes a .fountain document's \
+scenes (Fountain headings — INT. / EXT. / EST. / a forced dot heading) with the body line range \
+each one occupies, and reorder_scenes rewrites the script with those scenes in an order you give \
+as a permutation of their indices. Everything above the first heading — the title page, an opening \
+FADE IN: — stays put.
+
+A vault's shape lives in workflow.json: toggle_manuscript_folder marks the folder the book lives in \
+(the one compile_document assembles and reorder_chapters rearranges), and toggle_draft_folder marks \
+a folder inside it as an alternate cut. Both are marks on the manifest — neither ever deletes a \
+file.
+
 Reorganising a vault is create_document / create_folder to add, rename_document to change a \
 name in place, and move_document to put something in a different folder. Renames and moves \
 never rewrite a file's bytes, and they carry its version history and margin comments with it. \
@@ -864,15 +1271,19 @@ impl rmcp::ServerHandler for AquariusMcp {
 mod tests {
     use super::*;
 
-    /// The surface Stage 5 promised. A tool disappearing from this list is a
-    /// breaking change for anyone who wired the server into Claude Code, so it
-    /// should be a deliberate edit here rather than a silent regression.
+    /// The surface Stage 5 promised, plus the nine PARITY row 17 added. A tool
+    /// disappearing from this list is a breaking change for anyone who wired
+    /// the server into Claude Code, so it should be a deliberate edit here
+    /// rather than a silent regression.
     const EXPECTED: &[&str] = &[
         "compile_document",
         "create_document",
         "create_folder",
+        "diff_version",
         "get_workflow",
+        "insert_text",
         "list_folder",
+        "list_scenes",
         "list_snapshots",
         "list_trash",
         "list_workflows",
@@ -881,10 +1292,17 @@ mod tests {
         "read_snapshot",
         "rename_document",
         "reorder_chapters",
+        "reorder_scenes",
+        "replace_in_document",
+        "replace_lines",
         "restore_document",
         "search",
         "server_info",
         "set_frontmatter_status",
+        "set_synopsis",
+        "take_snapshot",
+        "toggle_draft_folder",
+        "toggle_manuscript_folder",
         "toggle_star",
         "trash_document",
         "write_document",
@@ -988,11 +1406,112 @@ mod tests {
         for name in [
             "read_document", "write_document", "create_document", "list_folder",
             "create_folder", "rename_document", "move_document", "toggle_star",
+            "set_synopsis", "insert_text", "replace_lines", "replace_in_document",
+            "take_snapshot", "diff_version", "list_scenes", "reorder_scenes",
+            "toggle_manuscript_folder", "toggle_draft_folder",
         ] {
             let schema = serde_json::to_string(&router.get(name).unwrap().input_schema).unwrap();
             assert!(
                 schema.contains("relative to the vault root"),
                 "{name}'s path parameter does not say what a path means here"
+            );
+        }
+    }
+
+    #[test]
+    fn the_line_addressed_edits_say_which_lines_they_mean() {
+        // The one thing a client cannot discover by trying: line numbers here
+        // count body lines, so a document with frontmatter does not shift them.
+        // Getting this wrong silently edits the wrong paragraph, which is why
+        // it is shouted in both the tool description and the field's own doc.
+        let router = AquariusMcp::tool_router();
+        for name in ["insert_text", "replace_lines"] {
+            let tool = router.get(name).unwrap();
+            let d = tool.description.as_deref().unwrap();
+            assert!(d.contains("BODY LINES"), "{name} must say what a line number counts: {d}");
+            assert!(d.contains("1-BASED") || d.contains("1-based"), "{name} must say 1-based");
+            let schema = serde_json::to_string(&tool.input_schema).unwrap();
+            assert!(
+                schema.contains("expected_hash"),
+                "{name} is a write and must offer the conflict guard: {schema}"
+            );
+        }
+
+        // The inclusive end is the classic off-by-one, so it is spelled out.
+        assert!(router
+            .get("replace_lines")
+            .unwrap()
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("inclusive"));
+
+        // 0 has a meaning of its own on insert_text.
+        let insert = serde_json::to_string(&router.get("insert_text").unwrap().input_schema).unwrap();
+        assert!(insert.contains("0 means the very top"), "the 0 rule must be in the schema: {insert}");
+    }
+
+    #[test]
+    fn the_new_write_tools_promise_the_snapshot_and_the_marks_promise_not_to_delete() {
+        let router = AquariusMcp::tool_router();
+        for name in ["insert_text", "replace_lines", "replace_in_document", "reorder_scenes"] {
+            let d = router.get(name).unwrap().description.as_deref().unwrap().to_string();
+            assert!(
+                d.to_uppercase().contains("SNAPSHOT"),
+                "{name} replaces text and must say the previous text is recoverable: {d}"
+            );
+        }
+
+        // Marking a folder is a change to the manifest, never to the disk —
+        // and a model that thought otherwise would refuse to use it.
+        for name in ["toggle_manuscript_folder", "toggle_draft_folder"] {
+            let d = router.get(name).unwrap().description.as_deref().unwrap();
+            assert!(
+                d.contains("NEVER DELETES A FILE"),
+                "{name} must say the mark is not a deletion: {d}"
+            );
+        }
+
+        // take_snapshot and the two read-only tools must not read as writes.
+        let snap = router.get("take_snapshot").unwrap().description.as_deref().unwrap();
+        assert!(snap.contains("does not change the document"));
+        assert!(router.get("diff_version").unwrap().description.as_deref().unwrap().contains("Read-only"));
+    }
+
+    #[test]
+    fn the_scene_tools_agree_with_each_other_about_indices_and_lines() {
+        let router = AquariusMcp::tool_router();
+        let list = router.get("list_scenes").unwrap().description.as_deref().unwrap();
+        assert!(list.contains("0-based"), "reorder_scenes permutes these, so their base matters");
+        assert!(list.contains("BODY LINES"), "the ranges have to be the ones replace_lines takes");
+
+        let reorder = router.get("reorder_scenes").unwrap().description.as_deref().unwrap();
+        assert!(reorder.contains("list_scenes"), "it must say where the indices come from");
+        assert!(reorder.contains("each once"), "a non-permutation is refused, so say so");
+        assert!(
+            reorder.contains("ABOVE THE FIRST SCENE HEADING DOES NOT MOVE"),
+            "the title page rule is the surprising part: {reorder}"
+        );
+    }
+
+    #[test]
+    fn the_instructions_introduce_every_tool_group_the_surface_grew() {
+        for needle in [
+            "insert_text",
+            "replace_lines",
+            "replace_in_document",
+            "set_synopsis",
+            "take_snapshot",
+            "diff_version",
+            "list_scenes",
+            "reorder_scenes",
+            "toggle_manuscript_folder",
+            "toggle_draft_folder",
+            "body lines, not file",
+        ] {
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "a client reads INSTRUCTIONS at initialize and would never find {needle}"
             );
         }
     }
