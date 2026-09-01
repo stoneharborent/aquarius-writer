@@ -17,6 +17,14 @@ interface ProseEditorProps {
   onChange: (v: string) => void;
   /** Document path — registers the view on the formatBus for the toolbar. */
   path?: string;
+  /**
+   * Reference mode — the split pane's read-only half (SWIFT-AUDIT §2.1).
+   *
+   * Read at mount only: the caller remounts on the toggle (MainWindow keys the
+   * pane by path *and* mode), because a document that stops being editable
+   * mid-session should also lose the undo history that belongs to editing it.
+   */
+  readOnly?: boolean;
 }
 
 /** ⌘B / ⌘I / ⇧⌘X — the desktop FormatBus shortcuts, editor-local. */
@@ -26,7 +34,7 @@ const mdShortcutKeymap = keymap.of([
   { key: "Mod-Shift-x", run: (v) => { applyMdCommand(v, "strike"); return true; } },
 ]);
 
-export function ProseEditor({ value, onChange, path }: ProseEditorProps) {
+export function ProseEditor({ value, onChange, path, readOnly = false }: ProseEditorProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -53,6 +61,10 @@ export function ProseEditor({ value, onChange, path }: ProseEditorProps) {
         wysiwygDecorations(),
         ...wikilinkCompletion(treeRef, path),
         proseTheme,
+        // Reference mode. `readOnly` stops the commands, `editable` stops the
+        // contenteditable itself — both, because either one alone still leaves
+        // a way in (a paste handler, a drag-drop, an IME commit).
+        ...(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current(u.state.doc.toString());
         }),
@@ -60,7 +72,9 @@ export function ProseEditor({ value, onChange, path }: ProseEditorProps) {
     });
     const view = new EditorView({ state, parent: host.current });
     viewRef.current = view;
-    if (path) formatBus.register(path, view);
+    // A read-only pane is not a format target: ⌘B in the top bar must land in
+    // the pane the writer can actually type in.
+    if (path && !readOnly) formatBus.register(path, view);
     const unwatchScroll = watchAncestorScroll(view);
     const focusPath = path;
     // Restores this document's saved zoom, and makes ⌘+/⌘−/⌘0 land here while
@@ -69,14 +83,16 @@ export function ProseEditor({ value, onChange, path }: ProseEditorProps) {
       ? registerZoomPane({ path: focusPath, kind: "prose", host: host.current, view })
       : undefined;
     const onFocus = () => {
-      if (focusPath) { formatBus.focus(focusPath); focusZoomPane(focusPath); }
+      if (!focusPath) return;
+      if (!readOnly) formatBus.focus(focusPath);
+      focusZoomPane(focusPath);
     };
     view.contentDOM.addEventListener("focus", onFocus);
     return () => {
       unwatchScroll();
       unzoom?.();
       view.contentDOM.removeEventListener("focus", onFocus);
-      if (path) formatBus.unregister(path, view);
+      if (path && !readOnly) formatBus.unregister(path, view);
       view.destroy();
       viewRef.current = null;
     };

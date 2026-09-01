@@ -22,9 +22,13 @@ interface Props {
   /** Caret element mirror for the toolbar's element pills. */
   onElement?: (el: FountainElement) => void;
   onPageCount?: (n: number) => void;
+  /** Reference mode — the split pane's read-only half (SWIFT-AUDIT §2.1). */
+  readOnly?: boolean;
 }
 
-export function ScreenplayEditor({ value, onChange, path, onElement, onPageCount }: Props) {
+export function ScreenplayEditor({
+  value, onChange, path, onElement, onPageCount, readOnly = false,
+}: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -47,6 +51,10 @@ export function ScreenplayEditor({ value, onChange, path, onElement, onPageCount
         EditorView.lineWrapping,
         fountainDecorations(),
         fountainTheme,
+        // Reference mode — see ProseEditor for why it takes both facets. The
+        // smart-typing keymap above is a command set, so `readOnly` disarms it
+        // the same way it disarms the defaults.
+        ...(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current(u.state.doc.toString());
         }),
@@ -54,7 +62,7 @@ export function ScreenplayEditor({ value, onChange, path, onElement, onPageCount
     });
     const view = new EditorView({ state, parent: host.current });
     viewRef.current = view;
-    if (path) formatBus.register(path, view);
+    if (path && !readOnly) formatBus.register(path, view);
     const unwatchScroll = watchAncestorScroll(view);
     const focusPath = path;
     // The screenplay zooms its whole grid — type, line box, the element
@@ -63,14 +71,16 @@ export function ScreenplayEditor({ value, onChange, path, onElement, onPageCount
       ? registerZoomPane({ path: focusPath, kind: "screenplay", host: host.current, view })
       : undefined;
     const onFocus = () => {
-      if (focusPath) { formatBus.focus(focusPath); focusZoomPane(focusPath); }
+      if (!focusPath) return;
+      if (!readOnly) formatBus.focus(focusPath);
+      focusZoomPane(focusPath);
     };
     view.contentDOM.addEventListener("focus", onFocus);
     return () => {
       unwatchScroll();
       unzoom?.();
       view.contentDOM.removeEventListener("focus", onFocus);
-      if (path) formatBus.unregister(path, view);
+      if (path && !readOnly) formatBus.unregister(path, view);
       view.destroy();
       viewRef.current = null;
     };

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChapterRail } from "@/components/rails/ChapterRail";
 import { ScenesRail } from "@/components/rails/ScenesRail";
@@ -12,7 +12,7 @@ import { ImageViewer } from "@/components/viewers/ImageViewer";
 import { PdfViewer } from "@/components/viewers/PdfViewer";
 import { HtmlViewer } from "@/components/viewers/HtmlViewer";
 import { VideoViewer } from "@/components/viewers/VideoViewer";
-import { useSplit } from "@/state/splitStore";
+import { SPLIT_MIN, useSplit, type SplitPane } from "@/state/splitStore";
 import { GhostSlot } from "@/components/popout/GhostSlot";
 import { usePopout } from "@/state/popoutStore";
 import { Backlinks } from "@/components/notes/Backlinks";
@@ -37,9 +37,7 @@ import type { ChapterStatus } from "@/types/vault";
 import "./MainWindow.css";
 
 export function MainWindow() {
-  const { selectedPath, view } = useVault();
-  const isPopped = usePopout((s) => (selectedPath ? s.popped.has(selectedPath) : false));
-  const split = useSplit();
+  const { view } = useVault();
   const {
     sidebarWidth, sidebarCollapsed, setSidebarWidth, setSidebarCollapsed,
     rightWidth, rightCollapsed, setRightWidth, setRightCollapsed,
@@ -124,34 +122,7 @@ export function MainWindow() {
         )}
 
         <main className="mw-editor">
-          {view !== "editor" ? (
-            <ManuscriptView />
-          ) : (
-            <div className="mw-split-host">
-              <section className="mw-pane">
-                {selectedPath && isPopped
-                  ? <GhostSlot path={selectedPath} />
-                  : <DocView path={selectedPath} />}
-              </section>
-              {split.secondaryPath && (
-                <section className="mw-pane mw-pane-secondary">
-                  <header className="mw-pane-head">
-                    <span className="mw-pane-crumb">{split.secondaryPath}</span>
-                    <button
-                      className={`mw-mode-btn${split.reference ? " on" : ""}`}
-                      title="Reference mode — read-only"
-                      onClick={() => split.setReference(!split.reference)}
-                    >Reference</button>
-                    <button className="mw-mode-btn" title="Close split"
-                      onClick={split.closeSplit}>✕</button>
-                  </header>
-                  <div className={split.reference ? "mw-pane-body mw-readonly" : "mw-pane-body"}>
-                    <DocView path={split.secondaryPath} secondary />
-                  </div>
-                </section>
-              )}
-            </div>
-          )}
+          {view !== "editor" ? <ManuscriptView /> : <SplitHost />}
         </main>
 
         {!rightCollapsed && (
@@ -173,8 +144,172 @@ export function MainWindow() {
   );
 }
 
+/**
+ * The editor column: one document, or two side by side (PARITY row 11).
+ *
+ * Both panes are real editors over real `editorStore` buffers — same debounce,
+ * same conflict guard, independent carets, scroll positions and undo stacks,
+ * because they are two CodeMirror views over two different documents. What
+ * they are *not* allowed to be is two views over the SAME document: see
+ * `sameDoc` below and NOTES §25b.
+ */
+function SplitHost() {
+  const selectedPath = useVault((s) => s.selectedPath);
+  const isPopped = usePopout((s) => (selectedPath ? s.popped.has(selectedPath) : false));
+  const secondaryPath = useSplit((s) => s.secondaryPath);
+  const reference = useSplit((s) => s.reference);
+  const active = useSplit((s) => s.active);
+  const ratio = useSplit((s) => s.ratio);
+  const secondaryPopped = usePopout((s) => (secondaryPath ? s.popped.has(secondaryPath) : false));
+
+  const host = useRef<HTMLDivElement>(null);
+  const [hostWidth, setHostWidth] = useState(0);
+
+  // Measured before paint: an effect would show one frame at 50/50 before the
+  // persisted ratio arrived, which reads as the divider jumping on open.
+  useLayoutEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    setHostWidth(el.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setHostWidth(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Picking a file in the sidebar loads it into the PRIMARY pane, so that is
+  // where the writer now is — the accent line and the toolbar follow.
+  useEffect(() => {
+    if (selectedPath) useSplit.getState().setActive("primary");
+  }, [selectedPath]);
+
+  /**
+   * The same document in both panes.
+   *
+   * Two CodeMirror views cannot share one `EditorState`, and two views fed by
+   * one `editorStore` buffer fight: each one's `value` sync would replace the
+   * other's whole document on every keystroke, wiping its selection and its
+   * undo history. So the honest answer is the simple one — the second copy is
+   * a read-only look at the same buffer, and says so in its header.
+   */
+  const sameDoc = !!secondaryPath && secondaryPath === selectedPath;
+  const secondaryReadOnly = reference || sameDoc;
+  const split = !!secondaryPath;
+
+  /**
+   * Whole-pixel geometry (NOTES §1a): the divider hands out integer pixel
+   * widths, never a transform and never a fractional track. `1fr` on the right
+   * takes the integer remainder of an integer container.
+   */
+  const columns = (() => {
+    if (!split) return "minmax(0, 1fr)";
+    const available = hostWidth - 1; // the divider's own 1px track
+    if (available <= 0) return "minmax(0, 1fr) 1px minmax(0, 1fr)";
+    // Too narrow to give both panes their minimum: split it down the middle
+    // and let both be cramped equally. Still integers — `1fr 1px 1fr` on an
+    // odd remainder hands each pane a half pixel, which is the one thing the
+    // metrics contract does not allow.
+    const left = available < SPLIT_MIN * 2
+      ? Math.floor(available / 2)
+      : Math.round(Math.min(available - SPLIT_MIN, Math.max(SPLIT_MIN, available * ratio)));
+    return `${left}px 1px minmax(0, 1fr)`;
+  })();
+
+  /** Clicking or tabbing into a pane is what makes it the active one. */
+  const claim = (pane: SplitPane) => ({
+    onPointerDownCapture: () => useSplit.getState().setActive(pane),
+    onFocusCapture: () => useSplit.getState().setActive(pane),
+  });
+
+  const paneClass = (pane: SplitPane, extra = "") =>
+    ["mw-pane", extra, split && active === pane ? "mw-pane-active" : ""]
+      .filter(Boolean).join(" ");
+
+  return (
+    <div className="mw-split-host" ref={host} style={{ gridTemplateColumns: columns }}>
+      <section className={paneClass("primary")} {...claim("primary")}>
+        {selectedPath && isPopped
+          ? <GhostSlot path={selectedPath} />
+          : <DocView path={selectedPath} pane="primary" />}
+      </section>
+
+      {split && (
+        <Splitter
+          label="Resize the split editor"
+          onReset={() => useSplit.getState().resetRatio()}
+          onDrag={(clientX) => {
+            const rect = host.current?.getBoundingClientRect();
+            if (!rect) return;
+            const available = Math.round(rect.width) - 1;
+            if (available < SPLIT_MIN * 2) return;
+            const x = Math.min(
+              available - SPLIT_MIN,
+              Math.max(SPLIT_MIN, clientX - rect.left),
+            );
+            useSplit.getState().setRatio(x / available);
+          }}
+        />
+      )}
+
+      {secondaryPath && (
+        <section
+          className={paneClass("secondary", "mw-pane-secondary")}
+          {...claim("secondary")}
+        >
+          <header className="mw-pane-head">
+            <span className="mw-pane-crumb" title={secondaryPath}>{secondaryPath}</span>
+            {sameDoc && (
+              <span className="mw-pane-note">already open in the other pane</span>
+            )}
+            <div className="mw-pane-modes" role="group" aria-label="Split pane mode">
+              <button
+                className={`mw-mode-btn${secondaryReadOnly ? "" : " on"}`}
+                title={sameDoc
+                  ? "This document is already open in the other pane"
+                  : "Edit this document here"}
+                aria-pressed={!secondaryReadOnly}
+                disabled={sameDoc}
+                onClick={() => useSplit.getState().setReference(false)}
+              >Edit</button>
+              <button
+                className={`mw-mode-btn${secondaryReadOnly ? " on" : ""}`}
+                title="Reference — read-only"
+                aria-pressed={secondaryReadOnly}
+                onClick={() => useSplit.getState().setReference(true)}
+              >Reference</button>
+            </div>
+            <button
+              className="mw-mode-btn"
+              title="Close split"
+              onClick={() => useSplit.getState().closeSplit()}
+            >✕</button>
+          </header>
+          <div className="mw-pane-body">
+            {secondaryPopped
+              ? <GhostSlot path={secondaryPath} />
+              : (
+                <DocView
+                  // Reference mode is read at mount, so the toggle remounts the
+                  // editor — and a document that stops being editable also
+                  // loses the undo history that belonged to editing it.
+                  key={`${secondaryPath}|${secondaryReadOnly ? "ref" : "edit"}`}
+                  path={secondaryPath}
+                  pane="secondary"
+                  readOnly={secondaryReadOnly}
+                />
+              )}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 /** One document rendered by kind — shared by the primary and split panes. */
-function DocView({ path, secondary = false }: { path: string | null; secondary?: boolean }) {
+function DocView({ path, pane = "primary", readOnly = false }: {
+  path: string | null; pane?: SplitPane; readOnly?: boolean;
+}) {
+  const secondary = pane === "secondary";
   const { current, selectPath, setView, reorderChapters, activeDraftId } = useVault();
   const draft = current?.drafts.find((d) => d.id === activeDraftId) ?? current?.drafts[0];
   const chapters = draft?.chapterOrder ?? current?.manuscripts[0]?.chapterOrder ?? [];
@@ -204,7 +339,13 @@ function DocView({ path, secondary = false }: { path: string | null; secondary?:
               </button>
             </div>
           )}
-          <ProsePane key={path} workflowId={current.id} path={path} secondary={secondary} />
+          <ProsePane
+            key={path}
+            workflowId={current.id}
+            path={path}
+            pane={pane}
+            readOnly={readOnly}
+          />
         </div>
       </div>
     );
@@ -222,54 +363,79 @@ function DocView({ path, secondary = false }: { path: string | null; secondary?:
     return <VideoViewer key={path} workflowId={current.id} path={path} />;
   }
   if (path.endsWith(".fountain")) {
-    return <ScreenplayPane key={path} workflowId={current.id} path={path} secondary={secondary} />;
+    return (
+      <ScreenplayPane
+        key={path} workflowId={current.id} path={path} pane={pane} readOnly={readOnly}
+      />
+    );
   }
   if (path.endsWith(".md")) {
-    return <NotePane key={path} workflowId={current.id} path={path} secondary={secondary} />;
+    return (
+      <NotePane
+        key={path} workflowId={current.id} path={path} pane={pane} readOnly={readOnly}
+      />
+    );
   }
   return <EditorPlaceholder selectedPath={path} />;
 }
 
 /**
- * Tell the top bar which document its toolbar is driving.
+ * Tell the top bar which document its toolbar is driving, and answer whether
+ * this pane is the one driving it.
  *
- * Only the primary pane speaks: there is one toolbar row for the window, and a
- * split pane claiming it would swap the toolbar under the writer's hands every
- * time the split opened.
+ * There is one toolbar row for the window, so exactly one pane may own it: the
+ * **active** one (splitStore's `active`, set by clicking or tabbing into a
+ * pane). Before the split became editable only the primary ever spoke, which
+ * was right when the second pane could not be typed in and is wrong now — ⌘B
+ * has to bold the paragraph the caret is actually in.
+ *
+ * A read-only reference pane never claims the row: there is nothing there for
+ * a format command to do.
+ *
+ * The hand-off is safe in both directions because React runs every effect
+ * *cleanup* in a commit before any effect *setup* — the pane losing the row
+ * clears it before the pane gaining it writes.
  */
-function useToolbarContext(kind: "md" | "fountain", path: string, secondary: boolean) {
+function useToolbarContext(
+  kind: "md" | "fountain", path: string, pane: SplitPane, readOnly: boolean,
+): boolean {
+  const drives = useSplit((s) => s.active === pane) && !readOnly;
   useEffect(() => {
-    if (secondary) return;
+    if (!drives) return;
     useToolbar.getState().setContext(kind, path);
     return () => useToolbar.getState().clear(path);
-  }, [kind, path, secondary]);
+  }, [kind, path, drives]);
+  return drives;
 }
 
-function ProsePane({ workflowId, path, secondary = false }: {
-  workflowId: string; path: string; secondary?: boolean;
+function ProsePane({ workflowId, path, pane = "primary", readOnly = false }: {
+  workflowId: string; path: string; pane?: SplitPane; readOnly?: boolean;
 }) {
   const { docs, open, edit } = useEditor();
   const doc = docs[path];
+  const secondary = pane === "secondary";
 
   useEffect(() => {
     void open(workflowId, path);
   }, [workflowId, path, open]);
 
-  useToolbarContext("md", path, secondary);
+  useToolbarContext("md", path, pane, readOnly);
 
   const status = doc?.status ?? "clean";
   const fmStatus = doc?.frontmatter?.status as ChapterStatus | undefined;
 
   return (
     <article className="mw-prose mw-canvas">
+      {/* No duplicate chrome in the split pane: the path, the mode toggle and
+          the close button are already in the slim pane header above it. */}
       <header className="mw-prose-head">
-        <span className="mw-prose-crumb">{path}</span>
+        <span className="mw-prose-crumb">{secondary ? "" : path}</span>
         {fmStatus && (
           <span className={`mw-status mw-status-${fmStatus}`}>{fmStatus}</span>
         )}
         <SaveBadge status={status} />
-        <SplitButton path={path} />
-        <PopoutButton path={path} />
+        {!secondary && <SplitButton path={path} />}
+        {!secondary && <PopoutButton path={path} />}
       </header>
       <div className="mw-sheet">
         <h1 className="mw-prose-title">
@@ -277,7 +443,12 @@ function ProsePane({ workflowId, path, secondary = false }: {
         </h1>
         <div className="mw-prose-editor">
           {doc ? (
-            <ProseEditor value={doc.body} onChange={(v) => edit(path, v)} path={path} />
+            <ProseEditor
+              value={doc.body}
+              onChange={readOnly ? noop : (v) => edit(path, v)}
+              path={path}
+              readOnly={readOnly}
+            />
           ) : (
             <p className="mw-prose-loading">Loading…</p>
           )}
@@ -289,6 +460,9 @@ function ProsePane({ workflowId, path, secondary = false }: {
     </article>
   );
 }
+
+/** A reference pane's editor reports no changes; nothing is listening. */
+const noop = () => {};
 
 /** Words · characters · read time — parity with EditorFooterStats.swift. */
 function FooterStats({ text, extra }: { text: string; extra?: React.ReactNode }) {
@@ -305,17 +479,18 @@ function FooterStats({ text, extra }: { text: string; extra?: React.ReactNode })
   );
 }
 
-function ScreenplayPane({ workflowId, path, secondary = false }: {
-  workflowId: string; path: string; secondary?: boolean;
+function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }: {
+  workflowId: string; path: string; pane?: SplitPane; readOnly?: boolean;
 }) {
   const { docs, open, edit } = useEditor();
   const doc = docs[path];
+  const secondary = pane === "secondary";
 
   useEffect(() => {
     void open(workflowId, path);
   }, [workflowId, path, open]);
 
-  useToolbarContext("fountain", path, secondary);
+  const drivesToolbar = useToolbarContext("fountain", path, pane, readOnly);
 
   const parsed = useMemo(() => {
     if (!doc?.body) return { titlePage: {}, body: "", titleBlockText: "", scenes: [] };
@@ -326,6 +501,7 @@ function ScreenplayPane({ workflowId, path, secondary = false }: {
 
   const [activeScene, setActiveScene] = useState<number | null>(0);
   const [pageCount, setPageCount] = useState<number | null>(null);
+  const surface = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (parsed.body) setPageCount(estimatePages(parsed.body.split("\n")).pageCount);
@@ -335,7 +511,10 @@ function ScreenplayPane({ workflowId, path, secondary = false }: {
     setActiveScene(idx);
     const scene = parsed.scenes[idx];
     if (!scene) return;
-    const host = document.querySelector<HTMLDivElement>(".screenplay-editor");
+    // Scoped to THIS pane. A document-wide query would scroll whichever
+    // screenplay happens to be first in the DOM, which stopped being "the only
+    // one" the moment the split became a second editor.
+    const host = surface.current?.querySelector<HTMLDivElement>(".screenplay-editor");
     const fn = (host as HTMLDivElement & { __screenplayScroll?: (n: number) => void } | null)?.__screenplayScroll;
     fn?.(scene.from);
   }
@@ -352,33 +531,42 @@ function ScreenplayPane({ workflowId, path, secondary = false }: {
   const status = doc?.status ?? "clean";
 
   return (
-    <div className="mw-editor-split">
-      <ScenesRail
-        scenes={parsed.scenes}
-        activeIndex={activeScene}
-        onSelect={handleSceneSelect}
-      />
+    <div className="mw-editor-split" ref={surface}>
+      {/* The scenes rail is window chrome, not part of the document — the
+          split pane does without it, the way it does without the chapter
+          rail. */}
+      {!secondary && (
+        <ScenesRail
+          scenes={parsed.scenes}
+          activeIndex={activeScene}
+          onSelect={handleSceneSelect}
+        />
+      )}
       {/* The screenplay keeps its own surface — its paged canvas with real page
           breaks is a later wave (PARITY row 12), and dropping it onto the prose
           page sheet now would fake a page geometry it does not have yet. */}
       <article className="mw-prose mw-screenplay">
         <header className="mw-prose-head">
-          <span className="mw-prose-crumb">{path}</span>
-          <button className="mw-mode-btn" title="Print-layout preview"
-            onClick={() => useOverlay.getState().open("screenplay-preview", { path })}>
-            Preview
-          </button>
+          <span className="mw-prose-crumb">{secondary ? "" : path}</span>
+          {!secondary && (
+            <button className="mw-mode-btn" title="Print-layout preview"
+              onClick={() => useOverlay.getState().open("screenplay-preview", { path })}>
+              Preview
+            </button>
+          )}
           <SaveBadge status={status} />
-          <SplitButton path={path} />
+          {!secondary && <SplitButton path={path} />}
         </header>
         {Object.keys(parsed.titlePage).length > 0 && <TitlePage tp={parsed.titlePage} />}
         <div className="mw-prose-editor">
           {doc ? (
             <ScreenplayEditor
               value={parsed.body}
-              onChange={handleBodyEdit}
+              onChange={readOnly ? noop : handleBodyEdit}
               path={path}
-              onElement={(el) => { if (!secondary) useToolbar.getState().setElement(el); }}
+              readOnly={readOnly}
+              // The lit element pill belongs to whichever pane the caret is in.
+              onElement={(el) => { if (drivesToolbar) useToolbar.getState().setElement(el); }}
               onPageCount={setPageCount}
             />
           ) : (
@@ -395,17 +583,18 @@ function ScreenplayPane({ workflowId, path, secondary = false }: {
   );
 }
 
-function NotePane({ workflowId, path, secondary = false }: {
-  workflowId: string; path: string; secondary?: boolean;
+function NotePane({ workflowId, path, pane = "primary", readOnly = false }: {
+  workflowId: string; path: string; pane?: SplitPane; readOnly?: boolean;
 }) {
   const { docs, open, edit } = useEditor();
   const doc = docs[path];
+  const secondary = pane === "secondary";
 
   useEffect(() => {
     void open(workflowId, path);
   }, [workflowId, path, open]);
 
-  useToolbarContext("md", path, secondary);
+  useToolbarContext("md", path, pane, readOnly);
 
   const status = doc?.status ?? "clean";
   const title = (doc?.frontmatter?.title as string | undefined)
@@ -415,16 +604,32 @@ function NotePane({ workflowId, path, secondary = false }: {
   return (
     <article className="mw-prose mw-note mw-canvas">
       <header className="mw-prose-head">
-        <span className="mw-prose-crumb">{path}</span>
+        <span className="mw-prose-crumb">{secondary ? "" : path}</span>
         <SaveBadge status={status} />
-        <SplitButton path={path} />
-        <PopoutButton path={path} />
+        {!secondary && <SplitButton path={path} />}
+        {!secondary && <PopoutButton path={path} />}
       </header>
       <div className="mw-sheet">
         <h1 className="mw-prose-title">{title}</h1>
         <div className="mw-prose-editor">
           {doc ? (
-            <NoteEditor value={doc.body} onChange={(v) => edit(path, v)} path={path} />
+            <NoteEditor
+              value={doc.body}
+              onChange={readOnly ? noop : (v) => edit(path, v)}
+              path={path}
+              readOnly={readOnly}
+              // A wiki-link followed in the split pane stays in the split
+              // pane; in the primary it is the window's selection, as before.
+              onNavigate={secondary
+                ? (target) => {
+                    // Keep the pane's declared mode, not the effective one —
+                    // `readOnly` may only be on because this document is the
+                    // one the primary pane already holds.
+                    const s = useSplit.getState();
+                    s.openSplit(target, s.reference);
+                  }
+                : undefined}
+            />
           ) : (
             <p className="mw-prose-loading">Loading…</p>
           )}
@@ -433,8 +638,9 @@ function NotePane({ workflowId, path, secondary = false }: {
           <FooterStats text={doc?.body ?? ""} />
         </footer>
       </div>
-      {/* Backlinks belong to the desk, not to the page. */}
-      <Backlinks path={path} />
+      {/* Backlinks belong to the desk, not to the page — and the desk is the
+          primary pane: their rows navigate the window's selection. */}
+      {!secondary && <Backlinks path={path} />}
     </article>
   );
 }
@@ -450,14 +656,23 @@ function PopoutButton({ path }: { path: string }) {
   );
 }
 
-/** Open this document in the secondary split pane. */
+/**
+ * A second view of THIS document beside it.
+ *
+ * Rendered in the primary pane only, so the document it opens is by definition
+ * the one the primary already holds — which the split shows read-only (see
+ * `SplitHost`'s `sameDoc`). That is not a consolation prize: a second look at
+ * chapter one while you write chapter twelve is what this button is for. To
+ * get two *editable* documents, open the other one from its row's ⋯ menu.
+ */
 function SplitButton({ path }: { path: string }) {
   const { openSplit, secondaryPath, closeSplit } = useSplit();
   const open = secondaryPath === path;
   return (
     <button
       className="mw-popout-btn"
-      title={open ? "Close split" : "Open in split pane"}
+      title={open ? "Close split" : "Second view of this document, beside it"}
+      aria-pressed={open}
       onClick={() => (open ? closeSplit() : openSplit(path))}
     >⫲</button>
   );

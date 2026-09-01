@@ -17,6 +17,16 @@ interface NoteEditorProps {
   onChange: (v: string) => void;
   /** Document path — registers the view on the formatBus for the toolbar. */
   path?: string;
+  /** Reference mode — the split pane's read-only half (SWIFT-AUDIT §2.1). */
+  readOnly?: boolean;
+  /**
+   * Where a `[[wiki-link]]` click goes.
+   *
+   * Defaults to the window's selection, which is the primary pane. The split's
+   * secondary pane passes its own opener so a link followed over there stays
+   * over there instead of yanking the document out from under the other pane.
+   */
+  onNavigate?: (path: string) => void;
 }
 
 const mdShortcutKeymap = keymap.of([
@@ -25,7 +35,9 @@ const mdShortcutKeymap = keymap.of([
   { key: "Mod-Shift-x", run: (v) => { applyMdCommand(v, "strike"); return true; } },
 ]);
 
-export function NoteEditor({ value, onChange, path }: NoteEditorProps) {
+export function NoteEditor({
+  value, onChange, path, readOnly = false, onNavigate,
+}: NoteEditorProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -36,6 +48,12 @@ export function NoteEditor({ value, onChange, path }: NoteEditorProps) {
   const setView = useVault((s) => s.setView);
   const treeRef = useRef<typeof tree>(tree);
   treeRef.current = tree;
+
+  // The click handler is baked into the CodeMirror extension at mount, so it
+  // goes through a ref — otherwise a pane that changes where its links lead
+  // (opened in the split, then closed) would keep the first answer forever.
+  const navRef = useRef<(target: string) => void>(() => {});
+  navRef.current = onNavigate ?? ((target: string) => { selectPath(target); setView("editor"); });
 
   useEffect(() => {
     if (!host.current) return;
@@ -50,10 +68,12 @@ export function NoteEditor({ value, onChange, path }: NoteEditorProps) {
         wysiwygDecorations(),
         ...wikilinks(
           { current: treeRef.current },
-          (path) => { selectPath(path); setView("editor"); },
+          (target) => navRef.current(target),
         ),
         ...wikilinkCompletion(treeRef, path),
         proseTheme,
+        // Reference mode — see ProseEditor for why it takes both facets.
+        ...(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) onChangeRef.current(u.state.doc.toString());
         }),
@@ -61,21 +81,23 @@ export function NoteEditor({ value, onChange, path }: NoteEditorProps) {
     });
     const view = new EditorView({ state, parent: host.current });
     viewRef.current = view;
-    if (path) formatBus.register(path, view);
+    if (path && !readOnly) formatBus.register(path, view);
     const unwatchScroll = watchAncestorScroll(view);
     const focusPath = path;
     const unzoom = focusPath
       ? registerZoomPane({ path: focusPath, kind: "prose", host: host.current, view })
       : undefined;
     const onFocus = () => {
-      if (focusPath) { formatBus.focus(focusPath); focusZoomPane(focusPath); }
+      if (!focusPath) return;
+      if (!readOnly) formatBus.focus(focusPath);
+      focusZoomPane(focusPath);
     };
     view.contentDOM.addEventListener("focus", onFocus);
     return () => {
       unwatchScroll();
       unzoom?.();
       view.contentDOM.removeEventListener("focus", onFocus);
-      if (path) formatBus.unregister(path, view);
+      if (path && !readOnly) formatBus.unregister(path, view);
       view.destroy();
       viewRef.current = null;
     };

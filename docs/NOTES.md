@@ -2629,3 +2629,185 @@ behind the sidebar to blur either way now.
 - **Row icons do not follow the navigator zoom** (§24e).
 - **Empty states for the corkboard, the graph and the version list.** The
   component is there; those three panes were not in this bundle.
+
+---
+
+## 25. The split is two editors now, and one of them refuses to be the same document
+
+PARITY row 11. The port's split pane was a read-only look at a second file —
+useful, and exactly half of what Swift has. Swift's split is **two fully
+editable documents side by side, with independent caret, scroll, undo and
+autosave**, a draggable divider, and an accent line marking the pane you are
+in (SWIFT-AUDIT §2.1). It *also* keeps a separate read-only Reference pane.
+
+Both are here now, on one mechanism: the split, with an **Editable ↔
+Reference** toggle in the secondary pane's slim header.
+
+### 25a. The second pane is not a second system
+
+The whole point of the change is how little it added. A document in the split
+is an **ordinary open document**: `editorStore.open(workflowId, path)`, the
+same buffer map keyed by path, the same 800ms debounce, the same `FileStamp`
+baseline and conflict guard (§20), the same auto-version and session
+word-count trail. The split store holds no text and never has.
+
+That falls out of `editorStore` already being keyed by path rather than by
+"the open document". Two panes on two paths are two entries in `docs`, and
+everything downstream is already per-path:
+
+- **Undo** is CodeMirror's, per `EditorView` — two views, two histories, no
+  shared state to leak between them.
+- **Autosave** is per buffer, so each pane's debounce runs on its own timer
+  and each save carries its own baseline.
+- **Session word counts do not double** (`useSessions.note(wf, path, n)` is
+  keyed by path): two panes editing two documents note two documents. Two
+  panes on *one* document cannot happen — see §25b — so there is no path
+  where one file's words get counted twice.
+
+### 25b. The same document in both panes is read-only, on purpose
+
+This is the one real decision in the change.
+
+CodeMirror does not support two views over one `EditorState`; the supported
+shape is two views that *sync* to each other. The port's editors are already
+sync'd to something else — the `editorStore` buffer, through a `value` prop
+and an effect that replaces the whole document when `value` stops matching.
+Point two of those at one buffer and every keystroke in pane A rewrites pane
+B's entire document, which throws away pane B's selection, its scroll position
+and (because a full-range replace is one transaction) its undo history. It
+would also bounce back through `edit()` and re-dirty the buffer that had just
+been saved.
+
+Options were: sync the two views properly (a real CodeMirror collab-style
+setup, for a case nobody asked for), refuse to open the document twice, or
+open it and make the second copy honest.
+
+**The second copy is read-only, and the pane header says "already open in the
+other pane".** The Edit button is disabled while it is the same document; the
+Reference button is lit. Nothing is lost — it is still a live view of the same
+buffer, so it shows the other pane's typing as it happens, which is what a
+second look at chapter one *while writing chapter twelve* actually wants.
+That is also what the primary pane's `⫲` button now does and says, since the
+document it can offer the split is by definition the one it is already
+holding. Two **different** documents, both editable, is what "Open in Split
+View" on a sidebar row gives you.
+
+Read-only means read-only, not a CSS trick. The old implementation was
+`pointer-events: none` on `.cm-content`, which a keyboard walks straight past.
+The editors now take a `readOnly` prop that adds **both**
+`EditorState.readOnly.of(true)` and `EditorView.editable.of(false)` — either
+one alone still leaves a door (a paste handler, a drop, an IME commit). It is
+read at mount and the pane is keyed by `path|mode`, so flipping the toggle
+remounts: a document that stops being editable should also lose the undo
+history that belonged to editing it.
+
+### 25c. The active pane owns the toolbar
+
+There is one editor toolbar for the window (§1's top bar), so exactly one pane
+may drive it. It used to be the primary, unconditionally — right when the
+second pane could not be typed in, wrong the moment it could.
+
+`splitStore.active` is now the answer. A pointer-down or a focus anywhere
+inside a pane claims it (`onPointerDownCapture` / `onFocusCapture` on the
+`<section>`), selecting a file in the sidebar claims the primary, and opening
+the split claims the secondary — you asked for that document, so that is where
+you are. `useToolbarContext(kind, path, pane, readOnly)` publishes to
+`toolbarStore` only while `active === pane`, and a reference pane never
+publishes at all.
+
+The hand-off is safe because React runs **every effect cleanup in a commit
+before any effect setup**: the pane losing the row clears it before the pane
+gaining it writes, so there is no ordering in which the toolbar ends up blank
+or owned by the wrong document.
+
+`formatBus` needed no change. It has been keyed by path with a stack per path
+since the popouts landed, and `EditorToolbar` already sends to
+`formatBus.target(toolbarStore.path)`. Two panes on two paths are two entries;
+the toolbar's path is the active pane's path; the command lands where the
+caret is. The one addition is negative: **a read-only view does not register**,
+so ⌘B can never be delivered to a pane that cannot accept it.
+
+The screenplay's lit element pill follows the same flag — `onElement` writes to
+`toolbarStore` only from the pane that drives the toolbar.
+
+Footer stats did not need routing. Each pane renders its own footer over its
+own buffer, which is strictly better than one shared readout that has to guess.
+
+### 25d. The divider is a grid track, not a flexbox
+
+`.mw-split-host` was `display: flex` with two `flex: 1` children. It is now a
+grid whose template is written by `MainWindow`:
+
+```
+`${left}px 1px minmax(0, 1fr)`
+```
+
+That shape is the **whole-pixel metrics contract** (§1a) applied to a
+draggable divider. `left` is an integer computed once per resize from the
+persisted ratio; the divider gets its own 1px track (the shared
+`shell/Splitter`, the same component the sidebar and right pane use, with its
+7px hit area and hairline-to-accent hover); `1fr` takes the integer remainder
+of an integer container. No transform, no percentage width, nothing fractional
+reaches `.cm-content`. Even the too-narrow fallback is `Math.floor(available /
+2)` rather than `1fr 1px 1fr`, because an odd remainder split by two `1fr`
+tracks hands each pane a half pixel.
+
+Persistence follows the shellStore idiom exactly: one localStorage key,
+**`aquarius.split.ratio`**, holding the primary pane's share, clamped to
+0.1–0.9 on read and rounded to four places on write. Each pane is clamped to
+**320px** minimum during the drag (`SPLIT_MIN`, the same number
+`EDITOR_MIN` uses for the whole editor column), and double-clicking the
+divider resets to 50/50 through `Splitter`'s existing `onReset`.
+
+The active-pane cue is a 2px accent line drawn on `.mw-pane::before`, not a
+border: a border would move the document two pixels every time focus changed,
+which is the exact class of jitter §1a exists to prevent.
+
+### 25e. Doors in, and the chrome that does not come with them
+
+- **Sidebar row ⋯ → "Open in Split View"** (files only, not folders) — the
+  Swift row-menu item from SWIFT-AUDIT §1.4. Opens the document **editable**
+  and switches to the editor view, since the split only exists there.
+- **`⫲` in the primary pane header** — a second view of the document you are
+  in, which is the read-only case of §25b. Its tooltip now says so.
+- **A wiki-link clicked in the split pane navigates the split pane.** In the
+  primary it still moves the window's selection, exactly as before. `NoteEditor`
+  takes an `onNavigate` that defaults to the old behaviour; the split passes
+  its own opener, through a ref because the handler is baked into the
+  CodeMirror extension at mount.
+- **No duplicate chrome in the secondary pane** (the Swift rule). It does not
+  get the chapter rail, the scenes rail, the Outline/Cards buttons, the
+  screenplay Preview button, the backlinks list, the pop-out button, its own
+  split button, or a second copy of the path — the slim pane header already
+  carries the path, the mode toggle and the close button. What it keeps is the
+  save badge, because that is about the document and not about the window.
+- **Viewers stay viewers.** An image, PDF, HTML or video in the split renders
+  through the same read-only components as in the primary; `readOnly` is not
+  even threaded to them because there is nothing there to disarm.
+
+A trashed file now closes the split as well as clearing the selection
+(`vaultStore.removeFromTree`) — a pane left holding a deleted path is an
+editor writing to nothing. Rename and move already followed the split; that
+was wired when `applyRelocation` was written.
+
+### 25f. What this did not do
+
+- **The editor column does not widen when the split opens.** `MainWindow`'s
+  ResizeObserver still defends one `EDITOR_MIN` (320px) for the whole column,
+  so opening a split in a narrow window cramps both panes rather than pushing
+  the sidebar or right pane out of the way. The divider clamp handles it
+  gracefully (§25d's floor-half fallback) but Swift's behaviour here has not
+  been checked.
+- **No shortcut opens or closes the split.** The doors are the ⋯ menu, the
+  `⫲` button and the header's ✕. ⌃⌘E is still unbound and still means what it
+  meant — nothing, in this port; collapsing the editor pane remains PARITY
+  row 1's leftover.
+- **The split is not persisted across launches.** Which document is beside
+  the primary is session state, like the selection; only the *ratio* survives.
+  Swift's behaviour here is unverified.
+- **Nothing bench-verified on Linux.** Everything below wants a real run on
+  the AquariusOS bench: the divider drag under WebKitGTK (the caret in *both*
+  panes after a drag, per §1a), the accent line at both themes, focus
+  hand-off with a trackpad and with Tab, an autosave firing in one pane while
+  the other is being typed in, and the conflict dialog raised against a
+  document that is open in the split.

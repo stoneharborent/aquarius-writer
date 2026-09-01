@@ -26,6 +26,7 @@ import { useVault } from "@/state/vaultStore";
 import { useOverlay } from "@/state/overlayStore";
 import { useShell, ZOOM_MAX, ZOOM_MIN } from "@/state/shellStore";
 import { useFavorites } from "@/state/favoritesStore";
+import { useSplit } from "@/state/splitStore";
 import { trashFile } from "@/lib/vault/aux";
 import { useEditor } from "@/state/editorStore";
 import { EmptyState } from "@/components/shell/EmptyState";
@@ -852,13 +853,18 @@ function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
   );
 }
 
-/** Star / Rename / Move to… — the row's context menu, also on the "⋯" button. */
+/**
+ * Star / Open in Split View / Rename / Move to… — the row's context menu, also
+ * on the "⋯" button. Swift's row menu, minus the Finder items (SWIFT-AUDIT
+ * §1.4).
+ */
 function RowMenu({ node }: { node: VaultNode }) {
   const ops = useTreeOps();
   const { moveEntry } = useVault();
   const favorites = useFavorites();
   const [picking, setPicking] = useState(false);
   const starred = favorites.starred.has(node.path);
+  const isFile = node.kind !== "folder";
 
   useEffect(() => { if (ops.menuFor !== node.path) setPicking(false); }, [ops.menuFor, node.path]);
 
@@ -886,6 +892,19 @@ function RowMenu({ node }: { node: VaultNode }) {
             className="sb-menu-item"
             onClick={() => { ops.setMenuFor(null); void favorites.toggle(node.path); }}
           >{starred ? "Unstar" : "Star"}</button>
+          {isFile && (
+            <button
+              className="sb-menu-item"
+              onClick={() => {
+                ops.setMenuFor(null);
+                // Editable, not reference — the pane's own header switches it
+                // to read-only, and the writer asked for a second editor.
+                useSplit.getState().openSplit(node.path, false);
+                // The split only exists in the editor view.
+                useVault.getState().setView("editor");
+              }}
+            >Open in Split View</button>
+          )}
           <button
             className="sb-menu-item"
             onClick={() => { ops.setMenuFor(null); ops.setRenaming(node.path); }}

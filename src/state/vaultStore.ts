@@ -518,6 +518,9 @@ export const useVault = create<VaultState>((set, get) => ({
     const tree = get().tree;
     if (!tree) return;
     const next = prune(tree);
+    // The split pane is a second selection and it follows the same rule: a
+    // pane left holding a trashed file is an editor writing to nothing.
+    if (useSplit.getState().secondaryPath === path) useSplit.getState().closeSplit();
     set({
       tree: next,
       selectedPath: get().selectedPath === path ? null : get().selectedPath,

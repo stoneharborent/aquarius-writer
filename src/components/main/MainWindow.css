@@ -237,10 +237,20 @@
   display: flex;
 }
 
-/* ── split editors ── */
-.mw-split-host { display: flex; height: 100%; min-width: 0; }
+/* ── split editors (PARITY row 11, SWIFT-AUDIT §2.1) ──────────────────────
+ *
+ * A grid, not a flexbox: the divider gets its own 1px track and the primary
+ * pane an integer pixel width, so the editor surface stays on whole pixels
+ * (NOTES §1a) at every divider position. `1fr` takes the integer remainder.
+ * No transforms, no percentage widths, nothing fractional reaches the content.
+ */
+.mw-split-host {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
 .mw-pane {
-  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -248,7 +258,31 @@
   position: relative;
 }
 .mw-pane > * { flex: 1; min-height: 0; }
-.mw-pane-secondary { border-left: 1px solid var(--line); }
+
+/* The active-pane cue: a 2px accent line across the top of whichever pane the
+   caret is in. Drawn on an ::before rather than a border so it costs the pane
+   no layout — a border would shift the document by two pixels every time
+   focus moved, which is exactly the kind of jitter §1a is about. */
+.mw-pane::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease);
+  pointer-events: none;
+  z-index: 4;
+}
+.mw-pane-active::before { opacity: 0.85; }
+
+/* The primary chapter pane reserves 46px at the top of the sheet for the
+   floating Outline / Cards buttons. The split pane does not draw them (no
+   duplicate chrome), so it does not pay for them either. */
+.mw-pane-secondary .mw-prose-wrap .mw-canvas { padding-top: 18px; }
+
 .mw-pane-head {
   display: flex;
   align-items: center;
@@ -268,8 +302,32 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Said once, quietly: this pane is showing the document the other pane owns. */
+.mw-pane-note {
+  flex: none;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-style: italic;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+/* Editable ↔ Reference, as one segmented pair. */
+.mw-pane-modes { display: flex; flex: none; }
+.mw-pane-modes .mw-mode-btn { border-radius: 0; }
+.mw-pane-modes .mw-mode-btn:first-child {
+  border-top-left-radius: 5px;
+  border-bottom-left-radius: 5px;
+}
+.mw-pane-modes .mw-mode-btn:last-child {
+  border-top-right-radius: 5px;
+  border-bottom-right-radius: 5px;
+  margin-left: -0.5px;
+}
 .mw-mode-btn.on { background: var(--accent-soft); color: var(--accent); }
+.mw-mode-btn:disabled { opacity: 0.45; cursor: default; }
+.mw-mode-btn:disabled:hover { background: var(--surface); color: var(--ink-soft); }
+
 .mw-pane-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .mw-pane-body > * { flex: 1; min-height: 0; }
-/* Reference mode: read-only — block editor input, keep scrolling. */
-.mw-readonly .cm-content { pointer-events: none; user-select: text; }
