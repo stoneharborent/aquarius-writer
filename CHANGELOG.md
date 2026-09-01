@@ -6,6 +6,23 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## v0.5.1 — 2026-09-01
+
+The screenplay looks like Final Draft, and scrolling stops paying a tax.
+
+- **Screenplay pages look right**: flat white paper with near-black ink on
+  every theme, crisp page edges, no line under scene headings (Final Draft
+  has none), true bold character cues — and the script is set in **Courier
+  Prime on every platform**, which now ships inside the app.
+- **Scrolling should be dramatically smoother**, especially on Linux: the
+  editor was re-doing all of its styling work on every frame you scrolled.
+  It now does that work only when the text actually changes.
+- **⌘1–⌘7 work in the screenplay again** (Ctrl+1–7 on Linux) — the app's
+  view-switching shortcuts were swallowing them. Shortcut hints now show
+  the right keys for your platform, and the cheat sheet finally lists the
+  element keys.
+- For the curious: launch with `AQ_PERF=1` to see a small frame-rate meter.
+
 ## v0.5.0 — 2026-09-01
 
 Screenplays get real pages, documents split side by side, and there's a
