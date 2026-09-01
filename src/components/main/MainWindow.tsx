@@ -33,7 +33,8 @@ import {
   SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
   useShell,
 } from "@/state/shellStore";
-import { collectScenes, parseTitleBlock, splitTitlePage } from "@/lib/fountain";
+import { collectScenes, parseTitleBlock } from "@/lib/fountain";
+import { useDeferredText } from "@/lib/defer";
 import type { ChapterStatus } from "@/types/vault";
 import "./MainWindow.css";
 
@@ -415,8 +416,12 @@ function useToolbarContext(
 function ProsePane({ workflowId, path, pane = "primary", readOnly = false }: {
   workflowId: string; path: string; pane?: SplitPane; readOnly?: boolean;
 }) {
-  const { docs, open, edit } = useEditor();
-  const doc = docs[path];
+  // Select THIS document, not the whole store. `useEditor()` with no selector
+  // re-renders on every keystroke in every open buffer — the other split pane,
+  // a popout, anything — because `edit` replaces the `docs` map wholesale.
+  const doc = useEditor((s) => s.docs[path]);
+  const open = useEditor((s) => s.open);
+  const edit = useEditor((s) => s.edit);
   const secondary = pane === "secondary";
 
   useEffect(() => {
@@ -470,8 +475,13 @@ const noop = () => {};
 
 /** Words · characters · read time — parity with EditorFooterStats.swift. */
 function FooterStats({ text, extra }: { text: string; extra?: React.ReactNode }) {
-  const words = useMemo(() => countWords(text), [text]);
-  const chars = text.length;
+  // Words and characters are slow-moving numbers in a footer and both are
+  // O(document); neither can visibly change mid-word. Counting them inside the
+  // render a keypress triggers put a full scan of the chapter on the typing
+  // path (docs/NOTES.md §27l).
+  const settled = useDeferredText(text);
+  const words = useMemo(() => countWords(settled), [settled]);
+  const chars = settled.length;
   const minutes = Math.max(1, Math.round(words / 230));
   return (
     <>
@@ -486,8 +496,12 @@ function FooterStats({ text, extra }: { text: string; extra?: React.ReactNode })
 function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }: {
   workflowId: string; path: string; pane?: SplitPane; readOnly?: boolean;
 }) {
-  const { docs, open, edit } = useEditor();
-  const doc = docs[path];
+  // Select THIS document, not the whole store. `useEditor()` with no selector
+  // re-renders on every keystroke in every open buffer — the other split pane,
+  // a popout, anything — because `edit` replaces the `docs` map wholesale.
+  const doc = useEditor((s) => s.docs[path]);
+  const open = useEditor((s) => s.open);
+  const edit = useEditor((s) => s.edit);
   const secondary = pane === "secondary";
 
   useEffect(() => {
@@ -496,12 +510,23 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
 
   const drivesToolbar = useToolbarContext("fountain", path, pane, readOnly);
 
+  // Live, and deliberately cheap: ONE title-block parse and two slices. This
+  // used to parse the block twice — `splitTitlePage` does it internally, and
+  // `titleBlockText` did it again — and index every scene in the document, all
+  // inside the keystroke (docs/NOTES.md §27l). `titlePage` is gone because
+  // nothing here read it; the Title Page tab edits `doc.body` directly.
   const parsed = useMemo(() => {
-    if (!doc?.body) return { titlePage: {}, body: "", titleBlockText: "", scenes: [] };
-    const split = splitTitlePage(doc.body);
-    const titleBlockText = doc.body.slice(0, parseTitleBlock(doc.body).length);
-    return { ...split, titleBlockText, scenes: collectScenes(split.body) };
+    const raw = doc?.body ?? "";
+    const block = raw ? parseTitleBlock(raw) : null;
+    if (!block?.present) return { body: raw, titleBlockText: "" };
+    return { body: raw.slice(block.length), titleBlockText: raw.slice(0, block.length) };
   }, [doc?.body]);
+
+  // The scene rail, the page count and the word count are each O(document) and
+  // none of them can change mid-word, so they run off a settled copy of the
+  // body instead of inside every keystroke.
+  const settledBody = useDeferredText(parsed.body);
+  const scenes = useMemo(() => collectScenes(settledBody), [settledBody]);
 
   const [activeScene, setActiveScene] = useState<number | null>(0);
   const [pageCount, setPageCount] = useState<number | null>(null);
@@ -510,8 +535,8 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
   const surface = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (parsed.body) setPageCount(paginate(parsed.body.split("\n")).pageCount);
-  }, [parsed.body]);
+    if (settledBody) setPageCount(paginate(settledBody.split("\n")).pageCount);
+  }, [settledBody]);
 
   // Coming back from the Title Page tab, the script editor has spent that time
   // in a `display: none` subtree where everything measures as zero. Tell
@@ -526,7 +551,10 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
 
   function handleSceneSelect(idx: number) {
     setActiveScene(idx);
-    const scene = parsed.scenes[idx];
+    // Indexed off the LIVE body, not the settled copy the rail is drawn from:
+    // a click inside the settle window must still scroll to where the scene
+    // actually is now.
+    const scene = collectScenes(parsed.body)[idx];
     if (!scene) return;
     // Scoped to THIS pane. A document-wide query would scroll whichever
     // screenplay happens to be first in the DOM, which stopped being "the only
@@ -548,9 +576,12 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
    */
   function handleSceneReorder(from: number, to: number) {
     if (readOnly) return;
+    // Live scenes again: a permutation built from a stale index would move the
+    // wrong span of a document the writer has typed into since.
+    const live = collectScenes(parsed.body);
     const result = reorderScenes(
       parsed.body,
-      movePermutation(parsed.scenes.length, from, to),
+      movePermutation(live.length, from, to),
     );
     if ("error" in result) {
       console.warn(`[screenplay] scene reorder refused: ${result.error}`);
@@ -566,8 +597,8 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
   }
 
   const wordCount = useMemo(
-    () => (parsed.body ? countWords(parsed.body) : 0),
-    [parsed.body],
+    () => (settledBody ? countWords(settledBody) : 0),
+    [settledBody],
   );
   const status = doc?.status ?? "clean";
 
@@ -578,7 +609,7 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
           rail. */}
       {!secondary && (
         <ScenesRail
-          scenes={parsed.scenes}
+          scenes={scenes}
           activeIndex={activeScene}
           onSelect={handleSceneSelect}
           onReorder={readOnly ? undefined : handleSceneReorder}
@@ -649,7 +680,7 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
           </div>
         )}
         <footer className="mw-prose-foot">
-          <span>{parsed.scenes.length} scenes</span>
+          <span>{scenes.length} scenes</span>
           {pageCount !== null && <span>{pageCount} {pageCount === 1 ? "page" : "pages"}</span>}
           <span>{wordCount.toLocaleString()} words</span>
         </footer>
@@ -661,8 +692,12 @@ function ScreenplayPane({ workflowId, path, pane = "primary", readOnly = false }
 function NotePane({ workflowId, path, pane = "primary", readOnly = false }: {
   workflowId: string; path: string; pane?: SplitPane; readOnly?: boolean;
 }) {
-  const { docs, open, edit } = useEditor();
-  const doc = docs[path];
+  // Select THIS document, not the whole store. `useEditor()` with no selector
+  // re-renders on every keystroke in every open buffer — the other split pane,
+  // a popout, anything — because `edit` replaces the `docs` map wholesale.
+  const doc = useEditor((s) => s.docs[path]);
+  const open = useEditor((s) => s.open);
+  const edit = useEditor((s) => s.edit);
   const secondary = pane === "secondary";
 
   useEffect(() => {

@@ -147,6 +147,18 @@ export interface Pagination {
   tailRows: number;
   /** Rows per source line, index-aligned with the input. */
   rows: number[];
+  /**
+   * The kind of every source line, index-aligned with the input, and the lines
+   * themselves.
+   *
+   * Both are by-products `paginate` already has: it cannot decide where a page
+   * breaks without classifying every line first. They are published because
+   * `fountainDecorations` needs exactly the same two things and used to
+   * recompute them — a second `classify` of the whole script, from a second
+   * `split` of the whole document — on every keystroke (docs/NOTES.md §27l).
+   */
+  kinds: FountainLineKind[];
+  lines: readonly string[];
 }
 
 /**
@@ -225,6 +237,8 @@ export function paginate(lines: readonly string[]): Pagination {
     breakFill: pages.slice(0, -1).map((p) => p.fill),
     tailRows: pages[pages.length - 1].fill,
     rows,
+    kinds,
+    lines,
   };
 }
 

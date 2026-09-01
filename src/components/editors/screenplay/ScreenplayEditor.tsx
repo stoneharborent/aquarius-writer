@@ -36,6 +36,17 @@ export function ScreenplayEditor({
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  /**
+   * The last text this editor handed out.
+   *
+   * A controlled CodeMirror echoes: keystroke → `onChange` → store → React →
+   * the `value` effect below, for every character typed. Without a record of
+   * what we emitted, that effect has to serialise the whole document again and
+   * compare it to itself just to discover it has nothing to do — two O(document)
+   * passes per keystroke on top of the one the listener already paid
+   * (docs/NOTES.md §27l).
+   */
+  const emittedRef = useRef(value);
   const onElementRef = useRef(onElement);
   onElementRef.current = onElement;
   const onPageCountRef = useRef(onPageCount);
@@ -79,7 +90,10 @@ export function ScreenplayEditor({
         // the same way it disarms the defaults.
         ...(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) onChangeRef.current(u.state.doc.toString());
+          if (!u.docChanged) return;
+          const text = u.state.doc.toString();
+          emittedRef.current = text;
+          onChangeRef.current(text);
         }),
       ],
     });
@@ -117,6 +131,12 @@ export function ScreenplayEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
+    // Our own edit coming back around — nothing to push. For prose and notes
+    // this is a pointer comparison (the store holds the very string the
+    // listener emitted); for the screenplay, whose value is a slice past the
+    // title block, it is a memcmp of equal strings. Either beats serialising
+    // the document to find out.
+    if (value === emittedRef.current) return;
     const current = view.state.doc.toString();
     if (current !== value) {
       view.dispatch({ changes: { from: 0, to: current.length, insert: value } });

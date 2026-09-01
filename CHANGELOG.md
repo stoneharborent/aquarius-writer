@@ -6,6 +6,29 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## Unreleased
+
+Typing stops waiting for the disk.
+
+- **Typing in a note is no longer delayed.** Every character you typed made the
+  app re-read every note in your vault to work out the backlinks panel — 67
+  files per keystroke on a sixty-note vault. It now works them out once when
+  you open a note, not once per letter. Backlinks still prefer your unsaved
+  text, and a link you type in another document shows up when that document
+  saves.
+- **The footers stopped counting on every letter.** Word counts, character
+  counts, the page count and the scene list are all recalculated a moment after
+  you stop typing instead of inside every keystroke. The numbers are identical;
+  they just aren't in your way.
+- **Typing in one pane no longer redraws the other.** Split panes, popped-out
+  windows and the Comments/Versions pane used to re-render on every keystroke
+  anywhere in the app.
+- Long screenplays do less work per keystroke, though the remaining cost there
+  is the page layout itself — that one is a bigger job, and it's written up in
+  `docs/NOTES.md` §27l.
+- For the curious: launch with `VITE_AQ_BENCH=1` in development to measure
+  keystroke latency per pane.
+
 ## v0.5.1 — 2026-09-01
 
 The screenplay looks like Final Draft, and scrolling stops paying a tax.

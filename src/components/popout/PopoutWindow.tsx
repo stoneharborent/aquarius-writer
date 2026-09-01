@@ -16,7 +16,11 @@ interface PopoutWindowProps {
 
 export function PopoutWindow({ path }: PopoutWindowProps) {
   const { current, bootstrap } = useVault();
-  const { docs, open, edit } = useEditor();
+  // One document per popout window — select it, rather than waking this whole
+  // window's tree on every keystroke in every buffer the store holds.
+  const doc = useEditor((s) => s.docs[path]);
+  const open = useEditor((s) => s.open);
+  const edit = useEditor((s) => s.edit);
 
   // A popout window boots with an empty store, so it has to find the workflow
   // for itself. `bootstrap` is the same path the main window takes: the last
@@ -30,8 +34,6 @@ export function PopoutWindow({ path }: PopoutWindowProps) {
   useEffect(() => {
     if (current) void open(current.id, path);
   }, [current, path, open]);
-
-  const doc = docs[path];
 
   return (
     <div className="popout">

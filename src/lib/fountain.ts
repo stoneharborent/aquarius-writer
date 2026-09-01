@@ -127,7 +127,21 @@ export function canonicalTitleField(key: string): TitleField | null {
  * is usually an address, and flattening it loses the address.
  */
 export function parseTitleBlock(text: string): TitleBlock {
-  const lines = text.split("\n");
+  // Read the HEAD of the file, not the whole of it. This used to
+  // `text.split("\n")` the entire document to look at its first few lines —
+  // one string allocated per line of a ninety-page script — on a function the
+  // screenplay pane called twice per keystroke (docs/NOTES.md §27l).
+  //
+  // A title block is a run of `Key:` lines at the very top, terminated by a
+  // blank line, so a fixed prefix always contains it. The guard is the
+  // load-bearing part: if the prefix does not hold non-blank content followed
+  // by a blank line, the block did not end inside it and we fall back to the
+  // whole text rather than mis-read the file.
+  const HEAD_CHARS = 4096;
+  let scan = text.length <= HEAD_CHARS ? text : text.slice(0, HEAD_CHARS);
+  if (scan.length < text.length && !/\S[\s\S]*?\r?\n[ \t]*\r?\n/.test(scan)) scan = text;
+
+  const lines = scan.split("\n");
   let i = 0;
   while (i < lines.length && lines[i].trim() === "") i++;
   if (i >= lines.length || !TITLE_PAGE_KEYS.test(lines[i])) {
@@ -149,8 +163,14 @@ export function parseTitleBlock(text: string): TitleBlock {
     }
   }
 
-  const body = lines.slice(i).join("\n");
-  return { entries, length: text.length - body.length, present: true };
+  // Characters consumed up to line `i`, counting the "\n" that ended each.
+  // Identical to the old `text.length - lines.slice(i).join("\n").length` —
+  // both are sum(len(lines[k])) + i for k < i — but it does not depend on
+  // `lines` covering the whole document, which it no longer does.
+  let length = 0;
+  for (let k = 0; k < i; k++) length += lines[k].length + 1;
+  if (length > text.length) length = text.length;
+  return { entries, length, present: true };
 }
 
 /** Render entries back to Fountain. Empty values are dropped, not emitted. */

@@ -22,8 +22,20 @@ export function Backlinks({ path }: BacklinksProps) {
   const current = useVault((s) => s.current);
   const selectPath = useVault((s) => s.selectPath);
   const setView = useVault((s) => s.setView);
-  const editor = useEditor();
-
+  // Deliberately NOT `useEditor()`. Subscribing to the whole editor store put
+  // `docs` — a map that `edit` replaces wholesale on every keystroke — into
+  // this effect's dependency list, so every character typed re-scanned the
+  // entire vault: 67 file reads per keypress on a sixty-note vault
+  // (docs/NOTES.md §27l). In the browser preview those are map lookups and
+  // cost 2ms; in the shell every one is an IPC round trip that reads a file
+  // off disk, which is what "typing in a note is delayed" actually was.
+  //
+  // Nothing is lost by dropping it. Backlinks answer "what links HERE", so
+  // typing in *this* note cannot change them, and the working copies are read
+  // at scan time below, so a scan still prefers unsaved text over disk. What
+  // changes is the refresh moment: a link typed in ANOTHER document shows up
+  // when the tree next reloads (the file watcher fires on save) rather than on
+  // that document's next keystroke.
   const [hits, setHits] = useState<Hit[] | null>(null);
 
   useEffect(() => {
@@ -31,10 +43,15 @@ export function Backlinks({ path }: BacklinksProps) {
     let cancelled = false;
     void (async () => {
       const files = collectMarkdown(tree);
+      const open = useEditor.getState().docs;
       const bodies: Record<string, string> = {};
       // Prefer the editor's working copy; fall back to disk via vault().
       for (const f of files) {
-        const cached = editor.docs[f.path]?.body;
+        // Bail INSIDE the loop. The check used to sit after it, so a
+        // superseded scan still read every remaining file off disk before
+        // throwing its answer away.
+        if (cancelled) return;
+        const cached = open[f.path]?.body;
         if (cached !== undefined) {
           bodies[f.path] = cached;
         } else {
@@ -50,7 +67,7 @@ export function Backlinks({ path }: BacklinksProps) {
       setHits(findBacklinks(path, files, bodies));
     })();
     return () => { cancelled = true; };
-  }, [path, tree, current, editor.docs]);
+  }, [path, tree, current]);
 
   if (hits === null) {
     return (

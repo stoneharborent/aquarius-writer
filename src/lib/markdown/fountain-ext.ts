@@ -10,7 +10,7 @@ import {
   ViewPlugin,
   ViewUpdate,
 } from "@codemirror/view";
-import { classify, FountainLineKind } from "@/lib/fountain";
+import { FountainLineKind } from "@/lib/fountain";
 import { paginateDoc } from "@/lib/markdown/fountain-pages";
 
 const LINE = (kind: FountainLineKind) =>
@@ -18,26 +18,32 @@ const LINE = (kind: FountainLineKind) =>
 
 function build(view: EditorView): DecorationSet {
   const b = new RangeSetBuilder<Decoration>();
-  let prev: FountainLineKind = "blank";
-  let prevPrev: FountainLineKind = "blank";
 
   // Where the pages break, and how much blank is owed to the foot of the page
   // above each one. `--sp-fill` is that number of rows; the CSS turns it into
   // the padding that makes every painted sheet exactly `--sp-page-h` tall,
   // which is what lets the sheets be a repeating background instead of a
   // measured layout (docs/NOTES.md §27).
-  const { breaks, breakFill } = paginateDoc(view.state.doc.toString());
+  //
+  // `kinds` and `lines` come back from the pagination rather than being
+  // rebuilt here. `paginate` cannot place a break without classifying every
+  // line, so this loop used to classify the whole script a SECOND time on
+  // every keystroke, and ask the Text tree for four thousand line offsets it
+  // can just as well add up as it goes (docs/NOTES.md §27l).
+  const { breaks, breakFill, kinds, lines } = paginateDoc(view.state.doc.toString());
   const breakAt = new Map(
-    breaks.map((lineIdx, n) => [lineIdx + 1, { page: n + 2, fill: breakFill[n] ?? 0 }]),
+    breaks.map((lineIdx, n) => [lineIdx, { page: n + 2, fill: breakFill[n] ?? 0 }]),
   );
 
-  for (let i = 1; i <= view.state.doc.lines; i++) {
-    const line = view.state.doc.line(i);
-    const kind = classify(line.text, prev, prevPrev);
-    b.add(line.from, line.from, LINE(kind));
+  // `from` walks the document the way the split did: every line is its own
+  // characters plus the "\n" that ended it. Identical to `doc.line(i).from`,
+  // because both are counting the same string.
+  let from = 0;
+  for (let i = 0; i < lines.length; i++) {
+    b.add(from, from, LINE(kinds[i]));
     const brk = breakAt.get(i);
     if (brk !== undefined) {
-      b.add(line.from, line.from, Decoration.line({
+      b.add(from, from, Decoration.line({
         class: "cm-aq-pagebreak-line",
         attributes: {
           "data-page": `${brk.page}.`,
@@ -47,8 +53,7 @@ function build(view: EditorView): DecorationSet {
         },
       }));
     }
-    prevPrev = prev;
-    prev = kind;
+    from += lines[i].length + 1;
   }
   return b.finish();
 }

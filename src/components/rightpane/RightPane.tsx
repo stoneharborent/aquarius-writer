@@ -5,7 +5,7 @@
 // is the opposite arrangement — the writer runs whatever agent they like in
 // their own shell, and it reaches the vault through the MCP server
 // (src-tauri/src/mcp/). See components/terminal/TerminalPane.tsx.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PanelRightIcon } from "@/icons";
 import { TerminalPane } from "@/components/terminal/TerminalPane";
 import { useVault } from "@/state/vaultStore";
@@ -144,32 +144,38 @@ function CommentCard({ c, wf, path, onChange }: {
 }
 
 function VersionsTab({ wf, path }: { wf: string; path: string }) {
-  const { docs, open: openDoc } = useEditor();
+  const openDoc = useEditor((s) => s.open);
   const overlay = useOverlay();
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const reload = useCallback(() => setVersions(listVersions(wf, path)), [wf, path]);
   useEffect(reload, [reload]);
-  const current = docs[path];
+
+  // The document is READ when a button is pressed, not subscribed to. This
+  // pane sits open beside the editor, and subscribing to the store meant
+  // re-serialising the whole document — frontmatter and body — on every
+  // keystroke, to produce a string only a click ever uses (docs/NOTES.md §27l).
+  //
   // Versions store the FULL serialized doc (frontmatter + body) — same
   // representation the autosave trail records (editorStore.flushSave).
-  const body = useMemo(
-    () => (current ? stringify(current.frontmatter, current.body) : ""),
-    [current],
-  );
+  const docNow = () => useEditor.getState().docs[path];
+  const bodyNow = () => {
+    const d = docNow();
+    return d ? stringify(d.frontmatter, d.body) : "";
+  };
 
   const snapshot = () => {
     const label = window.prompt("Snapshot label:", "Snapshot");
     if (label === null) return;
-    takeSnapshot(wf, path, label.trim() || "Snapshot", body);
+    takeSnapshot(wf, path, label.trim() || "Snapshot", bodyNow());
     reload();
   };
 
   const restore = async (v: VersionEntry) => {
     if (!window.confirm(`Restore "${path}" to “${v.label}”?\nThe current text is snapshotted first.`)) return;
-    await restoreVersion(wf, path, v.id, body);
+    await restoreVersion(wf, path, v.id, bodyNow());
     // Reload the doc from disk so the editor shows the restored text (evict
     // cancels the debounced save that would otherwise clobber the restore).
-    const wfId = current?.workflowId ?? wf;
+    const wfId = docNow()?.workflowId ?? wf;
     useEditor.getState().evict(path);
     void openDoc(wfId, path);
     reload();

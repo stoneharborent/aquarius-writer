@@ -53,6 +53,25 @@ void (async () => {
   startPerfMeter();
 })();
 
+// The typing bench — keystroke-to-paint latency, per pane (dev/typing-bench.ts).
+// Its own flag rather than AQ_DEV_SMOKE's: it WRITES INTO the vault and takes
+// half a minute. Outside the Tauri guard on purpose — the whole point is that
+// it also runs in a bare WebKitGTK host, which is the engine that feels slow.
+if (import.meta.env.DEV && import.meta.env.VITE_AQ_BENCH === "1") {
+  void (async () => {
+    let workflowId: string | undefined;
+    if (typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const ctx = await invoke<{ workflowId: string | null }>("dev_context");
+        workflowId = ctx.workflowId ?? undefined;
+      } catch { /* older shell — fall back to the browser sample */ }
+    }
+    const { runTypingBench } = await import("@/lib/dev/typing-bench");
+    await runTypingBench(workflowId);
+  })();
+}
+
 // Development-only backend check. Runs when the shell was started with
 // AQ_DEV_VAULT + AQ_DEV_SMOKE=1 (see src/lib/dev/smoke.ts); the dynamic import
 // inside the DEV guard keeps it out of production bundles entirely.

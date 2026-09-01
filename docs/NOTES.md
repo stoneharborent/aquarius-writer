@@ -3771,3 +3771,157 @@ point is to measure the AppImage on the machine that feels slow.
 11. **Drag a scene in the rail.** It must still slide, and the promotion is now
     scoped to the drag — if the slide became janky, `will-change` is arriving
     too late and belongs back on the row.
+
+---
+
+### 27l. The typing cost — and the one that was 67 disk reads per keystroke
+
+*Bench, 2026-09-01, on Linux natively for the first time: "the app is sluggish
+and delayed when typing and scrolling". §27k had taken the paint cost out of
+scrolling and explicitly ruled out the compositor (`WEBKIT_DISABLE_DMABUF_RENDERER=1`
+made no difference), so this pass went after the other half — what a single
+keystroke costs before the frame that shows it.*
+
+#### First, an instrument, because "sluggish" is not a number
+
+`src/lib/dev/typing-bench.ts`, behind `VITE_AQ_BENCH=1`. It seeds a corpus of
+realistic size (a 5,000-word chapter, sixty cross-linked notes, a ninety-page
+script), then dispatches single-character inserts one at a time and stops the
+clock after the frame containing that character. It reports p50 / p95 / worst
+— typing lag is a tail phenomenon, and a mean of 1ms with a p95 of 90ms is
+exactly what "delayed" feels like — **and it counts `readFile` calls made
+during the burst. A keystroke should make zero.**
+
+Two things about how it is run are worth keeping.
+
+- **It runs in real WebKitGTK.** There is no Rust toolchain on the Linux box
+  and the prebuilt binaries in `src-tauri/target.nosync` are Mach-O arm64, so
+  the shell could not be built or launched. A ~60-line GTK3 + `WebKit2-4.1`
+  host loads the Vite dev server instead and relays the page's console to
+  stdout. That is the *same engine* Tauri v2 uses on Linux — same 2.52.5, same
+  NVIDIA/Wayland stack — so the numbers transfer. What it cannot measure is
+  Tauri IPC, and that turned out to matter enormously (below).
+- **The probe does not trust the compositor.** `requestAnimationFrame` is the
+  honest way to wait for a painted frame, but WebKitGTK stops servicing it the
+  moment the window is occluded or unmapped, which wedges an unattended run
+  forever. The default probe drains React's scheduler and forces style +
+  layout by hand; `VITE_AQ_BENCH_RAF=1` opts back into rAF.
+
+**The instrument caught its own first bug, and this is worth remembering:**
+`formatBus.target(path)` falls back to "the only registered view" when the path
+it was asked for has none. The first three runs measured the *previous*
+scenario's document through a detached editor and reported it as this one — the
+note pane's 2,998-character note came back as 28,528 characters. Any harness
+that asks the format bus for an editor must check `view.dom.isConnected`.
+
+#### The finding: 4,690 file reads for 70 keystrokes
+
+| pane | before | after |
+|---|---|---|
+| prose, 5,000 words | p50 1ms · p95 2ms · worst 3ms · **readFile ×0** | p50 1ms · p95 1ms · worst 2ms · readFile ×0 |
+| note, 60-note vault | p50 2ms · p95 3ms · worst 3ms · **readFile ×4,690** | p50 1ms · p95 1ms · worst 2ms · **readFile ×0** |
+| screenplay, 90 pages | p50 6ms · p95 8ms · worst 10ms · readFile ×0 | p50 5ms · p95 6ms · worst 9ms · readFile ×0 |
+
+**67 file reads per keypress.** `Backlinks` held `const editor = useEditor()` —
+the whole store, no selector — and `editor.docs` was in its effect's dependency
+list. `edit()` replaces the `docs` map wholesale on every keystroke, so the map
+had a new identity every character, so the effect re-ran every character, and
+the effect *walks the entire vault and reads every markdown file in it*.
+
+In the browser preview each of those reads is a map lookup and the whole thing
+costs 2ms, which is why it had never shown up. **In the shell every one is an
+IPC round trip that reads a file off disk.** That is what "typing in a note is
+delayed" was, and it is invisible to any measurement taken outside Tauri —
+which is exactly why the read *count* is reported alongside the milliseconds.
+
+Nothing was given up to fix it. Backlinks answer "what links **here**", so
+typing in this note cannot change them; the working copies are read from
+`useEditor.getState()` at scan time, so an unsaved edit elsewhere is still
+preferred over disk. What changed is the refresh moment: a link typed in
+another document appears when the tree next reloads rather than on this
+document's next keystroke. The `cancelled` check also moved *inside* the loop —
+it sat after it, so a superseded scan still read every remaining file before
+throwing its answer away.
+
+#### The same mistake, 52 times
+
+`grep -nE "= use(Editor|Vault|Shell|…)\(\)"` finds **52 selector-less store
+subscriptions**. Each one re-renders on *any* change to that store. For the
+editor store that means every keystroke in every open buffer woke the other
+split pane, the popout, the right pane and the overlays. The ones on the typing
+path are now selected (`useEditor((s) => s.docs[path])`, and the actions
+separately — zustand actions are stable, so those never re-fire). **The other
+~40 are still there**, mostly on `useVault`, and are a real but quieter cost.
+
+#### Work that cannot change mid-word does not belong in the keystroke
+
+This is §27k's rule — *"if the work is O(document), it belongs behind
+`docChanged`"* — with a React-side sibling: **if the result cannot visibly
+change mid-word, it does not belong inside the keystroke at all.** New hook,
+`useDeferredText` (`src/lib/defer.ts`), settling at 150ms — under the 800ms
+autosave debounce, so every derived number is settled before a save records it,
+and above a fast typist's inter-key gap so a burst collapses to one recompute.
+
+Moved behind it: the footer's word and character counts (a full scan of the
+chapter, per keypress, in both the prose and note panes), and the screenplay's
+scene rail, page count and word count. The scene rail is *drawn* from the
+settled copy but a click or a drag re-indexes off the **live** body — a
+permutation built from a stale index would move the wrong span of a document
+the writer has typed into since.
+
+Three other whole-document passes went at the same time:
+
+- **`parseTitleBlock` split the entire document to read its first four lines** —
+  one string allocated per line of a ninety-page script — and `ScreenplayPane`
+  called it *twice* per keystroke (`splitTitlePage` does it internally, and
+  `titleBlockText` did it again). It scans a 4096-character head now, with a
+  guard that falls back to the whole text when the block did not end inside it.
+  Verified identical to the old implementation on 15 hand-picked cases and
+  4,000 random documents, including the byte offset it returns, which is used
+  to slice the body.
+- **The controlled-editor echo.** All three editors run
+  keystroke → `onChange` → store → React → the `value` effect, for every
+  character. That effect had to serialise the whole document again and compare
+  it to itself just to learn it had nothing to do. They now remember the last
+  text they emitted; for prose and notes that comparison is a pointer check.
+- **`fountainDecorations` classified the whole script a second time.**
+  `paginate` cannot place a page break without classifying every line, so it
+  now publishes `kinds` and `lines` and the decoration builder reuses them,
+  walking offsets as it goes instead of asking the Text tree for a thousand of
+  them. Proven identical on 1,780 lines across 8 scripts. **It did not move the
+  measurement** — see below — but it is strictly less work and is kept.
+
+#### What is left in the screenplay is layout, not JavaScript
+
+The screenplay only came down from 6ms to 5ms, so the remaining cost was
+profiled directly rather than guessed at again. On a 41,005-character,
+995-line script the *entire* JS pipeline is **0.35ms**:
+
+| step | per keystroke |
+|---|---|
+| `doc.toString()` | 0.061 ms |
+| `classifyLines` | 0.061 ms |
+| `paginate` (classify + wrapRows + pages) | 0.193 ms |
+| `RangeSetBuilder` over every line | 0.038 ms |
+
+So ~5ms of the screenplay keystroke is CodeMirror's DOM update plus WebKit
+style and layout — and the reason is structural. `fountainTheme` sets
+`height: auto` with `overflow: visible` on `.cm-scroller` so that the
+*article* scrolls, because a fixed height and an internal scroller broke the
+embed (§1a). That arrangement also **defeats CodeMirror's viewport
+virtualization**: every line of a ninety-page script is live DOM at all times,
+so every keystroke re-styles the whole script.
+
+That is the next real win in this file and it is not a tuning change — it means
+giving the screenplay editor its own scroller and making the paged canvas work
+inside it. **Do not start it without deciding what happens to the grow-to-content
+embed**, which the prose and note editors share. Nothing in this pass touched
+it, and the §27 geometry is unchanged.
+
+#### One more thing, for whoever picks this up on Linux
+
+`node_modules` in this repo was installed on the Mac: `esbuild` and `rollup`
+are `Mach-O 64-bit arm64`, and so are both binaries under
+`src-tauri/target.nosync`. `npm run dev`, `npm run build` and the app itself
+therefore cannot run on the Linux machine until a native `npm install` — and,
+for the shell, a Rust toolchain, which that box does not have yet.
