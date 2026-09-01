@@ -78,6 +78,9 @@ pub const EXIT_EVENT: &str = "pty://exit";
 /// (NOTES §26).
 const STARTUP_DELAY: Duration = Duration::from_millis(300);
 
+/// How long a hang-up gets to work before `kill()` escalates to `SIGKILL`.
+const KILL_GRACE: Duration = Duration::from_millis(300);
+
 /// Read buffer. Big enough that `cat`ting a file is a handful of events rather
 /// than hundreds; small enough that an interactive keystroke echo is immediate.
 const READ_CHUNK: usize = 8192;
@@ -106,6 +109,7 @@ pub struct Session {
     /// Shared because the startup-command thread writes through it too.
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    pid: Option<u32>,
 }
 
 impl Session {
@@ -159,6 +163,7 @@ impl Session {
         drop(pair.slave);
 
         let killer = child.clone_killer();
+        let pid = child.process_id();
         let reader = pair
             .master
             .try_clone_reader()
@@ -206,7 +211,7 @@ impl Session {
             });
         }
 
-        Ok(Self { master: pair.master, writer, killer })
+        Ok(Self { master: pair.master, writer, killer, pid })
     }
 
     /// Keystrokes (or a pasted path) straight through to the shell.
@@ -225,8 +230,30 @@ impl Session {
     }
 
     /// Kill the child. The waiter thread reaps it and reports the exit.
+    ///
+    /// Two stages: `ChildKiller::kill` first (a hang-up the shell may use to
+    /// clean up), then — on unix, a beat later — `SIGKILL` to the child's
+    /// process group. The escalation exists because a `/bin/sh` that ignores
+    /// the hang-up (GitHub's macOS runners, for one) would otherwise live on
+    /// with the tab gone, and the group kill takes whatever the shell was
+    /// running down with it. A vanished pid makes both signals no-ops.
     pub fn kill(&mut self) {
         let _ = self.killer.kill();
+        #[cfg(unix)]
+        if let Some(pid) = self.pid {
+            thread::spawn(move || {
+                thread::sleep(KILL_GRACE);
+                let pid = pid as i32;
+                // Still alive? (signal 0 = existence check)
+                if unsafe { libc::kill(pid, 0) } == 0 {
+                    // The child is its pty session's leader, so -pid reaches
+                    // the whole group; fall back to the child alone.
+                    if unsafe { libc::kill(-pid, libc::SIGKILL) } != 0 {
+                        unsafe { libc::kill(pid, libc::SIGKILL) };
+                    }
+                }
+            });
+        }
     }
 }
 
