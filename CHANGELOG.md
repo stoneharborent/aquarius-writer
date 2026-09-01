@@ -6,6 +6,42 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## v0.5.0 — 2026-09-01
+
+Screenplays get real pages, documents split side by side, and there's a
+terminal in the corner.
+
+### Screenplays
+
+- **Your script renders on actual pages** — discrete letter-size sheets with
+  industry-correct margins, real page breaks (never mid-line, never
+  stranding a scene heading or character cue at the bottom), and page
+  numbers from page 2. The page count is computed, not estimated.
+- **Title Page is a tab now.** Fill in Title, Credit, Author, Source, Draft
+  date and Contact on a real title-page sheet; it writes into the same
+  .fountain file, and anything you added by hand is preserved.
+- **Drag scenes to reorder them** in the scenes rail — the script rewrites
+  itself, and undo works.
+- **The editor completes character names and scene headings** as you type
+  them, most-recent first.
+
+### Side by side
+
+- **The split view is a second editor now**, not just a reference: two
+  documents, each with its own cursor, scrolling, undo and autosave. The
+  toolbar follows whichever pane you're working in. "Open in Split View"
+  is in every file's ⋯ menu; a read-only Reference mode is one toggle away.
+
+### The terminal
+
+- **A Terminal tab joins Comments and Versions** in the right panel (⇧⌘J).
+  It opens your own shell in the workflow's folder — made for running an AI
+  agent like Claude beside your manuscript, driving Aquarius through the
+  MCP connection shown in Settings. Multiple named tabs, an optional
+  startup command, adjustable text size, and dropping a file from the
+  sidebar types its path. Closing the app closes its shells; nothing runs
+  behind your back.
+
 ## v0.4.0 — 2026-09-01
 
 Faster on Linux, smarter in the editor, and a rounder toolbox for AI.
