@@ -1,6 +1,9 @@
 import type { VaultService } from "./service";
+import { isFrontMatter } from "@/lib/manuscript";
 import type {
+  ActiveDraftReport,
   EntryReport,
+  FolderRoleReport,
   FileStamp,
   NewFileKind,
   NodeKind,
@@ -455,6 +458,23 @@ function stampFor(relPath: string, content: string): FileStamp {
 }
 
 /** A picker row for a workflow the preview cannot actually make on disk. */
+/** The markdown directly inside `folder`, minus its front matter — the mock's
+ * `tree::chapter_paths_in`. */
+function chapterPathsIn(folder: string): string[] {
+  const node = folderAt(folder);
+  return (node?.children ?? [])
+    .filter((c) => c.kind === "markdown" && !isFrontMatter(folder, c.path))
+    .map((c) => c.path)
+    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+}
+
+/** Leave exactly one draft flagged active, if there are any at all. */
+function ensureOneActiveDraft() {
+  const drafts = LANTERN_WORKFLOW.drafts;
+  if (drafts.length === 0 || drafts.some((d) => d.active)) return;
+  drafts[0].active = true;
+}
+
 function stubSummary(name: string, path: string, kind: WorkflowKind): WorkflowSummary {
   return { id: `wf-${Date.now()}`, name, path, kind, items: 0, color: "blue", updated: "now" };
 }
@@ -580,6 +600,73 @@ export function createBrowserVaultService(): VaultService {
         }
       }
       return { manuscriptId: manuscript.id, order: [...order] };
+    },
+
+    // ── manuscript management (PARITY row 8) ────────────────────────────
+    //
+    // The mock keeps the *rules*, not just the shapes: the same front-matter
+    // exclusion, the same "a draft needs a manuscript above it" refusal, the
+    // same "exactly one draft is active". A rule that only exists in Rust is a
+    // rule `npm run dev` cannot show you breaking.
+
+    async toggleManuscriptFolder(_workflowId, relPath): Promise<FolderRoleReport> {
+      const folder = folderAt(relPath);
+      if (!folder) throw new Error(`no folder at ${relPath}`);
+      const at = LANTERN_WORKFLOW.manuscripts.findIndex((m) => m.folder === relPath);
+      if (at >= 0) {
+        LANTERN_WORKFLOW.manuscripts.splice(at, 1);
+        LANTERN_WORKFLOW.drafts = LANTERN_WORKFLOW.drafts.filter(
+          (d) => !d.folder?.startsWith(`${relPath}/`),
+        );
+        ensureOneActiveDraft();
+        return { path: relPath, role: "manuscript", marked: false, chapters: [] };
+      }
+      const chapters = chapterPathsIn(relPath);
+      const id = `ms-${Date.now().toString(36)}`;
+      LANTERN_WORKFLOW.manuscripts.push({
+        id, title: nameOf(relPath), folder: relPath, chapterOrder: chapters,
+      });
+      return { path: relPath, role: "manuscript", marked: true, id, chapters };
+    },
+
+    async toggleDraftFolder(_workflowId, relPath): Promise<FolderRoleReport> {
+      const folder = folderAt(relPath);
+      if (!folder) throw new Error(`no folder at ${relPath}`);
+      const at = LANTERN_WORKFLOW.drafts.findIndex((d) => d.folder === relPath);
+      if (at >= 0) {
+        LANTERN_WORKFLOW.drafts.splice(at, 1);
+        ensureOneActiveDraft();
+        return { path: relPath, role: "draft", marked: false, chapters: [] };
+      }
+      const inside = LANTERN_WORKFLOW.manuscripts.some(
+        (m) => m.folder && relPath.startsWith(`${m.folder}/`),
+      );
+      if (!inside) {
+        throw new Error(
+          `${relPath} is not inside a manuscript folder — mark its parent as a manuscript first`,
+        );
+      }
+      const chapters = chapterPathsIn(relPath);
+      const id = `draft-${Date.now().toString(36)}`;
+      LANTERN_WORKFLOW.drafts.push({
+        id, name: nameOf(relPath), chapterOrder: chapters, folder: relPath,
+      });
+      return { path: relPath, role: "draft", marked: true, id, chapters };
+    },
+
+    async setActiveDraft(_workflowId, draftId): Promise<ActiveDraftReport> {
+      const draft = LANTERN_WORKFLOW.drafts.find((d) => d.id === draftId);
+      if (!draft) throw new Error(`no draft with id "${draftId}"`);
+      for (const d of LANTERN_WORKFLOW.drafts) d.active = d.id === draftId ? true : undefined;
+      return { id: draft.id, name: draft.name, chapters: [...draft.chapterOrder] };
+    },
+
+    async setSynopsis(_workflowId, relPath, synopsis) {
+      const node = findNode(relPath);
+      if (!node) throw new Error(`no document at ${relPath}`);
+      // Frontmatter surgery, like the Rust side: the rest of the node — its
+      // word count, its status — is untouched.
+      node.frontmatter = { ...node.frontmatter, synopsis };
     },
 
     async setDailyGoal(_workflowId, dailyWords) {

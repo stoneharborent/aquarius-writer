@@ -168,6 +168,68 @@ pub fn markdown_paths_in(root: &Path, folder: &str) -> Vec<String> {
     out
 }
 
+/// The three front-matter documents a manuscript folder can hold, by name.
+///
+/// The Swift app's ChapterRail shows a FRONT MATTER section above the chapters
+/// (SWIFT-AUDIT §2.2) and the audit does not say how those files are found. This
+/// side settles it by **convention**: a markdown file sitting directly in the
+/// manuscript's own folder whose name (without the extension) is one of these,
+/// compared case-insensitively. Nothing is created, nothing is renamed — a
+/// folder that has none of them simply has an empty front-matter section, with
+/// a row that offers to make each one.
+///
+/// They are deliberately **not** chapters: `chapter_paths_in` leaves them out of
+/// a manuscript's chapter order, so a title page is never compiled as chapter
+/// one and never counted in "N chapters".
+pub const FRONT_MATTER_NAMES: &[&str] = &["Title Page", "Dedication", "Epigraph"];
+
+/// Is `rel` one of `folder`'s front-matter documents?
+///
+/// Strictly one level down: `Book/Title Page.md` is front matter for `Book`,
+/// `Book/Part One/Title Page.md` is an ordinary document.
+pub fn is_front_matter(folder: &str, rel: &str) -> bool {
+    let Some(name) = rel.strip_prefix(&if folder.is_empty() {
+        String::new()
+    } else {
+        format!("{folder}/")
+    }) else {
+        return false;
+    };
+    if name.contains('/') {
+        return false;
+    }
+    if kind_for(name) != "markdown" {
+        return false;
+    }
+    let s = stem(name).to_lowercase();
+    FRONT_MATTER_NAMES.iter().any(|n| n.to_lowercase() == s)
+}
+
+/// The markdown paths that count as a manuscript's **chapters** — everything
+/// `markdown_paths_in` finds, minus the front matter.
+pub fn chapter_paths_in(root: &Path, folder: &str) -> Vec<String> {
+    markdown_paths_in(root, folder).into_iter().filter(|p| !is_front_matter(folder, p)).collect()
+}
+
+/// Which front-matter documents `folder` actually has, in `FRONT_MATTER_NAMES`
+/// order, as `(label, relative path)`.
+pub fn front_matter_in(root: &Path, folder: &str) -> Vec<(String, String)> {
+    let present = markdown_paths_in(root, folder);
+    FRONT_MATTER_NAMES
+        .iter()
+        .filter_map(|label| {
+            let want = label.to_lowercase();
+            present
+                .iter()
+                .find(|p| {
+                    is_front_matter(folder, p)
+                        && stem(p.rsplit('/').next().unwrap_or(p)).to_lowercase() == want
+                })
+                .map(|p| ((*label).to_string(), p.clone()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +332,35 @@ mod tests {
         assert_eq!(
             markdown_paths_in(t.path(), "Drafts"),
             vec!["Drafts/Ch_01.md", "Drafts/Ch_02.md"]
+        );
+    }
+
+    #[test]
+    fn front_matter_is_by_name_one_level_down_and_is_not_a_chapter() {
+        let t = TempDir::new("tree-frontmatter");
+        t.write("Book/Ch_01.md", "one");
+        t.write("Book/title page.md", "cover");
+        t.write("Book/Epigraph.md", "a quote");
+        // A chapter that merely *mentions* a front-matter name is a chapter.
+        t.write("Book/Dedication of the Bell.md", "no");
+        // And one nested a level deeper is a document, not this folder's cover.
+        t.write("Book/Part One/Title Page.md", "no");
+
+        assert!(is_front_matter("Book", "Book/title page.md"), "case does not matter");
+        assert!(!is_front_matter("Book", "Book/Part One/Title Page.md"));
+        assert!(!is_front_matter("Book", "Book/Dedication of the Bell.md"));
+
+        assert_eq!(
+            chapter_paths_in(t.path(), "Book"),
+            vec!["Book/Ch_01.md", "Book/Dedication of the Bell.md"]
+        );
+        assert_eq!(
+            front_matter_in(t.path(), "Book"),
+            vec![
+                ("Title Page".to_string(), "Book/title page.md".to_string()),
+                ("Epigraph".to_string(), "Book/Epigraph.md".to_string()),
+            ],
+            "reported in FRONT_MATTER_NAMES order, and only the ones that exist"
         );
     }
 }

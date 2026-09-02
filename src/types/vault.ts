@@ -23,6 +23,13 @@ export interface Draft {
   name: string;
   active?: boolean;
   chapterOrder: string[]; // relative paths under the manuscript folder
+  /**
+   * The folder this draft's chapters come from, when it is a *folder-backed*
+   * draft — one marked with `toggleDraftFolder`. Absent for the manuscript's
+   * own named cut, which follows the manuscript rather than a folder of its
+   * own. `Draft::folder` in `src-tauri/src/model.rs`.
+   */
+  folder?: string;
 }
 
 export interface Manuscript {
@@ -93,6 +100,29 @@ export type NewFileKind = "markdown" | "fountain";
 export interface ReorderReport {
   manuscriptId: string;
   order: string[];
+}
+
+/**
+ * A folder after its manuscript / draft mark was flipped — `FolderRoleReport`
+ * in `src-tauri/src/vault/ops.rs`, the answer to both the sidebar row's ⋯ menu
+ * and the MCP `toggle_manuscript_folder` / `toggle_draft_folder` tools.
+ */
+export interface FolderRoleReport {
+  path: string;
+  role: "manuscript" | "draft";
+  /** True when the folder now has the role, false when the mark came off. */
+  marked: boolean;
+  /** The manifest record's id, when there is one now. */
+  id?: string;
+  /** The chapter order the record ended up with. */
+  chapters: string[];
+}
+
+/** Which draft is now the working one — `ActiveDraftReport` in `ops.rs`. */
+export interface ActiveDraftReport {
+  id: string;
+  name: string;
+  chapters: string[];
 }
 
 // ── the conflict contract (PARITY row 9) ─────────────────────────────────

@@ -437,6 +437,61 @@ pub fn vault_reorder_chapters(
     vault::ops::reorder_chapters(&root, manuscript_id.as_deref(), &order, &state.self_writes)
 }
 
+// ── manuscript management (PARITY row 8) ─────────────────────────────────
+//
+// Four thin wrappers, and deliberately nothing more: each one is the same
+// `vault::ops` function the matching MCP tool calls, so the sidebar's "Mark as
+// Manuscript", the rail's Working Draft pill and the corkboard's synopsis box
+// cannot drift from what an AI client does through the same door.
+
+/// Mark a folder as a manuscript, or unmark it — the sidebar row's ⋯ menu.
+#[tauri::command]
+pub fn vault_toggle_manuscript_folder(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    rel_path: String,
+) -> R<vault::ops::FolderRoleReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::toggle_manuscript_folder(&root, &rel_path, &state.self_writes)
+}
+
+/// Mark a folder inside a manuscript as a draft, or unmark it.
+#[tauri::command]
+pub fn vault_toggle_draft_folder(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    rel_path: String,
+) -> R<vault::ops::FolderRoleReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::toggle_draft_folder(&root, &rel_path, &state.self_writes)
+}
+
+/// Make one draft the working draft — the chapter rail's Working Draft pill.
+#[tauri::command]
+pub fn vault_set_active_draft(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    draft_id: String,
+) -> R<vault::ops::ActiveDraftReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::set_active_draft(&root, &draft_id, &state.self_writes)
+}
+
+/// Write a document's `synopsis` frontmatter key — the corkboard card's text.
+///
+/// Frontmatter surgery, not a rewrite: the body survives byte for byte, which
+/// is why this is a command of its own rather than the editor's save path.
+#[tauri::command]
+pub fn vault_set_synopsis(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    rel_path: String,
+    synopsis: String,
+) -> R<vault::ops::WriteReport> {
+    let root = root_of(&state, &workflow_id)?;
+    vault::ops::set_synopsis(&root, &rel_path, &synopsis, &state.self_writes)
+}
+
 // ── writing sessions (the Today panel) ───────────────────────────────────
 //
 // `.aquarius/sessions/YYYY-MM-DD.json`, one file per calendar day. The

@@ -107,6 +107,27 @@
   color: var(--ink-mute);
 }
 
+/* The manuscript / draft mark on a folder row (PARITY row 8). Deliberately a
+   quiet chip and not a second icon: the folder glyph already goes accent when
+   the mark is on, and two loud signals for one fact reads as two facts. */
+.sb-role {
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.sb-role-draft {
+  color: var(--ink-soft);
+  background: var(--bg-soft);
+}
+
 .sb-status-dot {
   width: 6px;
   height: 6px;

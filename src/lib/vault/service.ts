@@ -1,5 +1,7 @@
 import type {
+  ActiveDraftReport,
   EntryReport,
+  FolderRoleReport,
   FileRead,
   FileStamp,
   Goals,
@@ -113,6 +115,34 @@ export interface VaultService {
    * goals as they now stand.
    */
   setDailyGoal(workflowId: string, dailyWords: number): Promise<Goals>;
+  /**
+   * Mark a folder as a manuscript, or unmark it (PARITY row 8).
+   *
+   * The same `vault::ops::toggle_manuscript_folder` the MCP tool of that name
+   * calls. Marking seeds the chapter order from the markdown already in the
+   * folder, minus its front matter; unmarking removes the manifest record and
+   * any draft folders that were only drafts because they sat under it. **It
+   * never touches a file** — this is a mark on `workflow.json`.
+   */
+  toggleManuscriptFolder(workflowId: string, relPath: string): Promise<FolderRoleReport>;
+  /**
+   * Mark a folder inside a manuscript as an alternate cut, or unmark it. A
+   * folder with no manuscript above it is refused, and the refusal says so.
+   */
+  toggleDraftFolder(workflowId: string, relPath: string): Promise<FolderRoleReport>;
+  /**
+   * Make one draft the working draft. Exactly one is active at a time, and the
+   * choice lives in `workflow.json`, so it survives the next launch.
+   */
+  setActiveDraft(workflowId: string, draftId: string): Promise<ActiveDraftReport>;
+  /**
+   * Write a document's `synopsis` frontmatter key — the corkboard card's text.
+   *
+   * Frontmatter surgery on the backend, never a whole-file overwrite from here:
+   * the body survives byte for byte, and everything else in the frontmatter
+   * block with it. Same `vault::ops::set_synopsis` as the MCP `set_synopsis`.
+   */
+  setSynopsis(workflowId: string, relPath: string, synopsis: string): Promise<void>;
   /** Subscribe to FS changes within a workflow. Returns an unsubscribe fn. */
   watch(workflowId: string, onChange: () => void): () => void;
 }

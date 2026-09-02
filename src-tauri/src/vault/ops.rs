@@ -22,6 +22,7 @@ use crate::fs_ops::watcher::SelfWrites;
 use crate::model::{FileRead, FileStamp, WriteResult, Workflow};
 use crate::vault::{frontmatter, paths, scaffold, workflow};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub type OpResult<T> = Result<T, String>;
@@ -1302,7 +1303,7 @@ pub fn toggle_manuscript_folder(
             }
         }
         None => {
-            let chapters = crate::vault::tree::markdown_paths_in(root, rel);
+            let chapters = crate::vault::tree::chapter_paths_in(root, rel);
             let id = workflow::new_id();
             wf.manuscripts.push(crate::model::Manuscript {
                 id: id.clone(),
@@ -1358,7 +1359,7 @@ pub fn toggle_draft_folder(
                     "{rel} is not inside a manuscript folder — mark its parent as a manuscript first (toggle_manuscript_folder), then mark this as a draft"
                 ));
             }
-            let chapters = crate::vault::tree::markdown_paths_in(root, rel);
+            let chapters = crate::vault::tree::chapter_paths_in(root, rel);
             let id = workflow::new_id();
             wf.drafts.push(crate::model::Draft {
                 id: id.clone(),
@@ -1378,6 +1379,151 @@ pub fn toggle_draft_folder(
     };
     save_workflow(root, &wf, self_writes)?;
     Ok(report)
+}
+
+/// Which draft the manuscript is currently being written *in*.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveDraftReport {
+    pub id: String,
+    pub name: String,
+    pub chapters: Vec<String>,
+}
+
+/// Make one draft the working draft, clearing the flag on every other.
+///
+/// The Working Draft pill on the chapter rail and the MCP `set_active_draft`
+/// tool are both this function — the flag lives in `workflow.json`, so the
+/// choice survives a relaunch instead of being a thing the window remembered.
+pub fn set_active_draft(
+    root: &Path,
+    draft_id: &str,
+    self_writes: &SelfWrites,
+) -> OpResult<ActiveDraftReport> {
+    let (mut wf, _) = workflow::read_or_create(root).map_err(|e| e.to_string())?;
+    if !wf.drafts.iter().any(|d| d.id == draft_id) {
+        let known: Vec<&str> = wf.drafts.iter().map(|d| d.id.as_str()).collect();
+        return Err(if known.is_empty() {
+            "this workflow has no drafts to make active".to_string()
+        } else {
+            format!("no draft with id \"{draft_id}\" — this vault has {}", known.join(", "))
+        });
+    }
+    for d in wf.drafts.iter_mut() {
+        d.active = if d.id == draft_id { Some(true) } else { None };
+    }
+    let d = wf.drafts.iter().find(|d| d.id == draft_id).expect("checked above").clone();
+    save_workflow(root, &wf, self_writes)?;
+    Ok(ActiveDraftReport { id: d.id, name: d.name, chapters: d.chapter_order })
+}
+
+// ── what the manuscripts in this vault add up to ─────────────────────────
+
+/// One manuscript, with the numbers the ManuscriptHome card shows.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptSummary {
+    pub id: String,
+    pub title: String,
+    pub folder: String,
+    pub chapters: usize,
+    pub words: usize,
+    /// `~words / 250` — the paperback page the whole app estimates with.
+    pub pages: usize,
+    /// How many chapters sit at each status, keyed by `CHAPTER_STATUSES`.
+    /// A chapter with no `status:` counts as "outline", the same default the
+    /// outline row and the corkboard card paint.
+    pub status_counts: BTreeMap<String, usize>,
+    /// `(label, path)` for each front-matter document the folder actually has.
+    pub front_matter: Vec<(String, String)>,
+    /// The drafts that belong to this manuscript: its own cuts (not
+    /// folder-backed) plus any draft folder living inside it.
+    pub drafts: Vec<DraftSummary>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftSummary {
+    pub id: String,
+    pub name: String,
+    pub active: bool,
+    pub chapters: usize,
+    pub words: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+}
+
+/// Words in a chapter's body — frontmatter excluded, a missing file counted 0.
+fn chapter_words(root: &Path, rel: &str) -> usize {
+    resolve(root, rel)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|t| frontmatter::count_words(&frontmatter::parse(&t).body))
+        .unwrap_or(0)
+}
+
+/// Every manuscript in the vault with its chapter, word and status totals.
+///
+/// The MCP `list_manuscripts` tool is this; the ManuscriptHome grid computes
+/// the same numbers from the tree it is already holding rather than making a
+/// second pass over the disk. The formulas are the shared part: pages is
+/// `words / 250`, and a chapter with no status counts as outline.
+pub fn list_manuscripts(root: &Path) -> OpResult<Vec<ManuscriptSummary>> {
+    let (wf, _) = workflow::read_or_create(root).map_err(|e| e.to_string())?;
+    let words_of = |order: &[String]| order.iter().map(|p| chapter_words(root, p)).sum::<usize>();
+
+    Ok(wf
+        .manuscripts
+        .iter()
+        .map(|m| {
+            let mut status_counts: BTreeMap<String, usize> =
+                CHAPTER_STATUSES.iter().map(|s| ((*s).to_string(), 0)).collect();
+            let mut words = 0;
+            for rel in &m.chapter_order {
+                words += chapter_words(root, rel);
+                let status = resolve(root, rel)
+                    .ok()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .and_then(|t| {
+                        frontmatter::parse(&t)
+                            .frontmatter
+                            .get("status")
+                            .and_then(|v| v.as_str().map(str::to_string))
+                    })
+                    .filter(|s| CHAPTER_STATUSES.contains(&s.as_str()))
+                    .unwrap_or_else(|| "outline".to_string());
+                *status_counts.entry(status).or_insert(0) += 1;
+            }
+            let inside = format!("{}/", m.folder);
+            let drafts = wf
+                .drafts
+                .iter()
+                .filter(|d| match &d.folder {
+                    Some(f) => f.starts_with(&inside),
+                    None => true,
+                })
+                .map(|d| DraftSummary {
+                    id: d.id.clone(),
+                    name: d.name.clone(),
+                    active: d.active == Some(true),
+                    chapters: d.chapter_order.len(),
+                    words: words_of(&d.chapter_order),
+                    folder: d.folder.clone(),
+                })
+                .collect();
+            ManuscriptSummary {
+                id: m.id.clone(),
+                title: m.title.clone(),
+                folder: m.folder.clone(),
+                chapters: m.chapter_order.len(),
+                words,
+                pages: words.div_ceil(250),
+                status_counts,
+                front_matter: crate::vault::tree::front_matter_in(root, &m.folder),
+                drafts,
+            }
+        })
+        .collect())
 }
 
 /// Leave exactly one draft flagged active, if there are any at all.
@@ -2715,6 +2861,86 @@ mod tests {
             wf.drafts.iter().any(|d| d.active == Some(true)),
             "something is still the active cut"
         );
+    }
+
+    #[test]
+    fn marking_a_manuscript_leaves_its_front_matter_out_of_the_chapter_order() {
+        let t = TempDir::new("ops-manuscript-frontmatter");
+        let writes = sw();
+        t.write("Book/Ch_01.md", "a");
+        t.write("Book/Title Page.md", "cover");
+        t.write("Book/Dedication.md", "for her");
+        t.write("Book/Epigraph.md", "a quote");
+        workflow::read_or_create(t.path()).unwrap();
+
+        let on = toggle_manuscript_folder(t.path(), "Book", &writes).unwrap();
+        assert_eq!(on.chapters, vec!["Book/Ch_01.md"], "a title page is not chapter one");
+
+        // And the open-time reconcile must not put them back.
+        let (mut wf, _) = workflow::read_or_create(t.path()).unwrap();
+        workflow::reconcile_chapter_order(t.path(), &mut wf);
+        assert_eq!(wf.manuscripts[0].chapter_order, vec!["Book/Ch_01.md"]);
+
+        let summary = &list_manuscripts(t.path()).unwrap()[0];
+        assert_eq!(summary.chapters, 1);
+        assert_eq!(
+            summary.front_matter,
+            vec![
+                ("Title Page".to_string(), "Book/Title Page.md".to_string()),
+                ("Dedication".to_string(), "Book/Dedication.md".to_string()),
+                ("Epigraph".to_string(), "Book/Epigraph.md".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_working_draft_is_a_choice_that_survives_the_next_open() {
+        let t = TempDir::new("ops-active-draft");
+        let writes = sw();
+        t.write("Drafts/Ch_01.md", "one two three");
+        t.write("Drafts/Second Pass/Ch_01.md", "one two");
+        workflow::read_or_create(t.path()).unwrap();
+        let second = toggle_draft_folder(t.path(), "Drafts/Second Pass", &writes).unwrap();
+        let second_id = second.id.unwrap();
+
+        let report = set_active_draft(t.path(), &second_id, &writes).unwrap();
+        assert_eq!(report.name, "Second Pass");
+
+        let (wf, _) = workflow::read_or_create(t.path()).unwrap();
+        let actives: Vec<&str> = wf
+            .drafts
+            .iter()
+            .filter(|d| d.active == Some(true))
+            .map(|d| d.id.as_str())
+            .collect();
+        assert_eq!(actives, vec![second_id.as_str()], "exactly one cut is the working one");
+
+        assert!(
+            set_active_draft(t.path(), "no-such-draft", &writes)
+                .unwrap_err()
+                .contains("no draft with id"),
+            "an unknown id is refused by name, not silently ignored"
+        );
+    }
+
+    #[test]
+    fn list_manuscripts_counts_words_statuses_and_its_own_drafts() {
+        let t = TempDir::new("ops-list-manuscripts");
+        let writes = sw();
+        t.write("Book/Ch_01.md", "---\nstatus: final\n---\none two three four five\n");
+        // No `status:` at all — it counts as outline, like the corkboard paints it.
+        t.write("Book/Ch_02.md", "six seven\n");
+        workflow::read_or_create(t.path()).unwrap();
+        toggle_manuscript_folder(t.path(), "Book", &writes).unwrap();
+
+        let list = list_manuscripts(t.path()).unwrap();
+        assert_eq!(list.len(), 1);
+        let m = &list[0];
+        assert_eq!((m.chapters, m.words), (2, 7));
+        assert_eq!(m.pages, 1, "seven words still round up to a page");
+        assert_eq!(m.status_counts["final"], 1);
+        assert_eq!(m.status_counts["outline"], 1);
+        assert_eq!(m.status_counts["drafting"], 0, "every status is reported, zero included");
     }
 
     #[test]

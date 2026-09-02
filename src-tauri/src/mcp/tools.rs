@@ -400,6 +400,14 @@ pub struct MarkFolderParam {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct ActiveDraftParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// The draft's id, from `list_manuscripts` or `get_workflow`.
+    pub draft_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct ReorderScenesParam {
     /// Workflow id, from `list_workflows`.
     pub workflow_id: String,
@@ -862,6 +870,46 @@ when files are added or removed there, not the manuscript's."
     }
 
     #[tool(
+        name = "list_manuscripts",
+        description = "What the vault's manuscripts add up to, without reading every chapter \
+yourself. For each manuscript: its id and title, the folder it lives in, how many chapters it \
+has, total words, an estimated page count (words / 250, rounded up — paperback pages, the same \
+number the app shows), how many chapters sit at each status (final / drafting / rev / outline, \
+with a chapter carrying no status counted as outline), which of the three front-matter documents \
+the folder has (Title Page / Dedication / Epigraph — front matter is found by those file names \
+and is deliberately NOT part of the chapter order), and the drafts belonging to it with the \
+active one flagged. Read-only. Use it to answer \"how long is the book\" or \"what is left to \
+revise\" in one call; get_workflow still has the full chapter order and file tree."
+    )]
+    fn list_manuscripts(
+        &self,
+        Parameters(WorkflowParam { workflow_id }): Parameters<WorkflowParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        json(ops::list_manuscripts(&root).map_err(invalid)?)
+    }
+
+    #[tool(
+        name = "set_active_draft",
+        description = "Make one draft the WORKING DRAFT — the cut the app opens into and the one \
+compile_document reaches for when it is not told otherwise. Takes a draft_id from \
+list_manuscripts or get_workflow. Exactly one draft is active at a time, so this clears the flag \
+on every other draft in the vault. It changes the vault's workflow.json only: no file is written, \
+moved or deleted, and no chapter order changes. The writer sees the switch immediately in the \
+chapter rail's Working Draft pill."
+    )]
+    fn set_active_draft(
+        &self,
+        Parameters(ActiveDraftParam { workflow_id, draft_id }): Parameters<ActiveDraftParam>,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        let state = self.state();
+        let report = ops::set_active_draft(&root, &draft_id, &state.self_writes).map_err(invalid)?;
+        self.notify(&workflow_id);
+        json(report)
+    }
+
+    #[tool(
         name = "list_scenes",
         description = "Index a screenplay's scenes. For each scene: its 0-based `index` (what \
 reorder_scenes permutes), the heading line, the slug without its scene number, the `#12#` scene \
@@ -1227,8 +1275,11 @@ FADE IN: — stays put.
 
 A vault's shape lives in workflow.json: toggle_manuscript_folder marks the folder the book lives in \
 (the one compile_document assembles and reorder_chapters rearranges), and toggle_draft_folder marks \
-a folder inside it as an alternate cut. Both are marks on the manifest — neither ever deletes a \
-file.
+a folder inside it as an alternate cut. set_active_draft picks which cut is the working one. \
+list_manuscripts is the read side of all three: chapters, words, pages, per-status counts and the \
+drafts, in one call. Note that a manuscript folder's front matter — files named Title Page, \
+Dedication or Epigraph — is deliberately NOT part of the chapter order. All of these are marks on \
+the manifest; none of them ever deletes a file.
 
 Reorganising a vault is create_document / create_folder to add, rename_document to change a \
 name in place, and move_document to put something in a different folder. Renames and moves \
@@ -1271,7 +1322,8 @@ impl rmcp::ServerHandler for AquariusMcp {
 mod tests {
     use super::*;
 
-    /// The surface Stage 5 promised, plus the nine PARITY row 17 added. A tool
+    /// The surface Stage 5 promised, plus the ten PARITY row 17 added and the
+    /// two that came with row 8's manuscript management. A tool
     /// disappearing from this list is a breaking change for anyone who wired
     /// the server into Claude Code, so it should be a deliberate edit here
     /// rather than a silent regression.
@@ -1283,6 +1335,7 @@ mod tests {
         "get_workflow",
         "insert_text",
         "list_folder",
+        "list_manuscripts",
         "list_scenes",
         "list_snapshots",
         "list_trash",
@@ -1298,6 +1351,7 @@ mod tests {
         "restore_document",
         "search",
         "server_info",
+        "set_active_draft",
         "set_frontmatter_status",
         "set_synopsis",
         "take_snapshot",

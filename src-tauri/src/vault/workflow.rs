@@ -74,7 +74,7 @@ pub fn infer(root: &Path) -> Workflow {
     let mut manuscripts = Vec::new();
     let mut drafts = Vec::new();
     if let Some(folder) = manuscript_folder {
-        let order = tree::markdown_paths_in(root, &folder);
+        let order = tree::chapter_paths_in(root, &folder);
         manuscripts.push(Manuscript {
             id: new_id(),
             title: title.clone(),
@@ -121,7 +121,7 @@ pub fn reconcile_chapter_order(root: &Path, wf: &mut Workflow) -> bool {
     let mut changed = false;
     for i in 0..wf.manuscripts.len() {
         let folder = wf.manuscripts[i].folder.clone();
-        let on_disk = tree::markdown_paths_in(root, &folder);
+        let on_disk = tree::chapter_paths_in(root, &folder);
         let next = merge_order(&wf.manuscripts[i].chapter_order, &on_disk);
         if next != wf.manuscripts[i].chapter_order {
             let old = wf.manuscripts[i].chapter_order.clone();
@@ -143,7 +143,7 @@ pub fn reconcile_chapter_order(root: &Path, wf: &mut Workflow) -> bool {
     }
     for d in wf.drafts.iter_mut() {
         let Some(folder) = d.folder.clone() else { continue };
-        let merged = merge_order(&d.chapter_order, &tree::markdown_paths_in(root, &folder));
+        let merged = merge_order(&d.chapter_order, &tree::chapter_paths_in(root, &folder));
         if merged != d.chapter_order {
             d.chapter_order = merged;
             changed = true;

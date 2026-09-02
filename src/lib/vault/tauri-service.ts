@@ -2,7 +2,9 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { VaultService } from "./service";
 import type {
+  ActiveDraftReport,
   EntryReport,
+  FolderRoleReport,
   FileRead,
   Goals,
   ReorderReport,
@@ -127,6 +129,25 @@ export function createTauriVaultService(): VaultService {
 
     async setDailyGoal(workflowId, dailyWords) {
       return invoke<Goals>("vault_set_daily_goal", { workflowId, dailyWords });
+    },
+
+    // The four manuscript-management calls. Each one is a thin wrapper over the
+    // same `vault::ops` function its MCP tool calls — one implementation, two
+    // doors (docs/PARITY.md, "One rule worth keeping").
+    async toggleManuscriptFolder(workflowId, relPath) {
+      return invoke<FolderRoleReport>("vault_toggle_manuscript_folder", { workflowId, relPath });
+    },
+
+    async toggleDraftFolder(workflowId, relPath) {
+      return invoke<FolderRoleReport>("vault_toggle_draft_folder", { workflowId, relPath });
+    },
+
+    async setActiveDraft(workflowId, draftId) {
+      return invoke<ActiveDraftReport>("vault_set_active_draft", { workflowId, draftId });
+    },
+
+    async setSynopsis(workflowId, relPath, synopsis) {
+      await invoke("vault_set_synopsis", { workflowId, relPath, synopsis });
     },
 
     watch(workflowId, onChange) {

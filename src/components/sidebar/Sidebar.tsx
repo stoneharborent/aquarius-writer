@@ -60,6 +60,11 @@ interface TreeOps {
   /** Every folder path in the workflow, for the "Move to…" list. */
   folders: string[];
   /**
+   * Which folders carry a manuscript or draft mark, so a row can say so
+   * without every row subscribing to the manifest separately (PARITY row 8).
+   */
+  roleOf: (path: string) => "manuscript" | "draft" | null;
+  /**
    * Remember which folder the writer last touched, so "+" adds *there*.
    *
    * Deliberately not the vault's `selectedPath`: selecting a folder would put
@@ -287,6 +292,17 @@ export function Sidebar() {
 
   const folders = useMemo(() => (tree ? collectFolders(tree) : []), [tree]);
 
+  // One map for the whole tree rather than a subscription per row: the eyebrow
+  // on a marked folder is a read of the manifest, and the manifest changes far
+  // less often than the tree redraws.
+  const roles = useMemo(() => {
+    const map = new Map<string, "manuscript" | "draft">();
+    for (const d of current?.drafts ?? []) if (d.folder) map.set(d.folder, "draft");
+    for (const m of current?.manuscripts ?? []) map.set(m.folder, "manuscript");
+    return map;
+  }, [current?.manuscripts, current?.drafts]);
+  const roleOf = useCallback((path: string) => roles.get(path) ?? null, [roles]);
+
   // The top bar's ⌘K capsule filters the tree by name; Enter in it opens the
   // full-text Find sheet, which is the part a name filter cannot do.
   const q = query.trim().toLowerCase();
@@ -368,7 +384,7 @@ export function Sidebar() {
         )}
         <TreeOpsContext.Provider
           value={{
-            menuFor, setMenuFor, renaming, setRenaming, folders,
+            menuFor, setMenuFor, renaming, setRenaming, folders, roleOf,
             noteTarget: setLastFolder, drag,
           }}
         >
@@ -759,6 +775,7 @@ function TreeBranch({
   }
 
   if (isFolder) {
+    const role = ops.roleOf(node.path);
     return (
       <>
         <div className={wrapClass} {...source} {...target}>
@@ -771,8 +788,18 @@ function TreeBranch({
             <span className="sb-caret">
               <Caret open={isOpen} color="var(--ink-soft)" />
             </span>
-            <FolderIcon size={12} color="var(--ink-soft)" />
+            <FolderIcon
+              size={12}
+              color={role ? "var(--accent)" : "var(--ink-soft)"}
+            />
             <span className="sb-label">{node.name}</span>
+            {/* The mark, said out loud. A folder that is the book should not
+                look exactly like a folder of research. */}
+            {role && (
+              <span className={`sb-role sb-role-${role}`}>
+                {role === "manuscript" ? "MS" : "Draft"}
+              </span>
+            )}
             <span className="sb-count">{node.children?.length ?? 0}</span>
             <StarAffordance path={node.path} />
             <MoreAffordance path={node.path} />
@@ -867,18 +894,33 @@ function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
 }
 
 /**
- * Star / Open in Split View / Rename / Move to… — the row's context menu, also
- * on the "⋯" button. Swift's row menu, minus the Finder items (SWIFT-AUDIT
- * §1.4).
+ * Star / Open in Split View / Mark as Manuscript / Rename / Move to… — the
+ * row's context menu, also on the "⋯" button. Swift's row menu, minus the
+ * Finder items (SWIFT-AUDIT §1.4).
+ *
+ * The two manuscript marks are folder-only, and the draft one only appears
+ * where it could actually succeed: a draft is an alternate cut *of* something,
+ * so a folder with no manuscript above it is not offered a mark the backend
+ * would refuse (PARITY row 8).
  */
 function RowMenu({ node }: { node: VaultNode }) {
   const ops = useTreeOps();
   const moveEntry = useVault((s) => s.moveEntry);
+  const manuscripts = useVault((s) => s.current?.manuscripts);
+  const drafts = useVault((s) => s.current?.drafts);
+  const toggleManuscriptFolder = useVault((s) => s.toggleManuscriptFolder);
+  const toggleDraftFolder = useVault((s) => s.toggleDraftFolder);
   const starredPaths = useFavorites((s) => s.starred);
   const toggleFavorite = useFavorites((s) => s.toggle);
   const [picking, setPicking] = useState(false);
   const starred = starredPaths.has(node.path);
   const isFile = node.kind !== "folder";
+  const isManuscript = (manuscripts ?? []).some((m) => m.folder === node.path);
+  const isDraft = (drafts ?? []).some((d) => d.folder === node.path);
+  // Strictly inside: a manuscript folder is not its own alternate cut.
+  const insideManuscript = (manuscripts ?? []).some(
+    (m) => m.folder && node.path.startsWith(`${m.folder}/`),
+  );
 
   useEffect(() => { if (ops.menuFor !== node.path) setPicking(false); }, [ops.menuFor, node.path]);
 
@@ -918,6 +960,24 @@ function RowMenu({ node }: { node: VaultNode }) {
                 useVault.getState().setView("editor");
               }}
             >Open in Split View</button>
+          )}
+          {!isFile && (
+            <button
+              className="sb-menu-item"
+              onClick={() => {
+                ops.setMenuFor(null);
+                void toggleManuscriptFolder(node.path);
+              }}
+            >{isManuscript ? "Unmark Manuscript" : "Mark as Manuscript"}</button>
+          )}
+          {!isFile && (isDraft || insideManuscript) && (
+            <button
+              className="sb-menu-item"
+              onClick={() => {
+                ops.setMenuFor(null);
+                void toggleDraftFolder(node.path);
+              }}
+            >{isDraft ? "Unmark Draft folder" : "Mark as Draft folder"}</button>
           )}
           <button
             className="sb-menu-item"

@@ -18,7 +18,17 @@ import { useFavorites } from "@/state/favoritesStore";
 import { useSessions } from "@/state/sessionsStore";
 import { DEFAULT_GOAL } from "@/lib/vault/sessions";
 
-export type EditorView = "editor" | "outline" | "corkboard";
+/**
+ * What the editor column is showing.
+ *
+ * `home` is the ManuscriptHome grid (PARITY row 8) — the vault's manuscripts as
+ * cards. It sits behind the sidebar's Manuscript quick view (⌘2), which is
+ * where the Swift audit's silence left the decision to us: the audit names
+ * ManuscriptHome and says it is a home screen, but not what opens it. Putting
+ * it on the entry that already means "the manuscript" keeps one door instead
+ * of inventing a second (docs/NOTES.md §29).
+ */
+export type EditorView = "editor" | "home" | "outline" | "corkboard";
 
 /// Which welcome-screen action is in flight. "picking" is the one that can sit
 /// there a long time: it means a native folder dialog is open somewhere, and on
@@ -43,6 +53,14 @@ interface VaultState {
   // view mode for the editor pane
   view: EditorView;
   activeDraftId: string | null;
+  /**
+   * Which manuscript the outline, the corkboard and the chapter rail are of.
+   *
+   * A vault can have several — a book and its novella, each a marked folder —
+   * and until row 8 every surface silently meant `manuscripts[0]`. Null when
+   * the workflow has none.
+   */
+  activeManuscriptId: string | null;
 
   /// True once `bootstrap` has FINISHED. The welcome screen renders only
   /// after a boot attempt opened nothing (empty index, or every candidate
@@ -100,7 +118,28 @@ interface VaultState {
   toggleExpanded: (path: string) => void;
   expandAll: (paths: string[]) => void;
   setView: (view: EditorView) => void;
-  setActiveDraft: (id: string) => void;
+  /** Open one manuscript's outline — what a ManuscriptHome card does. */
+  openManuscript: (id: string) => void;
+  /**
+   * Make one draft the working draft, and *keep* it: the flag is written to
+   * `workflow.json` through the same `ops::set_active_draft` the MCP
+   * `set_active_draft` tool calls, so the choice survives a relaunch.
+   */
+  setActiveDraft: (id: string) => Promise<void>;
+  /**
+   * Mark a folder as a manuscript, or unmark it — the sidebar row's ⋯ menu.
+   * Resolves to true when the mark is now on.
+   */
+  toggleManuscriptFolder: (path: string) => Promise<boolean>;
+  /** Mark a folder inside a manuscript as an alternate cut, or unmark it. */
+  toggleDraftFolder: (path: string) => Promise<boolean>;
+  /**
+   * Write a chapter's `synopsis` frontmatter — the corkboard card, edited in
+   * place. Never a whole-file write from here: the backend does frontmatter
+   * surgery, and any open buffer for that file is flushed first and reconciled
+   * afterwards so the writer's unsaved text is neither lost nor fought over.
+   */
+  setSynopsis: (path: string, synopsis: string) => Promise<void>;
   /**
    * Rearrange the manuscript's chapters — and *keep* the arrangement.
    *
@@ -203,6 +242,25 @@ function repath(node: VaultNode, from: string, to: string) {
     node.path = to + node.path.slice(from.length);
   }
   for (const child of node.children ?? []) repath(child, from, to);
+}
+
+/** Find a node by path — the tree is small enough that a walk is honest. */
+function findInTree(node: VaultNode, path: string): VaultNode | null {
+  if (node.path === path) return node;
+  for (const child of node.children ?? []) {
+    const hit = findInTree(child, path);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** A copy of the tree with one frontmatter key set on one node. */
+function withFrontmatter(tree: VaultNode, path: string, key: string, value: string): VaultNode {
+  const walk = (n: VaultNode): VaultNode =>
+    n.path === path
+      ? { ...n, frontmatter: { ...n.frontmatter, [key]: value } }
+      : { ...n, children: n.children?.map(walk) };
+  return walk(tree);
 }
 
 const parentPathOf = (path: string) =>
@@ -325,6 +383,7 @@ export const useVault = create<VaultState>((set, get) => ({
   expanded: new Set(["Drafts", "Characters", "Worldbuilding", "Research"]),
   view: "editor",
   activeDraftId: null,
+  activeManuscriptId: null,
 
   /// Launch straight into a workflow: the last one open, else the index's
   /// active/first entry that actually loads. Only falls through to the
@@ -464,6 +523,7 @@ export const useVault = create<VaultState>((set, get) => ({
         selectedPath: workflow.manuscripts[0]?.chapterOrder[0] ?? null,
         activeDraftId:
           workflow.drafts.find((d) => d.active)?.id ?? workflow.drafts[0]?.id ?? null,
+        activeManuscriptId: workflow.manuscripts[0]?.id ?? null,
         view: "editor",
       });
       writeLastWorkflow(workflow.id);
@@ -492,8 +552,17 @@ export const useVault = create<VaultState>((set, get) => ({
     try {
       const { workflow, tree } = await vault().loadWorkflow(id);
       // Deliberately narrow: the selection, the view mode and the open editors
-      // all survive an external edit. Only the tree and the metadata change.
-      set({ current: workflow, tree });
+      // all survive an external edit. Only the tree and the metadata change —
+      // plus the two manifest cursors, which have to stay pointing at records
+      // that still exist (an MCP client can unmark the manuscript you are
+      // looking at).
+      const manuscriptId = workflow.manuscripts.some((m) => m.id === get().activeManuscriptId)
+        ? get().activeManuscriptId
+        : workflow.manuscripts[0]?.id ?? null;
+      const draftId = workflow.drafts.some((d) => d.id === get().activeDraftId)
+        ? get().activeDraftId
+        : workflow.drafts.find((d) => d.active)?.id ?? workflow.drafts[0]?.id ?? null;
+      set({ current: workflow, tree, activeManuscriptId: manuscriptId, activeDraftId: draftId });
       // The tree reloading is also how an MCP client's `toggle_star` reaches
       // the sidebar — the tool emits the same change event a file edit does.
       void useFavorites.getState().refresh();
@@ -625,12 +694,160 @@ export const useVault = create<VaultState>((set, get) => ({
 
   setView(view) { set({ view }); },
 
-  setActiveDraft(id) { set({ activeDraftId: id }); },
+  openManuscript(id) { set({ activeManuscriptId: id, view: "outline" }); },
+
+  async setActiveDraft(id) {
+    const cur = get().current;
+    if (!cur) return;
+    const previous = get().activeDraftId;
+    if (previous === id) return;
+    // Painted first: switching cuts should feel like a click, not a save.
+    set({
+      activeDraftId: id,
+      current: {
+        ...cur,
+        drafts: cur.drafts.map((d) => ({ ...d, active: d.id === id ? true : undefined })),
+      },
+    });
+    try {
+      await vault().setActiveDraft(cur.id, id);
+    } catch (e) {
+      if (get().current?.id === cur.id) {
+        set({
+          activeDraftId: previous,
+          current: {
+            ...get().current!,
+            drafts: cur.drafts.map((d) => ({
+              ...d,
+              active: d.id === previous ? true : undefined,
+            })),
+          },
+        });
+      }
+      notices.fail("Could not switch the working draft", e);
+    }
+  },
+
+  async toggleManuscriptFolder(path) {
+    const cur = get().current;
+    if (!cur) return false;
+    try {
+      const report = await vault().toggleManuscriptFolder(cur.id, path);
+      const now = get().current;
+      if (!now || now.id !== cur.id) return report.marked;
+      // The report is exactly what the backend wrote, so the manifest is
+      // patched from it rather than re-walking the whole vault. The watcher
+      // will not fight this: `save_workflow` stamps the self-write ledger, so
+      // the app's own write never comes back as an external change.
+      const next: Workflow = report.marked
+        ? {
+            ...now,
+            manuscripts: [
+              ...now.manuscripts,
+              {
+                id: report.id!,
+                title: path.split("/").pop() ?? path,
+                folder: path,
+                chapterOrder: report.chapters,
+              },
+            ],
+          }
+        : {
+            ...now,
+            manuscripts: now.manuscripts.filter((m) => m.folder !== path),
+            drafts: now.drafts.filter((d) => !d.folder?.startsWith(`${path}/`)),
+          };
+      set({
+        current: next,
+        activeManuscriptId: next.manuscripts.some((m) => m.id === get().activeManuscriptId)
+          ? get().activeManuscriptId
+          : next.manuscripts[0]?.id ?? null,
+        activeDraftId: next.drafts.some((d) => d.id === get().activeDraftId)
+          ? get().activeDraftId
+          : next.drafts[0]?.id ?? null,
+      });
+      notices.say(
+        report.marked ? `"${path}" is a manuscript` : `"${path}" is no longer a manuscript`,
+        report.marked
+          ? `${report.chapters.length} chapter${report.chapters.length === 1 ? "" : "s"} in it`
+          : "the mark came off — nothing on disk changed",
+      );
+      return report.marked;
+    } catch (e) {
+      notices.fail("Could not change that folder's manuscript mark", e);
+      return false;
+    }
+  },
+
+  async toggleDraftFolder(path) {
+    const cur = get().current;
+    if (!cur) return false;
+    try {
+      const report = await vault().toggleDraftFolder(cur.id, path);
+      const now = get().current;
+      if (!now || now.id !== cur.id) return report.marked;
+      const next: Workflow = report.marked
+        ? {
+            ...now,
+            drafts: [
+              ...now.drafts,
+              {
+                id: report.id!,
+                name: path.split("/").pop() ?? path,
+                chapterOrder: report.chapters,
+                folder: path,
+              },
+            ],
+          }
+        : { ...now, drafts: now.drafts.filter((d) => d.folder !== path) };
+      set({
+        current: next,
+        activeDraftId: next.drafts.some((d) => d.id === get().activeDraftId)
+          ? get().activeDraftId
+          : next.drafts[0]?.id ?? null,
+      });
+      notices.say(
+        report.marked ? `"${path}" is a draft` : `"${path}" is no longer a draft`,
+        report.marked
+          ? `${report.chapters.length} chapter${report.chapters.length === 1 ? "" : "s"} in this cut`
+          : "the mark came off — nothing on disk changed",
+      );
+      return report.marked;
+    } catch (e) {
+      notices.fail("Could not change that folder's draft mark", e);
+      return false;
+    }
+  },
+
+  async setSynopsis(path, synopsis) {
+    const cur = get().current;
+    const tree = get().tree;
+    if (!cur || !tree) return;
+    const node = findInTree(tree, path);
+    if (((node?.frontmatter?.synopsis as string | undefined) ?? "") === synopsis) return;
+    try {
+      // Unsaved text in that document belongs to the writer, and the backend is
+      // about to rewrite the file's frontmatter underneath it. Flush first, and
+      // reconcile after, so the open buffer ends up holding the file that now
+      // exists rather than raising a conflict against a change the writer made
+      // themselves (docs/NOTES.md §20).
+      await useEditor.getState().flushUnder(path);
+      await vault().setSynopsis(cur.id, path, synopsis);
+      const live = get().tree;
+      if (live && get().current?.id === cur.id) {
+        set({ tree: withFrontmatter(live, path, "synopsis", synopsis) });
+      }
+      void useEditor.getState().reconcile(cur.id);
+    } catch (e) {
+      notices.fail("Could not save that synopsis", e);
+    }
+  },
 
   async reorderChapters(next) {
     const cur = get().current;
     if (!cur || cur.manuscripts.length === 0) return;
-    const manuscript = cur.manuscripts[0];
+    const manuscript =
+      cur.manuscripts.find((m) => m.id === get().activeManuscriptId) ?? cur.manuscripts[0];
     const previous = manuscript.chapterOrder;
 
     // Which drafts follow is the backend's rule, mirrored here so the screen
@@ -641,7 +858,9 @@ export const useVault = create<VaultState>((set, get) => ({
       order.length === previous.length && order.every((p, i) => p === previous[i]);
     const withOrder = (base: Workflow, order: string[]): Workflow => ({
       ...base,
-      manuscripts: base.manuscripts.map((m, i) => (i === 0 ? { ...m, chapterOrder: order } : m)),
+      manuscripts: base.manuscripts.map((m) =>
+        m.id === manuscript.id ? { ...m, chapterOrder: order } : m,
+      ),
       drafts: base.drafts.map((d) => (mirrors(d.chapterOrder) ? { ...d, chapterOrder: order } : d)),
     });
 
