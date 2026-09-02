@@ -4,6 +4,7 @@ import { MainWindow } from "@/components/main/MainWindow";
 import { SelectWorkflow } from "@/components/workflows/SelectWorkflow";
 import { OverlayRoot } from "@/components/overlays/OverlayRoot";
 import { ConflictDialog } from "@/components/safety/ConflictDialog";
+import { ConfirmDialog } from "@/components/safety/ConfirmDialog";
 import { Notices } from "@/components/notices/Notices";
 import { useVault } from "@/state/vaultStore";
 import { useUpdates } from "@/state/updateStore";
@@ -150,6 +151,7 @@ export default function App() {
       {current ? <MainWindow /> : booted ? <SelectWorkflow /> : null}
       <OverlayRoot />
       <ConflictDialog />
+      <ConfirmDialog />
       <Notices />
     </VaultWindow>
   );

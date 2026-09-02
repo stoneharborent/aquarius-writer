@@ -28,6 +28,7 @@ import { useShell, ZOOM_MAX, ZOOM_MIN } from "@/state/shellStore";
 import { useFavorites } from "@/state/favoritesStore";
 import { useSplit } from "@/state/splitStore";
 import { trashFile } from "@/lib/vault/aux";
+import { confirmAsk } from "@/state/confirmStore";
 import { useEditor } from "@/state/editorStore";
 import { EmptyState } from "@/components/shell/EmptyState";
 import "./Sidebar.css";
@@ -845,7 +846,7 @@ function TreeBranch({
         )}
         <StarAffordance path={node.path} />
         <MoreAffordance path={node.path} />
-        <DeleteAffordance path={node.path} />
+        <DeleteAffordance node={node} />
       </button>
       <RowMenu node={node} />
     </div>
@@ -1055,10 +1056,48 @@ function MoreAffordance({ path }: { path: string }) {
   );
 }
 
-/** Hover-revealed soft-delete — moves the file to Recently Deleted. */
-function DeleteAffordance({ path }: { path: string }) {
+/** Every editable file under `node`, however deep. Folders do not count. */
+function countFilesIn(node: VaultNode): number {
+  if (node.kind !== "folder") return 1;
+  return (node.children ?? []).reduce((n, c) => n + countFilesIn(c), 0);
+}
+
+/** The question this row's `×` asks before anything moves. */
+function deleteQuestion(node: VaultNode): { title: string; body: string } {
+  const body = "It moves to Recently Deleted, where you can put it back.";
+  if (node.kind !== "folder") {
+    return { title: `Delete “${node.name}”?`, body };
+  }
+  const n = countFilesIn(node);
+  if (n === 0) return { title: `Delete “${node.name}”?`, body };
+  return {
+    title: `Delete “${node.name}” and the ${n} ${n === 1 ? "file" : "files"} inside it?`,
+    body,
+  };
+}
+
+/**
+ * Hover-revealed soft-delete — moves the file to Recently Deleted.
+ *
+ * **This is the only human-facing delete in the app**, and the gate below is
+ * the only thing between a mis-aimed click and a chapter leaving the tree.
+ * There is no Delete in the row's ⋯ menu, no Delete/Backspace key bound to the
+ * selection, no drop-on-trash target, and nothing in the command palette or in
+ * the manuscript / corkboard / rail surfaces that removes a document — so
+ * there is exactly one path to gate, not several. Anything added later must
+ * come through `deleteQuestion` too rather than growing a second question.
+ *
+ * The gate is UI-only, deliberately. The MCP `trash` tool
+ * (`src-tauri/src/mcp/tools.rs`) calls `ops::trash_entry` straight through with
+ * no confirmation, and should: an agent has no hand to slip, its caller already
+ * asked for the delete in words, and a dialog in a headless surface is a hang.
+ * The safety net is the same one either way — the file is in Recently Deleted,
+ * not gone.
+ */
+function DeleteAffordance({ node }: { node: VaultNode }) {
   const current = useVault((s) => s.current);
   const removeFromTree = useVault((s) => s.removeFromTree);
+  const path = node.path;
   return (
     <span
       className="sb-del"
@@ -1067,15 +1106,24 @@ function DeleteAffordance({ path }: { path: string }) {
       onClick={(e) => {
         e.stopPropagation();
         if (!current) return;
-        if (!window.confirm(`Move "${path}" to Recently Deleted?`)) return;
-        // Evict first: a pending debounced save would resurrect the file.
-        useEditor.getState().evict(path);
-        void trashFile(current.id, path).then(() => {
+        void (async () => {
+          const { title, body } = deleteQuestion(node);
+          const ok = await confirmAsk({
+            title,
+            body,
+            confirmLabel: "Delete",
+            destructive: true,
+          });
+          if (!ok) return;
+          // Everything below is unchanged from before the gate existed.
+          // Evict first: a pending debounced save would resurrect the file.
+          useEditor.getState().evict(path);
+          await trashFile(current.id, path);
           removeFromTree(path);
           // The backend already dropped the star (`ops::trash_entry`); this is
           // the sidebar catching up without another round trip.
           useFavorites.getState().forget(path);
-        });
+        })();
       }}
     >×</span>
   );

@@ -6,6 +6,18 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## Unreleased
+
+- **Deleting a document asks first.** The small "×" on a file in the sidebar
+  used to move the file to Recently Deleted the moment it was clicked, and the
+  only thing between a mis-aimed click and a missing chapter was the system's
+  own grey alert box. Now Aquarius asks in its own words — "Delete
+  “Ch_03.md”? It moves to Recently Deleted, where you can put it back." — and
+  the button your finger lands on is **Cancel**, not Delete. Escape backs out,
+  and so does clicking anywhere outside the box. Nothing else about deleting
+  changed: the file still goes to Recently Deleted, and it is still there
+  waiting until you empty the trash.
+
 ## v0.5.3 — 2026-09-01
 
 Your book is a thing the app knows about now, not just a folder of files —

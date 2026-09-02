@@ -4776,3 +4776,122 @@ service in `browser-service.ts` implements the **rules** and not just the
 shapes — the front-matter exclusion, the "a draft folder needs a manuscript
 above it" refusal, and the one-active-draft invariant — so a rule that only
 existed in Rust would be a rule `npm run dev` could not show you breaking.
+
+---
+
+## 31. Delete asks first, and there was only one door to put the question in
+
+*2026-09-02. Royce: "add a delete confirm message when a file is deleted just
+in case it was pressed on accident." That is the whole brief, and the whole
+change — a gate in front of the existing delete, and nothing after it touched.*
+
+### 31a. There is exactly one human-facing delete
+
+The task came in expecting several entry points to unify — a "Delete" in the
+row's ⋯ menu, a Delete/Backspace binding on the selection, a drop-on-trash
+target, something in the command palette, something in the manuscript surfaces
+that v0.5.3 added. **None of those exist.** The app has one:
+`DeleteAffordance`, the hover-revealed `×` on a *file* row in the sidebar
+(`components/sidebar/Sidebar.tsx`). What the search actually found:
+
+- **The ⋯ / context menu** (`RowMenu`) is Star, Open in Split View, Mark as
+  Manuscript, Mark as Draft folder, Rename, Move to… — no delete. It is Swift's
+  row menu minus the Finder items, and Swift's has no delete either.
+- **No keyboard delete.** Nothing in `App.tsx`'s shortcut table or
+  `lib/shortcuts.ts` binds Delete or Backspace to anything, and the tree rows
+  are `<button>`s with no key handling of their own.
+- **Drag** (`useTreeDrag`, §18) has exactly one destination kind — a folder, or
+  the vault-root strip. The sidebar's `Trash` rail button *opens* the Recently
+  Deleted sheet; it is not a drop target.
+- **The command palette** has no delete verb, and neither do the outline, the
+  corkboard, the chapter rail or the manuscript home screen.
+- **`RightPane`'s "Delete"** is a *comment*, not a document. Left alone.
+
+So this is one gate, not a shared one retro-fitted across five callers. The new
+`deleteQuestion()` sits beside the affordance and is written to be the single
+place a second caller would come to, if one ever appears.
+
+**Folders are a latent branch, on purpose.** `DeleteAffordance` renders on file
+rows only, so nothing in the shipping UI can hand it a folder — but the copy
+for one is written and the count is recursive, because a folder delete is the
+obvious next thing to want and a half-written question is worse than none. It
+was exercised by temporarily rendering the affordance on folder rows in the
+browser preview (see 31d) and then reverting that line.
+
+### 31b. What the gate does NOT change
+
+Everything after the confirmation is the code that was there before, moved
+inside an `if`: evict the buffer first (a pending debounced save would
+resurrect the file), `trashFile`, `removeFromTree`, `forget` the star. No new
+notice, no new error handling, no change to what the editor does when the open
+document goes — `removeFromTree` already clears the selection and closes the
+split, and the editor falls back to its empty state. The brief was a gate.
+
+**The MCP `trash` tool stays unconfirmed**, and that divergence is commented at
+the affordance. `mcp/tools.rs` calls `ops::trash_entry` straight through: an
+agent has no hand to slip, its caller already asked for the delete in words,
+and a modal in a headless surface is a hang, not a safeguard. The safety net is
+the same either way — the file is in Recently Deleted, not gone (§24c).
+
+### 31c. The confirm pattern, and the inconsistency this leaves behind
+
+The brief said to prefer "the in-app styled one" over `window.confirm`. There
+was no in-app styled one. Every confirmation in the app was a `window.confirm`:
+Empty trash (with its count, §24c), Purge one trash row, Restore a version. The
+closest thing to a house style was `ConflictDialog` — a store, a component in
+`components/safety`, one instance mounted in `App` — so the new confirm is
+built to that shape: `state/confirmStore.ts` (`ask()` returns a promise) plus
+`components/safety/ConfirmDialog.tsx`.
+
+**The other three are deliberately untouched.** They are not on the accident
+path this was asked for — every one of them is reached from inside a sheet the
+writer opened on purpose, and two of them are the *permanent* delete, which
+already reads as a different question. Migrating them is a tidy-up for a
+separate pass; noting it here is the whole of the debt.
+
+### 31d. Focus, Enter, and the two things that went wrong getting there
+
+Focus lands on **Cancel**. That is the entire safety property and it is worth
+being blunt about why: a `window.confirm` puts focus on OK, so the writer who
+catches the `×` on the way past and then taps Enter out of habit has confirmed
+a delete without reading a word. Enter is **not** bound globally — it does
+whatever the focused button does, and the focused button is Cancel. Tab to
+Delete and Enter deletes, which is a deliberate act and reads as one. The only
+explicit Enter handling is a fallback for Enter arriving with focus on neither
+button, which answers "no"; a dialog that swallows a key is a dialog the writer
+presses again, harder.
+
+Getting focus onto Cancel took two tries, and both failures are worth keeping:
+
+1. **`Overlay` focuses its own panel on mount**, and effect order does not beat
+   it. `Overlay` is a newly-mounted subtree, so **StrictMode runs its mount
+   effect twice** — and the second pass lands *after* `ConfirmDialog`'s single
+   one. The panel wins. Any dialog that wants focus somewhere specific inside
+   an `Overlay` has this problem.
+2. **`requestAnimationFrame` was the wrong escape.** It never fired at all,
+   because the browser preview was running in a backgrounded pane and a parked
+   compositor does not run frame callbacks. A dialog that only focuses Cancel
+   when somebody is watching is exactly the wrong way round. It is a
+   `setTimeout(…, 0)` now; timers fire regardless.
+
+### 31e. Checked in the browser preview
+
+`npm run dev`, mock backend, on the Ch 01 row of the Lantern vault:
+
+- The `×` opens the dialog instead of deleting. Title
+  `Delete “Ch 01 · A Door of Letters”?`, body "It moves to Recently Deleted,
+  where you can put it back.", buttons Cancel and a red Delete.
+- `document.activeElement` is `.ask-cancel` when the dialog opens.
+- **Enter on a fresh dialog does not delete** — the file stays in the tree.
+- Escape cancels; a click on the backdrop cancels; Cancel cancels. Eleven files
+  before, eleven after, every time.
+- Delete confirms: the row leaves the tree, the open editor falls back to
+  "Nothing open yet", and `Drafts/Ch_01.md` is listed in Recently Deleted —
+  i.e. the post-confirm path is unchanged.
+- Folder copy, with the affordance temporarily rendered on folder rows:
+  `Delete “Characters” and the 3 files inside it?`; `Delete “Episodes” and the
+  1 file inside it?` (singular); adding an *empty* subfolder left it at 3, and
+  putting one note inside that subfolder took it to 4 — so the count is files
+  only, and recursive.
+
+`npm run build` green. No Rust changed, so `cargo test` was not re-run.

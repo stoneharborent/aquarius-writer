@@ -1,0 +1,69 @@
+.ask { padding: 18px 22px 16px; display: flex; flex-direction: column; gap: 16px; }
+
+.ask-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.ask-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink-prose);
+  margin-bottom: 4px;
+  /* A long file name is the common case here; it wraps rather than clipping. */
+  overflow-wrap: anywhere;
+}
+
+.ask-sub {
+  font-family: var(--font-serif);
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.ask-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 0.5px solid var(--line);
+  padding-top: 12px;
+}
+
+.ask-spacer { flex: 1; }
+
+.ask-cancel, .ask-go {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 0.5px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.ask-cancel:hover { background: var(--bg-soft); }
+
+.ask-go {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+}
+
+.ask-go:hover { filter: brightness(1.05); }
+
+/* Destructive: the button that ends something is not the accent colour. */
+.ask-go.danger {
+  background: var(--danger, #c8463b);
+  color: #fff;
+}
+
+/* Focus is on Cancel when the dialog opens, and it has to be visible — the
+   whole gate rests on the writer being able to see that Enter is safe. */
+.ask-cancel:focus, .ask-go:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
