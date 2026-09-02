@@ -118,8 +118,47 @@ pub struct DocEntry {
     pub chunks: usize,
     #[serde(rename = "updatedAt")]
     pub updated_at: i64,
+    /// Set when the document was **looked at and deliberately not embedded**:
+    /// a shader key, a log, a data dump (NOTES §34). The sentence says why.
+    ///
+    /// It is recorded rather than simply passed over so the next pass knows
+    /// the decision was already made and does not pay for it again — and
+    /// because it is keyed by `stamp` like everything else here, editing the
+    /// file re-opens the question by itself. An entry with a reason has no
+    /// `.vec` file, so nothing can rank it and nothing prunes it by mistake.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl DocEntry {
+    /// A document that was embedded.
+    pub fn embedded(stamp: String, chunks: usize) -> Self {
+        Self {
+            stamp,
+            chunks,
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            skipped: None,
+            extra: Map::new(),
+        }
+    }
+
+    /// A document that was read, judged not to be prose, and left alone.
+    pub fn skipped(stamp: String, reason: String) -> Self {
+        Self {
+            stamp,
+            chunks: 0,
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            skipped: Some(reason),
+            extra: Map::new(),
+        }
+    }
+
+    /// Whether this entry means "there is a `.vec` file for this document".
+    pub fn has_vectors(&self) -> bool {
+        self.skipped.is_none()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -301,8 +340,15 @@ pub fn read_all(root: &Path, key: &str) -> Vec<DocVectors> {
 ///
 /// Both are the same rule read two ways: what is not accounted for is not kept.
 pub fn prune(root: &Path, key: &str, manifest: &Manifest) {
-    let keep: std::collections::HashSet<String> =
-        manifest.docs.keys().map(|p| path_hash(p)).collect();
+    // A skipped document is accounted for in the manifest but has no vectors,
+    // so it is deliberately *not* in the keep set: a document that used to be
+    // embedded and is now skipped loses its old `.vec` here.
+    let keep: std::collections::HashSet<String> = manifest
+        .docs
+        .iter()
+        .filter(|(_, entry)| entry.has_vectors())
+        .map(|(path, _)| path_hash(path))
+        .collect();
     let docs_dir = index_dir(root, key).join("docs");
     if let Ok(entries) = std::fs::read_dir(&docs_dir) {
         for entry in entries.filter_map(Result::ok) {
@@ -537,7 +583,13 @@ mod tests {
         let mut manifest = Manifest::new(descriptor("abc123456789"));
         manifest.docs.insert(
             "Drafts/Chapter One.md".into(),
-            DocEntry { stamp: "c0ffee".into(), chunks: 1, updated_at: 1, extra: Map::new() },
+            DocEntry {
+                stamp: "c0ffee".into(),
+                chunks: 1,
+                updated_at: 1,
+                skipped: None,
+                extra: Map::new(),
+            },
         );
         write_manifest(t.path(), key, &manifest).unwrap();
         assert_eq!(read_manifest(t.path(), key).unwrap(), manifest);

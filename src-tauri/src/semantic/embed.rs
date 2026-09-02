@@ -64,6 +64,26 @@ pub const TOKENIZER_FILES: [&str; 4] = [
     "tokenizer_config.json",
 ];
 
+/// How many cores the model is allowed to use — **half of them, at least one.**
+///
+/// This is a comfort setting, not a throughput one. ONNX Runtime's default is
+/// every core it can find, and on an eight-thread box that is exactly what
+/// Royce saw: 750% CPU for the length of a backfill, with a window that felt
+/// stuck because nothing was left to draw it with. Indexing is background
+/// work by definition — it is allowed to take twice as long if the machine
+/// stays usable while it happens.
+///
+/// The knob is `fastembed`'s `InitOptionsUserDefined::with_intra_threads`
+/// (fastembed 6.0.2), which hands ORT's session builder its intra-op thread
+/// count. `ort`'s own `SessionBuilder::with_intra_threads` is the same setting
+/// one layer down; fastembed owns the session, so the fastembed door is the
+/// one to use. There is no inter-op knob exposed at either layer, and none is
+/// wanted: one embedding is one graph, run once.
+pub fn intra_threads() -> usize {
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    (cores / 2).max(1)
+}
+
 pub struct FastEmbed {
     /// `TextEmbedding::embed` takes `&mut self` — the ONNX session is not
     /// re-entrant — so the whole embedder sits behind one lock. Embedding is
@@ -95,7 +115,9 @@ impl FastEmbed {
         let model = fastembed::UserDefinedEmbeddingModel::new(read(MODEL_FILE)?, tokenizer_files)
             .with_pooling(fastembed::Pooling::Cls)
             .with_quantization(fastembed::QuantizationMode::Dynamic);
-        let options = fastembed::InitOptionsUserDefined::new().with_max_length(512);
+        let options = fastembed::InitOptionsUserDefined::new()
+            .with_max_length(512)
+            .with_intra_threads(intra_threads());
         let inner = fastembed::TextEmbedding::try_new_from_user_defined(model, options)
             .map_err(|e| format!("the embedding model would not load: {e}"))?;
         Ok(Self { inner: std::sync::Mutex::new(inner) })
@@ -172,6 +194,17 @@ mod tests {
         let mut zero = vec![0.0f32, 0.0];
         normalize(&mut zero);
         assert_eq!(zero, vec![0.0, 0.0], "a zero vector has no direction to keep");
+    }
+
+    #[test]
+    fn the_model_is_left_at_least_one_core_and_never_takes_them_all() {
+        let n = intra_threads();
+        assert!(n >= 1, "one core is the floor, even on a single-core machine");
+        let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(1);
+        assert!(n <= cores.max(1));
+        if cores > 1 {
+            assert!(n < cores, "the window has to keep a core to draw itself with");
+        }
     }
 
     #[test]
