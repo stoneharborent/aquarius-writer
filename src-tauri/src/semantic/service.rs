@@ -140,17 +140,6 @@ impl SemanticState {
         }
     }
 
-    /// A test-only constructor that starts with a given embedder already in
-    /// hand, so the whole index-and-search path can be exercised without a
-    /// 34 MB download.
-    #[cfg(test)]
-    pub fn with_embedder(app_data_dir: PathBuf, embedder: Arc<dyn Embedder>) -> Self {
-        let s = Self::new(app_data_dir);
-        *s.embedder.lock().unwrap() = Some(embedder);
-        *s.phase.lock().unwrap() = (Phase::Ready, None, None);
-        s
-    }
-
     pub fn model_dir(&self) -> PathBuf {
         model::model_dir(&self.app_data_dir)
     }
@@ -166,7 +155,15 @@ impl SemanticState {
         if !model::is_installed(&self.app_data_dir) {
             return Err(Refusal::model_missing());
         }
-        let loaded = FastEmbed::load(&self.model_dir()).map_err(Refusal::model_broken)?;
+        let loaded = FastEmbed::load(&self.model_dir()).map_err(|e| {
+            // The usual reason a model that is present will not load is that
+            // it is not all there. Re-hash it and say which file is wrong,
+            // rather than handing the writer an ONNX parser's opinion.
+            match model::verify_installed(&crate::updater::net::Network, &self.app_data_dir) {
+                Err(detail) => Refusal::model_broken(detail),
+                Ok(()) => Refusal::model_broken(e),
+            }
+        })?;
         let arc: Arc<dyn Embedder> = Arc::new(loaded);
         *self.embedder.lock().unwrap() = Some(arc.clone());
         Ok(arc)

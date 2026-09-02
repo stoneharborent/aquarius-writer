@@ -128,9 +128,13 @@ impl Embedder for FastEmbed {
 /// each other and two that share none do not. That is enough to test chunking,
 /// the file format, the ranking and the refusals without a 34 MB download, and
 /// it is emphatically **not** enough to search with: it has no idea what a word
-/// means. Nothing outside `#[cfg(test)]` and the browser mock ever holds one.
+/// means. It is compiled out of a release build entirely — the browser
+/// preview's equivalent lives in `src/lib/semantic.ts`, where it belongs.
+#[cfg(test)]
 #[derive(Default)]
 pub struct WordBagEmbedder;
+
+#[cfg(test)]
 
 impl Embedder for WordBagEmbedder {
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {

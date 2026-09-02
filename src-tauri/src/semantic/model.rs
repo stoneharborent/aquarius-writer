@@ -29,8 +29,10 @@ use std::path::{Path, PathBuf};
 /// The release these files live on. Not a version tag of the app: the model
 /// changes on its own schedule, and an app update must never re-download it.
 pub const RELEASE_TAG: &str = "models-v1";
-pub const RELEASE_BASE: &str =
-    "https://github.com/stoneharborent/aquarius-writer/releases/download/models-v1";
+/// Where the files are. Built from the tag above so the two can never drift.
+pub fn release_base() -> String {
+    format!("https://github.com/stoneharborent/aquarius-writer/releases/download/{RELEASE_TAG}")
+}
 
 pub const MODEL_ID: &str = "BAAI/bge-small-en-v1.5";
 pub const PUBLISHER: &str = "baai";
@@ -210,7 +212,7 @@ pub fn download(
     // The release's own checksum file, used as a cross-check. If it disagrees
     // with what is compiled in, something is wrong on the release and the
     // download stops before a byte is trusted.
-    let sums = io.fetch_text(&format!("{RELEASE_BASE}/SHA256SUMS.txt"))?;
+    let sums = io.fetch_text(&format!("{}/SHA256SUMS.txt", release_base()))?;
     let published = crate::updater::overlay::parse_sha256_sums(&sums);
     for file in FILES.iter() {
         if let Some(theirs) = published.get(file.asset) {
@@ -231,7 +233,7 @@ pub fn download(
         let result = (|| -> Result<(), String> {
             let share = file.bytes;
             io.download_file(
-                &format!("{RELEASE_BASE}/{}", file.asset),
+                &format!("{}/{}", release_base(), file.asset),
                 &temp,
                 &|percent| {
                     let so_far = done + (share * percent as u64) / 100;
@@ -401,6 +403,25 @@ mod tests {
         assert!(!is_installed(t.path()));
         assert_eq!(bytes_on_disk(t.path()), 0);
         remove(t.path()).unwrap();
+    }
+
+    /// The real download, against the real release, over the real network.
+    ///
+    /// Off unless `AQ_SEMANTIC_LIVE_DOWNLOAD=1`, because a test suite that
+    /// pulls 35 MB every time it runs is a test suite people stop running.
+    /// It is the one thing the fake above cannot prove: that the asset names
+    /// on `models-v1` are the names this build asks for, and that the bytes
+    /// GitHub serves are the bytes this build pinned.
+    #[test]
+    fn the_published_release_serves_exactly_what_this_build_expects() {
+        if std::env::var_os("AQ_SEMANTIC_LIVE_DOWNLOAD").is_none() {
+            eprintln!("skipped: set AQ_SEMANTIC_LIVE_DOWNLOAD=1 to fetch the real model");
+            return;
+        }
+        let t = TempDir::new("model-live");
+        download(&crate::updater::net::Network, t.path(), &|_| {}).unwrap();
+        assert!(is_installed(t.path()));
+        verify_installed(&crate::updater::net::Network, t.path()).unwrap();
     }
 
     #[test]

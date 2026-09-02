@@ -71,6 +71,16 @@ impl AquariusMcp {
             crate::commands::CHANGE_EVENT,
             serde_json::json!({ "workflowId": workflow_id }),
         );
+        // And the semantic index, for the same reason. Every mutating tool
+        // ends here, so hooking it once covers write_document, the three
+        // narrow edits, the renames, the moves and the trash — rather than
+        // eight call sites, one of which would eventually be forgotten. The
+        // pass compares content hashes and embeds only what actually changed,
+        // and it runs on a background thread, so a tool call does not wait for
+        // it. Does nothing at all when there is no model.
+        if let Ok(root) = self.state().root_for(workflow_id) {
+            crate::semantic::service::spawn_sync(&self.app, workflow_id.to_string(), root);
+        }
     }
 }
 
