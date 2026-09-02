@@ -167,10 +167,10 @@ fn has_extension(root: &Path, ext: &str, depth: usize) -> bool {
     let Ok(entries) = fs::read_dir(root) else { return false };
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().to_string();
-        if super::paths::is_ignored_name(&name) || name == super::paths::AQ_DIR {
+        let Ok(ft) = entry.file_type() else { continue };
+        if super::paths::skip_entry(&name, ft.is_dir()) {
             continue;
         }
-        let Ok(ft) = entry.file_type() else { continue };
         if ft.is_file() && name.to_lowercase().ends_with(&format!(".{ext}")) {
             return true;
         }

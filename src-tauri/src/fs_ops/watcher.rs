@@ -14,7 +14,7 @@
 //! Survivors are debounced (300 ms of quiet) into a single "something changed"
 //! callback — a burst of thirty events from a `git checkout` is one reload.
 
-use crate::vault::paths::{is_ignored_name, is_metadata};
+use crate::vault::paths::{is_ignored_dir, is_ignored_name, is_metadata};
 use notify::{RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -93,11 +93,30 @@ pub fn is_interesting(root: &Path, path: &Path, self_writes: &SelfWrites) -> boo
     if is_metadata(root, path) {
         return false;
     }
-    for comp in path.strip_prefix(root).unwrap_or(path).components() {
-        if let std::path::Component::Normal(name) = comp {
-            if is_ignored_name(&name.to_string_lossy()) {
-                return false;
-            }
+    // Two rules, and the split matters. Every component is checked against
+    // `is_ignored_name` — a dotfile anywhere in the path is noise. Only the
+    // components *above* the last one are checked against `is_ignored_dir`,
+    // because those are certainly directories, and a file called "build" is
+    // still a file the tree shows.
+    //
+    // This is the same rule the tree walk uses, and it has to be: an event the
+    // watcher lets through reloads the workflow, which re-walks the tree and
+    // re-runs the semantic pass. A `npm install` inside a vault would
+    // otherwise be thousands of reloads of a tree that did not change.
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    let names: Vec<String> = rel
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(n) => Some(n.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect();
+    for (i, name) in names.iter().enumerate() {
+        if is_ignored_name(name) {
+            return false;
+        }
+        if i + 1 < names.len() && is_ignored_dir(name) {
+            return false;
         }
     }
     !self_writes.is_own(path)
@@ -206,6 +225,26 @@ mod tests {
         assert!(!is_interesting(root, Path::new("/vault/.aquarius/workflow.json"), &sw));
         assert!(!is_interesting(root, Path::new("/vault/Drafts/.aq-tmp-9f2a"), &sw));
         assert!(!is_interesting(root, Path::new("/vault/.DS_Store"), &sw));
+    }
+
+    #[test]
+    fn a_dependency_folder_never_reloads_the_workflow() {
+        // The expensive half of Royce's "search gets stuck": an event under a
+        // build folder reloads the tree and re-runs the semantic pass, and a
+        // `npm install` inside a vault emits thousands of them.
+        let root = Path::new("/vault");
+        let sw = SelfWrites::default();
+        assert!(!is_interesting(root, Path::new("/vault/node_modules/react/README.md"), &sw));
+        assert!(!is_interesting(root, Path::new("/vault/app/target/debug/build.rs"), &sw));
+        assert!(!is_interesting(
+            root,
+            Path::new("/vault/app/node_modules.nosync/x/index.js"),
+            &sw
+        ));
+        // A *file* whose name happens to be on the folder list is still a file
+        // the tree shows, so its events still count.
+        assert!(is_interesting(root, Path::new("/vault/Notes/build"), &sw));
+        assert!(is_interesting(root, Path::new("/vault/Drafts/Ch_01.md"), &sw));
     }
 
     #[test]

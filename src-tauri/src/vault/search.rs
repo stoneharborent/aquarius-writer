@@ -17,7 +17,7 @@
 //! If one side's behaviour changes, change the other in the same commit —
 //! the same parity rule `vault::frontmatter` carries.
 
-use super::paths::{is_ignored_name, AQ_DIR};
+use super::paths::skip_entry;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -72,11 +72,13 @@ fn walk(root: &Path, dir: &Path, depth: usize, needle: &str, out: &mut Vec<Searc
     let Ok(entries) = fs::read_dir(dir) else { return };
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == AQ_DIR || is_ignored_name(&name) {
+        let path = entry.path();
+        // Not `metadata()`: `file_type()` leaves symlinks unfollowed, so a
+        // symlinked `node_modules` is neither dir nor file here and falls out.
+        let Ok(ft) = entry.file_type() else { continue };
+        if skip_entry(&name, ft.is_dir()) {
             continue;
         }
-        let path = entry.path();
-        let Ok(ft) = entry.file_type() else { continue };
         if ft.is_dir() {
             walk(root, &path, depth + 1, needle, out);
             continue;
@@ -148,6 +150,27 @@ mod tests {
         assert_eq!(hits[0].count, 2);
         assert!(!paths.iter().any(|p| p.ends_with(".jpg")), "binaries are not scanned");
         assert!(!paths.iter().any(|p| p.starts_with(".aquarius")), "metadata is not scanned");
+    }
+
+    #[test]
+    fn build_folders_are_not_searched_and_a_symlink_is_not_followed() {
+        let t = TempDir::new("search-ignore");
+        t.write("Drafts/Ch_01.md", "a bell rang");
+        t.write("node_modules/react/README.md", "bell bell bell bell");
+        t.write("app/target/debug/notes.md", "bell");
+        t.write("Tooling/node_modules.nosync/a/README.md", "bell bell");
+        t.write("Scripts/__pycache__/x.md", "bell");
+        // The Mac convention this project uses itself: the real folder is
+        // `.nosync`, and the name everything else expects is a symlink at it.
+        // Following it would scan the same tree twice; a link pointing upwards
+        // would not terminate at all.
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("node_modules.nosync", t.path().join("Tooling/node_modules"))
+            .unwrap();
+
+        let hits = search(t.path(), "bell", usize::MAX);
+        let paths: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+        assert_eq!(paths, vec!["Drafts/Ch_01.md"], "only the writer's own file");
     }
 
     #[test]

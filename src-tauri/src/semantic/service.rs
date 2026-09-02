@@ -287,11 +287,13 @@ fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == crate::vault::paths::AQ_DIR || crate::vault::paths::is_ignored_name(&name) {
-            continue;
-        }
         let path = entry.path();
         let Ok(ft) = entry.file_type() else { continue };
+        // The backfill embeds what this returns, so a dependency folder here
+        // is 2,870 generated READMEs through a neural network.
+        if crate::vault::paths::skip_entry(&name, ft.is_dir()) {
+            continue;
+        }
         if ft.is_dir() {
             walk(root, &path, depth + 1, out);
         } else if ft.is_file() && is_text(&name) {

@@ -77,12 +77,75 @@ pub fn is_metadata(root: &Path, abs: &Path) -> bool {
 
 /// Files we never show and never react to: dotfiles, editor swap files, and
 /// our own atomic-write temporaries.
+///
+/// This is about *names*, and it is also a **guard**: `vault::ops` refuses to
+/// create, rename or move anything that matches, with "that name is reserved
+/// for app temporaries". So it must stay a short list of names nobody would
+/// deliberately give a document. Build folders are a different question and
+/// live in `is_ignored_dir` below — a writer may legitimately want a folder
+/// called "Out", and refusing the rename would be worse than walking it.
 pub fn is_ignored_name(name: &str) -> bool {
     name.starts_with('.')
         || name.ends_with('~')
         || name.ends_with(".swp")
         || name.ends_with(".tmp")
         || name.starts_with(crate::fs_ops::atomic::TMP_PREFIX)
+}
+
+/// Directory names that hold a machine's output rather than a writer's work.
+///
+/// A vault is a folder someone chose, and people put folders inside folders.
+/// Royce's vault has code repositories in it, and before this list existed the
+/// walk found **19,304 directories where 2,481 are his, and 3,539 markdown
+/// files where 667 are his** — the other 2,870 were `README.md` files inside
+/// `node_modules`. Everything that walks the tree paid that 5–8× over: the
+/// sidebar, Backlinks, the graph, the semantic backfill, the watcher.
+///
+/// The list is deliberately built in and deliberately short. It is the set of
+/// names that, as a *directory*, mean "generated, reproducible, not prose" in
+/// the ecosystems a writer is most likely to have sitting next to their notes.
+/// If a writer ever genuinely needs one of these walked, the answer is a
+/// per-vault ignore file, not a longer built-in list — see docs/NOTES.md §33.
+pub const IGNORED_DIR_NAMES: &[&str] = &[
+    "node_modules",   // npm / yarn / pnpm
+    "target",         // cargo
+    "dist",           // almost every bundler
+    "build",          // cmake, gradle, sphinx, xcode
+    "out",            // go, next.js, javac
+    "__pycache__",    // python bytecode
+    "venv",           // python virtualenv (`.venv` is already a dotfile)
+    "Pods",           // cocoapods
+    "DerivedData",    // xcode
+    "vendor",         // go modules, composer, bundler
+];
+
+/// True for a **directory** name we never walk into.
+///
+/// Two rules. The first is `IGNORED_DIR_NAMES`, compared case-insensitively
+/// because macOS filesystems are.
+///
+/// The second is the `.nosync` suffix, and it is the more interesting one:
+/// this project's own `scripts/nosync-link.sh` renames a folder to
+/// `<name>.nosync` precisely to tell iCloud not to sync it, then symlinks the
+/// original name at it. The suffix is a Mac convention meaning "bulk, derived,
+/// not worth syncing" — which is the same thing this walk wants to know. So
+/// `target.nosync` and `node_modules.nosync` are skipped by the suffix even
+/// when the base name is not on the list.
+pub fn is_ignored_dir(name: &str) -> bool {
+    if name.ends_with(".nosync") {
+        return true;
+    }
+    IGNORED_DIR_NAMES.iter().any(|d| d.eq_ignore_ascii_case(name))
+}
+
+/// The one question a tree walk asks about a directory entry it just read.
+///
+/// `is_dir` must come from `DirEntry::file_type()`, which does **not** follow
+/// symlinks — a symlinked directory reports as neither file nor dir and is
+/// dropped by the caller, which is what keeps a `node_modules -> node_modules.nosync`
+/// link from being walked twice and a link to an ancestor from hanging.
+pub fn skip_entry(name: &str, is_dir: bool) -> bool {
+    name == AQ_DIR || is_ignored_name(name) || (is_dir && is_ignored_dir(name))
 }
 
 /// `~`-shortened display path for the workflow picker.
@@ -138,5 +201,42 @@ mod tests {
         assert!(is_ignored_name("Ch_01.md~"));
         assert!(is_ignored_name(".aq-tmp-abc"));
         assert!(!is_ignored_name("Ch_01.md"));
+    }
+
+    #[test]
+    fn build_folders_are_not_the_writers_work() {
+        for name in IGNORED_DIR_NAMES {
+            assert!(is_ignored_dir(name), "{name} should be skipped");
+        }
+        // macOS filesystems are case-insensitive, so the rule is too.
+        assert!(is_ignored_dir("Node_Modules"));
+        assert!(is_ignored_dir("DERIVEDDATA"));
+        // A writer's own folders are not on the list.
+        assert!(!is_ignored_dir("Characters"));
+        assert!(!is_ignored_dir("Outline"), "a prefix is not a match");
+        assert!(!is_ignored_dir("Distant Shores"));
+    }
+
+    #[test]
+    fn the_nosync_suffix_is_ignored_whatever_it_is_called() {
+        assert!(is_ignored_dir("target.nosync"));
+        assert!(is_ignored_dir("node_modules.nosync"));
+        // The suffix carries the rule on its own — the base name need not be
+        // on the list at all.
+        assert!(is_ignored_dir("Footage.nosync"));
+        assert!(!is_ignored_dir("nosync"));
+        assert!(!is_ignored_dir("Chapter.nosync.md"), "that is a file name, not a folder");
+    }
+
+    #[test]
+    fn a_build_folder_is_only_ignored_as_a_folder() {
+        // The name rule is a guard in `vault::ops` — a *document* called
+        // "build" must still be creatable and renamable.
+        assert!(!is_ignored_name("build"));
+        assert!(!skip_entry("build", false));
+        assert!(skip_entry("build", true));
+        assert!(skip_entry(".aquarius", true));
+        assert!(skip_entry(".DS_Store", false));
+        assert!(!skip_entry("Ch_01.md", false));
     }
 }

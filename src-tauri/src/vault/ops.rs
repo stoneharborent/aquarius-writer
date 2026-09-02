@@ -112,10 +112,10 @@ pub fn list_folder(root: &Path, rel: &str) -> OpResult<Vec<FolderEntry>> {
     let mut out = Vec::new();
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == paths::AQ_DIR || paths::is_ignored_name(&name) {
+        let Ok(ft) = entry.file_type() else { continue };
+        if paths::skip_entry(&name, ft.is_dir()) {
             continue;
         }
-        let Ok(ft) = entry.file_type() else { continue };
         let Some(path) = paths::rel_from_root(root, &entry.path()) else { continue };
         if ft.is_dir() {
             out.push(FolderEntry { name, path, kind: "folder".into(), words: None });

@@ -6,7 +6,7 @@
 //! have their data without the renderer reading every file.
 
 use super::frontmatter;
-use super::paths::{is_ignored_name, AQ_DIR};
+use super::paths::{is_ignored_name, skip_entry};
 use crate::model::VaultNode;
 use std::fs;
 use std::path::Path;
@@ -74,13 +74,16 @@ fn walk_dir(
 
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == AQ_DIR || is_ignored_name(&name) {
-            continue;
-        }
         let path = entry.path();
         // `file_type` does not follow symlinks — a symlinked directory is
         // reported as a symlink, so we never recurse into one and can't loop.
+        // It is also what tells `skip_entry` whether the build-folder rule
+        // applies: `node_modules` the folder is skipped, a file of that name
+        // would not be.
         let Ok(ft) = entry.file_type() else { continue };
+        if skip_entry(&name, ft.is_dir()) {
+            continue;
+        }
         let rel = match super::paths::rel_from_root(root, &path) {
             Some(r) => r,
             None => continue,
@@ -233,6 +236,56 @@ pub fn front_matter_in(root: &Path, folder: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_walk_skips_dependency_folders_and_does_not_follow_symlinks() {
+        use crate::testutil::TempDir;
+        let t = TempDir::new("tree-ignore");
+        t.write("Drafts/Ch_01.md", "words");
+        t.write("Characters/Old Sennet.md", "words");
+        t.write("node_modules/react/README.md", "generated");
+        t.write("node_modules/react/lib/README.md", "generated");
+        t.write("Site/dist/index.md", "generated");
+        t.write("Site/build/index.md", "generated");
+        t.write("Rust/target/debug/x.md", "generated");
+        t.write("Scripts/__pycache__/x.md", "generated");
+        t.write("Scripts/venv/lib/x.md", "generated");
+        t.write("Xcode/Pods/x.md", "generated");
+        t.write("Xcode/DerivedData/x.md", "generated");
+        t.write("Go/vendor/x.md", "generated");
+        t.write("Tooling/node_modules.nosync/a/README.md", "generated");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("node_modules.nosync", t.path().join("Tooling/node_modules"))
+            .unwrap();
+        // A *file* named like a build folder is still the writer's, and a
+        // folder whose name merely starts with one is not on the list.
+        t.write("Notes/build", "a file, not a folder");
+        t.write("Outline/One.md", "words");
+
+        let (node, stats) = walk(t.path(), "Vault").unwrap();
+        let mut found: Vec<String> = Vec::new();
+        fn collect(n: &VaultNode, out: &mut Vec<String>) {
+            if !n.path.is_empty() {
+                out.push(n.path.clone());
+            }
+            for c in n.children.iter().flatten() {
+                collect(c, out);
+            }
+        }
+        collect(&node, &mut found);
+        found.sort();
+
+        assert!(!found.iter().any(|p| p.contains("node_modules")), "found: {found:?}");
+        assert!(!found.iter().any(|p| p.contains("target/")), "found: {found:?}");
+        assert!(!found.iter().any(|p| p.contains("dist")), "found: {found:?}");
+        assert!(!found.iter().any(|p| p.contains("__pycache__")), "found: {found:?}");
+        assert!(!found.iter().any(|p| p.contains("DerivedData")), "found: {found:?}");
+        assert!(found.iter().any(|p| p == "Drafts/Ch_01.md"));
+        assert!(found.iter().any(|p| p == "Notes/build"), "a file is not a build folder");
+        assert!(found.iter().any(|p| p == "Outline/One.md"), "a prefix is not a match");
+        // Four documents and one extensionless file — nothing generated.
+        assert_eq!(stats.items, 4, "found: {found:?}");
+    }
     use crate::testutil::TempDir;
 
     fn fixture() -> TempDir {
