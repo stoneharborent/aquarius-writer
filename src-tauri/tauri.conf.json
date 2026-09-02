@@ -54,6 +54,9 @@
         "desktopTemplate": "linux/aquarius-writer.desktop",
         "recommends": ["pandoc", "texlive-xetex"]
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.3"
     }
   }
 }

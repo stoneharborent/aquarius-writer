@@ -56,6 +56,27 @@ semver = "1"
 # webview; this side only owns the pipe.
 portable-pty = "0.9"
 
+# Search by meaning (src/semantic/). `fastembed` is the embedding library: it
+# wires ONNX Runtime and the Hugging Face tokenizer together and does the mean
+# pooling for us, which is exactly the "wire it through a library, pin it,
+# never write our own" rule the Fountain parser follows.
+#
+# Two features are deliberately turned OFF:
+#
+#   hf-hub        fastembed's own model downloader. The app has exactly one
+#                 downloader — the updater's ureq + sha2 path — and the model
+#                 comes from OUR GitHub release, verified against a checksum.
+#                 Leaving this on would give the app a second, unchecked way
+#                 to pull 34 MB off the internet.
+#   image-models  vision embedders we do not ship, and the `image` crate that
+#                 comes with them.
+#
+# `ort-download-binaries-rustls-tls` fetches a prebuilt ONNX Runtime during
+# `cargo build` over rustls, so no OpenSSL is needed on the build machine —
+# the same reason `ureq` is configured that way above. See docs/NOTES.md §32
+# for what that prebuilt turned out to be on each platform.
+fastembed = { version = "6", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 

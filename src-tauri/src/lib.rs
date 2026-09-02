@@ -22,6 +22,7 @@ mod fs_ops;
 mod mcp;
 mod model;
 mod pty;
+mod semantic;
 mod sessions;
 mod state;
 mod testutil;
@@ -128,6 +129,7 @@ pub fn run() {
             commands::pty_resize,
             commands::pty_kill,
             commands::pty_resolve_path,
+            commands::semantic_embed_probe,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aquarius Writer");

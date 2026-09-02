@@ -1082,3 +1082,17 @@ pub fn dev_log(line: String) {
         println!("[smoke] {line}");
     }
 }
+
+/// **Spike only.** Embed one string and hand back its vector.
+///
+/// This exists to prove, from inside the real shell on a real machine, that
+/// the ONNX Runtime linked and the model loads — the Phase-1 gate in
+/// `docs/semantic-search-research.md` §7. It takes a folder path rather than
+/// using the app's model folder deliberately: it must be usable before any of
+/// the download plumbing exists. Not in the command list on a release build.
+#[tauri::command]
+pub fn semantic_embed_probe(model_dir: String, text: String) -> Result<Vec<f32>, String> {
+    use crate::semantic::embed::Embedder;
+    let embedder = crate::semantic::embed::FastEmbed::load(std::path::Path::new(&model_dir))?;
+    Ok(embedder.embed(&[text])?.pop().unwrap_or_default())
+}

@@ -221,11 +221,40 @@ jobs:
       - name: Install the npm packages
         run: npm ci
 
+      # ---- The search-by-meaning model ---------------------------------------
+      # Plain English: "search by meaning" needs a 34 MB model file that is NOT
+      # in this repo — it lives on the `models-v1` release, and the app
+      # downloads it the first time a person asks for it. That means the test
+      # that proves the model actually loads and embeds a sentence would
+      # otherwise skip itself here, and we would find out it was broken from
+      # Royce instead of from CI.
+      #
+      # So: download the same files the app downloads, into a scratch folder,
+      # and point the tests at it. If the download fails the tests still run —
+      # that one test simply skips, exactly as it does on a developer's machine
+      # with no model. A GitHub outage should not turn into a red build.
+      - name: Fetch the embedding model for the tests
+        continue-on-error: true
+        run: |
+          set -euxo pipefail
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/models-v1"
+          mkdir -p "${RUNNER_TEMP}/aq-model"
+          cd "${RUNNER_TEMP}/aq-model"
+          for f in model_quantized.onnx tokenizer.json config.json \
+                   special_tokens_map.json tokenizer_config.json; do
+            curl -fsSL -o "$f" "${base}/bge-small-en-v1.5--$f"
+          done
+          ls -l
+
       # ---- Checks -----------------------------------------------------------
       # Run before the slow part, so a broken backend fails in two minutes
       # rather than twenty.
       - name: Run the Rust tests
         working-directory: src-tauri
+        env:
+          # Where the step above put the model. The tests that need it read
+          # this; every other test ignores it.
+          AQ_SEMANTIC_MODEL_DIR: ${{ runner.temp }}/aq-model
         run: cargo test
 
       # ---- The actual build --------------------------------------------------
