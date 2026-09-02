@@ -36,6 +36,7 @@ import {
 } from "@/state/shellStore";
 import { collectScenes, parseTitleBlock } from "@/lib/fountain";
 import { useDeferredText } from "@/lib/defer";
+import { isFrontMatter } from "@/lib/manuscript";
 import type { ChapterStatus } from "@/types/vault";
 import "./MainWindow.css";
 
@@ -325,12 +326,21 @@ function DocView({ path, pane = "primary", readOnly = false }: {
   const secondary = pane === "secondary";
   const current = useVault((s) => s.current);
   const activeDraftId = useVault((s) => s.activeDraftId);
+  const activeManuscriptId = useVault((s) => s.activeManuscriptId);
   const selectPath = useVault((s) => s.selectPath);
   const setView = useVault((s) => s.setView);
   const reorderChapters = useVault((s) => s.reorderChapters);
   const draft = current?.drafts.find((d) => d.id === activeDraftId) ?? current?.drafts[0];
-  const chapters = draft?.chapterOrder ?? current?.manuscripts[0]?.chapterOrder ?? [];
-  const isChapter = path ? chapters.includes(path) : false;
+  const manuscript =
+    current?.manuscripts.find((m) => m.id === activeManuscriptId) ?? current?.manuscripts[0];
+  const chapters = draft?.chapterOrder ?? manuscript?.chapterOrder ?? [];
+  // The rail belongs to a document *of the manuscript* — which since PARITY
+  // row 8 includes its front matter, deliberately kept out of the chapter
+  // order. Opening the title page should not make the chapter rail vanish.
+  const isChapter = path
+    ? chapters.includes(path)
+      || (manuscript ? isFrontMatter(manuscript.folder, path) : false)
+    : false;
 
   if (!path || !current) return <EditorPlaceholder selectedPath={path} />;
 

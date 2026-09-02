@@ -196,3 +196,162 @@
   font-size: 10px;
   color: var(--ink-mute);
 }
+
+/* ── Chapter rail: stats, working draft, front matter (PARITY row 8) ────── */
+
+.rail-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+}
+
+.rail-stats-rule {
+  width: 1px;
+  height: 9px;
+  background: var(--line);
+}
+
+.rail-section {
+  padding: 10px 12px 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+}
+
+/* The Working Draft pill sits above the sections it governs, because the cut
+   is what the chapters below it are chapters OF. */
+.rail-draft {
+  position: relative;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rail-draft-pill {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.rail-draft-pill:hover:not(:disabled) { background: var(--accent-soft); }
+.rail-draft-pill:disabled { cursor: default; }
+
+.rail-draft-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  flex-shrink: 0;
+}
+
+.rail-draft-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.rail-draft-caret {
+  color: var(--ink-mute);
+  font-size: 10px;
+}
+
+.rail-draft-menu {
+  position: absolute;
+  z-index: 20;
+  left: 10px;
+  right: 10px;
+  top: calc(100% - 6px);
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.14);
+}
+
+.rail-draft-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.rail-draft-item:hover { background: var(--bg-soft); }
+
+.rail-draft-item.on { color: var(--accent); font-weight: 600; }
+
+.rail-draft-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+}
+
+.rail-front {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rail-front-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 10px 5px 12px;
+  border: none;
+  border-left: 2px solid transparent;
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.rail-front-item:hover { background: rgba(0, 0, 0, 0.03); }
+:root[data-theme="midnight"] .rail-front-item:hover { background: rgba(255, 255, 255, 0.04); }
+
+.rail-front-item.selected {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+
+/* A slot with no file behind it: present, quiet, and a "+" that makes one. */
+.rail-front-item.missing .rail-front-name { color: var(--ink-mute); }
+
+.rail-front-mark {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+}
