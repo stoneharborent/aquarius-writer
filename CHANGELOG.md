@@ -6,6 +6,15 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## Unreleased
+
+- **Naming a snapshot happens inside Aquarius now.** "Take snapshot" in the
+  Versions pane used to pop up the system's own little grey box to ask what to
+  call it. It asks in the app's own window instead — same wording you would
+  expect, the name already filled in and selected so you can just start typing,
+  Enter to save it, Escape to back out. Leave it blank and the snapshot is
+  called "Snapshot", exactly as before.
+
 ## v0.5.4 — 2026-09-02
 
 - **Deleting a document asks first.** The small "×" on a file in the sidebar

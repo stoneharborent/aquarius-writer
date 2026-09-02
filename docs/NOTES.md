@@ -5012,3 +5012,93 @@ trash:
   "snapshotted first" behaviour it always had.
 
 `npm run build` green. No Rust changed, so `cargo test` was not re-run.
+
+### 31h. The last script dialog: `window.prompt` becomes a real field
+
+*2026-09-02, the separate task §31f said this would be. One call site, and the
+question was never whether to convert it but where to put the input.*
+
+**What was converted.** One hit: `rightpane/RightPane.tsx`, the Versions
+"Take snapshot" button, which asked for a label with
+
+```js
+const label = window.prompt("Snapshot label:", "Snapshot");
+```
+
+`tauri-plugin-dialog` does not shim `prompt` (§31f), so inside the shell this
+fell through to WebKitGTK's own script dialog — a real, working, blocking GTK
+modal titled `JavaScript - http://localhost:1420/`, in the system font, in the
+system palette, with system buttons. It worked. It just did not belong to this
+app. `grep -rn "window.prompt\|window.confirm\|window.alert" src` now returns
+comments only, and `ConfirmDialog.tsx`'s header comment says outright that all
+three globals are off-limits here and why, so the next person does not have to
+find §31f to learn it.
+
+**A sibling, not a fork.** `confirmStore` grew `askText()` (and `promptAsk()`
+beside `confirmAsk()`) rather than getting a `promptStore` next to it, and
+`ConfirmDialog` renders the two variants off one `pending` slot that is now a
+tagged union — `{ kind: "confirm" | "prompt" }`. Two stores would have been
+less code to read in isolation and the wrong shape: each dialog mounts its own
+`Overlay`, every mounted `Overlay` puts an Escape listener on `window`, and
+§31f had already had to reach for a capture-phase handler to make one Escape do
+one thing. One slot means one mount, one Escape handler, and no ordering
+question between them. The cancel value differs per kind (`false` vs `null`),
+so backing out goes through a `dismiss()` on the store — the dialog should not
+be the thing that knows what "no" is worth.
+
+**Focus goes to the field, and that is the opposite of §31d on purpose.** The
+confirm focuses Cancel because the reflex Enter must not delete a chapter. A
+prompt creates a snapshot; the worst a reflex Enter does is make one called
+"Snapshot", which is exactly what the writer would have got from the old
+`prompt`'s pre-filled, pre-selected default anyway. Focusing Cancel here would
+buy nothing and cost a click before every label. So: focus the input, `select()`
+the initial text so the first keystroke replaces it, Enter submits. The safety
+rule from §31d is about the *destructive* question, not about dialogs in
+general, and it is worth writing that down before someone "fixes" this one for
+consistency.
+
+The focus still rides the `setTimeout(…, 0)` from §31d — same reason, same
+StrictMode double-mount of `Overlay`, and `requestAnimationFrame` is still
+wrong in a parked compositor.
+
+**Enter is handled on the panel, not on the `<input>`.** Focus arrives on a
+zero timer, so an Enter that beats the timer lands on the panel; bound to the
+input alone it would do nothing and the writer would press it again. The
+handler skips events whose target is a `<button>`, which the engine activates
+itself.
+
+**Empty means "the usual".** `askText` takes a `fallback` (defaulting to
+`initial`) and resolves `typed.trim() || fallback`, so the store does the trim
+and the empty-field default that the caller used to do inline. The caller
+passes `fallback: "Snapshot"`, which is the old
+`label.trim() || "Snapshot"` moved one level down; everything after it —
+`takeSnapshot(wf, path, label, bodyNow())` then `reload()` — is byte-for-byte
+what it was.
+
+The copy changed with the box. `Snapshot label:` was a field label for a
+system dialog; the in-app one has a title, "Name this snapshot", a line of
+plain language under it, and a button that says `Take snapshot` rather than OK.
+
+### 31i. Checked in the browser preview (the prompt)
+
+`npm run dev`, mock backend, Lantern vault, `Drafts/Ch_01.md` open, right pane
+on Versions:
+
+- **Take snapshot** opens the in-app dialog, not a GTK modal.
+  `document.activeElement` is `.ask-input`, its value is `Snapshot`, and
+  `selectionStart`/`selectionEnd` are `0`/`8` — focused *and* selected.
+- **Enter on an untouched dialog** adds one version, named `Snapshot`.
+- **A typed label then Enter** adds `Second pass`.
+- **Escape** closes the dialog and adds nothing (2 versions before, 2 after).
+- **Cancel** adds nothing. **A click on the backdrop** adds nothing.
+- **A field of spaces + Take snapshot** adds one version named `Snapshot` —
+  the trim and the fallback.
+- Regression on the confirm variant, which now shares the slot: Versions
+  **Restore** still reads `Restore “Drafts/Ch_01.md”?`, still focuses
+  `.ask-cancel`, has no input, cancels on Escape with the version list
+  unchanged, and on confirm still writes `Before restore ★` to the top of the
+  list.
+
+`npm run build` green. No Rust changed, so `cargo test` was not re-run, and the
+shell was not rebuilt for this — there is no `prompt` call left for WebKitGTK
+to draw a modal for, so the §31f photograph has nothing to reproduce.

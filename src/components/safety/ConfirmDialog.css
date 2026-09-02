@@ -67,3 +67,25 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* The text prompt's field. Same tokens as the rest of the dialog — the input
+   is the focused element on open, so its focus ring is the one the writer
+   sees first. */
+.ask-input {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 0.5px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--ink);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ask-input::placeholder { color: var(--ink-soft); }
+
+.ask-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

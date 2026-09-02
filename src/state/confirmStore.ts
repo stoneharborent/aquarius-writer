@@ -1,7 +1,8 @@
 import { create } from "zustand";
 
 /**
- * The app's one way of asking "are you sure?".
+ * The app's one way of asking the writer something mid-action — "are you
+ * sure?", and "what should this be called?".
  *
  * Before this store the answer was `window.confirm`, which the webview draws
  * itself: a system alert in a system font, in the wrong palette, with buttons
@@ -26,6 +27,15 @@ import { create } from "zustand";
  * replaces `window.confirm` with an **async** function, so it hands back a
  * pending Promise, a Promise is truthy, and `if (!window.confirm(…)) return;`
  * never returns. The three gates it guarded were open for months. NOTES §31f.
+ *
+ * `askText()` is the same machinery asking for a *string* instead of a yes/no,
+ * and it is here rather than in a store of its own so that the two questions
+ * share one pending slot, one `Overlay` mount and one Escape handler — two
+ * dialogs listening for Escape on `window` is the bug §31f had to fix once
+ * already. It replaces the last `window.prompt`, which `tauri-plugin-dialog`
+ * does *not* shim: it fell through to a raw WebKitGTK modal titled
+ * "JavaScript - http://localhost:1420/", which worked and looked like nothing
+ * else in the app. NOTES §31h.
  */
 export interface ConfirmRequest {
   /** The question, as a sentence. e.g. `Delete “Ch_03.md”?` */
@@ -38,12 +48,44 @@ export interface ConfirmRequest {
   destructive?: boolean;
 }
 
+export interface PromptRequest {
+  /** The ask, as a sentence. e.g. `Name this snapshot` */
+  title: string;
+  /** Optional line under the title, in plain language. */
+  body?: string;
+  /** Greyed hint inside the empty field. */
+  placeholder?: string;
+  /** What the field starts with, selected, so typing replaces it. */
+  initial?: string;
+  /** Label for the button that submits. */
+  confirmLabel: string;
+  /**
+   * What an empty field means. Submitting nothing is a writer saying "the
+   * usual, please", not a writer asking for a version called "". Defaults to
+   * `initial`.
+   */
+  fallback?: string;
+}
+
+/** One slot, either question. The dialog switches on `kind`. */
+export type Pending =
+  | { kind: "confirm"; id: number; req: ConfirmRequest }
+  | { kind: "prompt"; id: number; req: PromptRequest };
+
 interface ConfirmState {
-  pending: (ConfirmRequest & { id: number }) | null;
+  pending: Pending | null;
   /** Ask. Resolves `true` if the writer confirmed, `false` for anything else. */
   ask: (req: ConfirmRequest) => Promise<boolean>;
+  /** Ask for a string. Resolves the text, or `null` if the writer backed out. */
+  askText: (req: PromptRequest) => Promise<string | null>;
   /** Answer the open request. Called by the dialog only. */
-  answer: (ok: boolean) => void;
+  answer: (value: boolean | string) => void;
+  /**
+   * Back out of the open request — Escape, the backdrop, Cancel. Called by the
+   * dialog only. It exists because "no" is a different value for each kind
+   * (`false` / `null`) and only the store should know which.
+   */
+  dismiss: () => void;
 }
 
 let nextId = 1;
@@ -51,27 +93,49 @@ let nextId = 1;
 export const useConfirm = create<ConfirmState>((set, get) => {
   // Held outside the store: a resolver is not state, nothing renders it, and
   // putting a function in the store would make every `set` look like it might
-  // be one.
-  let resolve: ((ok: boolean) => void) | null = null;
+  // be one. `cancelValue` rides along with it for the same reason.
+  let resolve: ((value: never) => void) | null = null;
+  let cancelValue: boolean | string | null = false;
+
+  /**
+   * Open a request, closing any open one with its own "no".
+   *
+   * A second question while one is open answers the first with "no". This
+   * cannot happen from the UI — the dialog covers the app — but a stray caller
+   * silently dropping a promise would leak an awaited delete.
+   */
+  function open<T>(pending: Pending, cancel: boolean | string | null): Promise<T> {
+    (resolve as ((v: unknown) => void) | null)?.(cancelValue);
+    cancelValue = cancel;
+    set({ pending });
+    return new Promise<T>((r) => { resolve = r as (value: never) => void; });
+  }
 
   return {
     pending: null,
 
     ask(req) {
-      // A second question while one is open answers the first with "no". This
-      // cannot happen from the UI — the dialog covers the app — but a stray
-      // caller silently dropping a promise would leak an awaited delete.
-      resolve?.(false);
-      set({ pending: { ...req, id: nextId++ } });
-      return new Promise<boolean>((r) => { resolve = r; });
+      return open<boolean>({ kind: "confirm", id: nextId++, req }, false);
     },
 
-    answer(ok) {
+    askText(req) {
+      return open<string | null>({ kind: "prompt", id: nextId++, req }, null);
+    },
+
+    answer(value) {
       if (!get().pending) return;
       set({ pending: null });
-      const r = resolve;
+      const r = resolve as ((v: unknown) => void) | null;
       resolve = null;
-      r?.(ok);
+      r?.(value);
+    },
+
+    dismiss() {
+      if (!get().pending) return;
+      set({ pending: null });
+      const r = resolve as ((v: unknown) => void) | null;
+      resolve = null;
+      r?.(cancelValue);
     },
   };
 });
@@ -79,4 +143,9 @@ export const useConfirm = create<ConfirmState>((set, get) => {
 /** Ask, from outside React. */
 export function confirmAsk(req: ConfirmRequest): Promise<boolean> {
   return useConfirm.getState().ask(req);
+}
+
+/** Ask for a string, from outside React. */
+export function promptAsk(req: PromptRequest): Promise<string | null> {
+  return useConfirm.getState().askText(req);
 }

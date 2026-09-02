@@ -12,7 +12,7 @@ import { useVault } from "@/state/vaultStore";
 import { useEditor } from "@/state/editorStore";
 import { useOverlay } from "@/state/overlayStore";
 import { useShell } from "@/state/shellStore";
-import { confirmAsk } from "@/state/confirmStore";
+import { confirmAsk, promptAsk } from "@/state/confirmStore";
 import {
   addComment,
   deleteComment,
@@ -165,10 +165,21 @@ function VersionsTab({ wf, path }: { wf: string; path: string }) {
     return d ? stringify(d.frontmatter, d.body) : "";
   };
 
-  const snapshot = () => {
-    const label = window.prompt("Snapshot label:", "Snapshot");
+  // Asked in the app's own dialog, not `window.prompt` — the plugin does not
+  // shim `prompt`, so it fell through to the webview's system script dialog
+  // (docs/NOTES.md §31h). `promptAsk` trims, and turns an empty field into the
+  // "Snapshot" fallback, so everything below is unchanged.
+  const snapshot = async () => {
+    const label = await promptAsk({
+      title: "Name this snapshot",
+      body: "A snapshot keeps the document exactly as it is right now, so you can come back to it later.",
+      placeholder: "Snapshot",
+      initial: "Snapshot",
+      fallback: "Snapshot",
+      confirmLabel: "Take snapshot",
+    });
     if (label === null) return;
-    takeSnapshot(wf, path, label.trim() || "Snapshot", bodyNow());
+    takeSnapshot(wf, path, label, bodyNow());
     reload();
   };
 
