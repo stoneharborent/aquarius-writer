@@ -54,13 +54,17 @@ export function CommandPalette() {
     const out: PaletteItem[] = [];
 
     // Commands
-    const view = (v: "editor" | "outline" | "corkboard") => () => { setView(v); close(); };
+    const view = (v: "editor" | "home" | "outline" | "corkboard") => () => { setView(v); close(); };
     out.push({ id: "v:editor", group: "View", label: "Switch to Editor", hint: "⌘1",
       icon: <BookIcon size={13} color="var(--ink-soft)" />, run: view("editor") });
     out.push({ id: "v:outline", group: "View", label: "Switch to Manuscript outline", hint: "⌘2",
       icon: <BookIcon size={13} color="var(--ink-soft)" />, run: view("outline") });
     out.push({ id: "v:cards", group: "View", label: "Switch to Corkboard", hint: "⌘3",
       icon: <BookIcon size={13} color="var(--ink-soft)" />, run: view("corkboard") });
+    // No shortcut of its own: ⌘2 goes straight to the manuscript you were in,
+    // which is the common act. This is the way to the grid of all of them.
+    out.push({ id: "v:home", group: "View", label: "Switch to All manuscripts",
+      icon: <BookIcon size={13} color="var(--ink-soft)" />, run: view("home") });
 
     // The star for whatever is open. The sidebar's row star needs a hover and
     // a mouse; this is the same flip from the keyboard.

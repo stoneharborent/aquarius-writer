@@ -535,11 +535,13 @@ function QuickViews() {
         <span className="sb-quick-key">⌘T</span>
       </button>
 
-      {/* Outline and Corkboard are two faces of the same manuscript surface,
-          so the row reads as active in both. */}
+      {/* Home, Outline and Corkboard are three faces of the same manuscript
+          surface, so the row reads as active in all of them. It opens the home
+          grid (PARITY row 8) — the card is how you get into one manuscript,
+          and a vault can have more than one. */}
       <button
         className={`sb-row sb-quick-row${view !== "editor" ? " selected" : ""}`}
-        onClick={() => setView("outline")}
+        onClick={() => setView("home")}
       >
         <span className="sb-caret" />
         <BookIcon size={12} color="var(--ink-soft)" />

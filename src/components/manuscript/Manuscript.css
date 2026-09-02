@@ -363,3 +363,182 @@
   font-style: normal;
   color: var(--ink-mute);
 }
+
+/* ── ManuscriptHome (PARITY row 8) ── */
+.ms-tabs-hint {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-mute);
+}
+
+.ms-back {
+  margin-left: 10px;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  color: var(--ink-mute);
+  cursor: pointer;
+}
+
+.ms-back:hover { background: var(--surface); color: var(--ink); }
+
+.ms-home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 18px;
+}
+
+.ms-home-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 20px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 0.5px solid var(--line);
+  box-shadow: 0 1px 0 var(--line), 0 6px 14px rgba(0, 0, 0, 0.04);
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.ms-home-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 1px 0 var(--line), 0 12px 24px rgba(0, 0, 0, 0.07);
+}
+
+.ms-home-icon { margin-bottom: 6px; }
+
+.ms-home-name {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink-prose);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.ms-home-folder {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-mute);
+}
+
+/* The status mix as one thin bar — a book's shape at a glance, without four
+   more numbers on a card that is meant to be read in a second. */
+.ms-home-bar {
+  display: flex;
+  gap: 2px;
+  height: 4px;
+  margin: 12px 0 8px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--bg-soft);
+}
+
+.ms-home-bar-part { flex-basis: 0; }
+
+.ms-home-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+/* ── Status filter chips ── */
+.ms-filter-head { margin-top: 30px; }
+
+.ms-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ms-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.ms-filter:hover:not(:disabled) { background: var(--bg-soft); color: var(--ink); }
+
+.ms-filter:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ms-filter.on {
+  background: var(--accent-soft);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--accent);
+}
+
+.ms-filter-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ms-filter-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-mute);
+}
+
+.ms-filter.on .ms-filter-count { color: inherit; }
+
+.ms-filter-clear { border-style: dashed; }
+
+.ms-nomatch {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--ink-mute);
+  padding: 28px 0;
+  margin: 0;
+}
+
+/* ── The corkboard synopsis, edited in place ── */
+.ms-card-head, .ms-card-title { cursor: pointer; }
+
+.ms-card-syn.empty {
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+.ms-card-syn[role="button"]:hover {
+  background: var(--bg-soft);
+  border-radius: 4px;
+  box-shadow: 0 0 0 4px var(--bg-soft);
+}
+
+/* The box has to sit exactly where the paragraph did, or committing a synopsis
+   would make the card jump. Same face, same size, same line height. */
+.ms-card-syn-edit {
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  background: var(--bg);
+  color: var(--ink-prose);
+  font-family: var(--font-serif);
+  font-size: 13px;
+  line-height: 1.45;
+}

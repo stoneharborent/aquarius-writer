@@ -18,6 +18,7 @@ import { GhostSlot } from "@/components/popout/GhostSlot";
 import { usePopout } from "@/state/popoutStore";
 import { Backlinks } from "@/components/notes/Backlinks";
 import { ManuscriptView } from "@/components/manuscript/ManuscriptView";
+import { ManuscriptHome } from "@/components/manuscript/ManuscriptHome";
 import { RightPane } from "@/components/rightpane/RightPane";
 import { TopBar } from "@/components/shell/TopBar";
 import { Gutter } from "@/components/shell/Gutter";
@@ -129,7 +130,9 @@ export function MainWindow() {
         )}
 
         <main className="mw-editor">
-          {view !== "editor" ? <ManuscriptView /> : <SplitHost />}
+          {view === "home" ? <ManuscriptHome />
+            : view !== "editor" ? <ManuscriptView />
+            : <SplitHost />}
         </main>
 
         {!rightCollapsed && (

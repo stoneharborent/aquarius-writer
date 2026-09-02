@@ -1,26 +1,21 @@
 import { useState } from "react";
-import type { ChapterStatus, VaultNode } from "@/types/vault";
+import type { VaultNode } from "@/types/vault";
 import { useVault } from "@/state/vaultStore";
-import { findNode } from "./ManuscriptView";
-
-const STATUS_COLOR: Record<ChapterStatus, string> = {
-  final: "var(--success)",
-  drafting: "var(--starred)",
-  rev: "var(--warn)",
-  outline: "var(--ink-mute)",
-};
-
-const STATUS_LABEL: Record<ChapterStatus, string> = {
-  final: "Final",
-  drafting: "Drafting",
-  rev: "Revising",
-  outline: "Outline",
-};
+import { findNode, statusOf, STATUS_COLOR, STATUS_LABEL } from "@/lib/manuscript";
 
 export function Outline({
-  chapters, tree,
-}: { chapters: string[]; tree: VaultNode }) {
-  const reorderChapters = useVault((s) => s.reorderChapters);
+  chapters, tree, onReorder,
+}: {
+  chapters: string[];
+  tree: VaultNode;
+  /**
+   * The rearranged list. Taken as a prop rather than calling the store
+   * directly, because the list this component is drawing may be a *filtered*
+   * view of the manuscript — only the parent knows how to put a filtered
+   * order back into the whole one (`spliceFiltered`).
+   */
+  onReorder: (next: string[]) => void;
+}) {
   const selectPath = useVault((s) => s.selectPath);
   const setView = useVault((s) => s.setView);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
@@ -35,7 +30,7 @@ export function Outline({
     const next = [...chapters];
     const [moved] = next.splice(dragFrom, 1);
     next.splice(toIdx, 0, moved);
-    reorderChapters(next);
+    onReorder(next);
     setDragFrom(null);
     setDragOver(null);
   }
@@ -44,7 +39,7 @@ export function Outline({
     <ol className="ms-outline">
       {chapters.map((path, idx) => {
         const node = findNode(tree, path);
-        const status = (node?.frontmatter?.status as ChapterStatus | undefined) ?? "outline";
+        const status = statusOf(node);
         const title = (node?.frontmatter?.title as string | undefined) ?? node?.name ?? path;
         const synopsis = node?.frontmatter?.synopsis as string | undefined;
         const num = String(idx + 1).padStart(2, "0");
