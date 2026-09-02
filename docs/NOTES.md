@@ -4582,3 +4582,197 @@ The fix travels in `usr/lib` inside that copy, so it arrives the same way
 whether the file is run as a single AppImage or unpacked into the overlay.
 Royce simply needs the next build; the broken engine is baked into the 0.5.2
 file already on his disk and no configuration change can rescue it.
+
+---
+
+## 30. Manuscript management, and the two things the Swift audit never said
+
+*PARITY row 8, closed 2026-09-02. The outline and the corkboard have existed
+here since the port landed; everything around them — marking a folder as the
+manuscript, the home screen, the status filters, the front matter, the working
+draft — did not. This section is what shipped, and, more usefully, the two
+places where SWIFT-AUDIT §2.2 names a behaviour without saying how it works,
+where a decision had to be taken and written down rather than guessed at
+silently.*
+
+### 30a. The inversion the roadmap had already admitted to
+
+`docs/PARITY.md`'s closing section says the rule is *"if a human can do it in
+the app, an MCP client can do it too"*, and then names four tools that broke
+the rule in the other direction. Two of them were this row's:
+`toggle_manuscript_folder` and `toggle_draft_folder` shipped in Wave 3, and the
+sidebar had no button for either.
+
+Both are now in the row's ⋯ menu, and they call the same two `vault::ops`
+functions the tools call, through four new thin Tauri commands
+(`vault_toggle_manuscript_folder`, `vault_toggle_draft_folder`,
+`vault_set_active_draft`, `vault_set_synopsis`). Nothing in `commands.rs` for
+this row does any work of its own; every one of them is `root_of` plus a call
+into `ops`.
+
+Two tools went the *other* way in the same change, because the rule runs both
+directions and the UI now does two things an agent could not:
+
+* **`set_active_draft`** — the chapter rail's Working Draft pill. New
+  behaviour in `ops`, so it shipped with its tool.
+* **`list_manuscripts`** — the read side of ManuscriptHome: chapters, words,
+  pages, per-status counts, front matter and drafts in one call. The UI does
+  not call it (it already holds the tree and computes the same numbers from
+  `lib/manuscript.ts`); it exists because a model asking "how long is the book"
+  should not have to read every chapter to find out.
+
+**31 tools → 33.** `mcp/tools.rs`'s `EXPECTED` list is the test that pins it.
+
+### 30b. Decision one: front matter is a file-name convention
+
+SWIFT-AUDIT §2.2 says the ChapterRail has a "FRONT MATTER section (Title page ·
+Dedication · Epigraph)" and never says how those three files are found or
+stored. So this side decided, and the decision is written into the code twice
+so the two halves cannot drift:
+
+> **A manuscript's front matter is a markdown file sitting *directly* in the
+> manuscript's own folder whose name, extension aside, is `Title Page`,
+> `Dedication` or `Epigraph`, compared case-insensitively.**
+
+`tree::FRONT_MATTER_NAMES` / `tree::is_front_matter` on the Rust side,
+`FRONT_MATTER_NAMES` / `isFrontMatter` in `src/lib/manuscript.ts` on the other.
+
+The consequence that matters is the one *not* in the audit: **front matter is
+not a chapter.** `tree::chapter_paths_in` is `markdown_paths_in` minus the
+front matter, and it is what seeds a manuscript's `chapterOrder` — at
+`workflow::infer`, at `toggle_manuscript_folder`, and at the open-time
+`reconcile_chapter_order` (which would otherwise put them straight back). So a
+title page is never chapter one, never counted in "N chapters", and never
+assembled into a compile as prose. `markdown_paths_in` keeps its old meaning
+for anything that wants every file.
+
+Two smaller rules fall out of "directly in the folder":
+`Book/Part One/Title Page.md` is an ordinary document, and
+`Book/Dedication of the Bell.md` is a chapter — the match is on the whole stem,
+not a prefix.
+
+The rail shows **all three rows, always.** A slot with no file behind it is a
+"+" that creates one through the normal `createFile` path. The alternative —
+showing only what exists — means the section materialises out of nowhere the
+first time somebody happens to name a file correctly, which is not a feature
+anyone could find.
+
+One knock-on in `MainWindow.DocView`: the test for "should this document get a
+chapter rail" used to be `chapters.includes(path)`, and front matter is
+deliberately not in `chapters`. It is now *in the chapter order **or** this
+manuscript's front matter*, or opening the title page would make the rail
+vanish.
+
+### 30c. Decision two: where ManuscriptHome lives
+
+The audit calls ManuscriptHome "a home screen the port doesn't have" and does
+not say what opens it. The choice taken:
+
+* **The sidebar's Manuscript quick view opens the home grid.** It is the entry
+  that already means "the manuscript", so the feature gets one door rather than
+  a second one invented for it.
+* **⌘2 still goes straight to the outline** of whichever manuscript you were
+  last in. The common act stays one keystroke; the grid is how you reach the
+  *other* manuscripts. The command palette carries "Switch to All manuscripts"
+  with no shortcut of its own.
+
+`EditorView` gained `"home"` for this. The store gained `activeManuscriptId`
+beside `activeDraftId`: every manuscript surface in the app used to mean
+`manuscripts[0]` silently, which was fine while a vault could only really have
+one. Both cursors are re-pointed at a record that still exists on every
+`refreshTree`, because an MCP client can unmark the manuscript you are looking
+at while you look at it.
+
+### 30d. Pages are `words / 250`, in exactly one place
+
+`pagesFor` in `src/lib/manuscript.ts`, and `words.div_ceil(250)` in
+`ops::list_manuscripts`. 250 words is the paperback rule of thumb — roughly
+what a 6×9 trade page holds — and it is rounded **up**, so seven words are
+still a page rather than none.
+
+The point of putting it in one file is that four surfaces quote it now (the
+summary bar, the ManuscriptHome card, the chapter rail's stats line and the
+MCP tool) and no two of them may ever give a different length for the same
+book. This is emphatically **not** the screenplay's page count: that one is
+real pagination (`fountain-pages.ts`, §27b), because a script's page is a legal
+unit and not an estimate.
+
+### 30e. The status filter has to un-filter before it reorders
+
+The chips filter the outline and the corkboard **together** — one `filter` set
+in `ManuscriptView`, not one per view, because they are two drawings of one
+list and a filter you had to set twice would be a bug wearing a feature's
+clothes.
+
+The interesting part is dragging inside a filtered view.
+`ops::reorder_chapters` refuses anything that is not a permutation of the whole
+chapter order — it rearranges, it never adds or drops — so sending it the four
+visible rows out of twelve would be refused, correctly. `spliceFiltered` puts
+the rearranged visible order back into the full one: the hidden chapters keep
+their exact indices and only the shown slots are re-filled. So a drag in a
+filtered outline moves what you dragged and nothing else, and the write is
+still a permutation.
+
+### 30f. The corkboard synopsis is the only place that writes a file nobody opened
+
+Scrivener's behaviour, and the audit's ("committed to frontmatter"). Two rules
+make it safe:
+
+* **Commit on blur, not per keystroke** (Escape abandons, ⌘⏎ commits). A card is
+  a box you type a sentence into and click away from; a write per letter would
+  be a disk write and a snapshot per letter.
+* **Never a whole-file write.** `vaultStore.setSynopsis` flushes any open buffer
+  for that chapter first (its unsaved text belongs to the writer, and the file
+  is about to change underneath it), calls `ops::set_synopsis` — which is
+  `frontmatter::upsert`, line surgery, so the body and every other key survive
+  byte for byte — and then `reconcile`s the buffer so it ends up holding the
+  file that now exists. The §20 conflict apparatus is untouched: nothing here
+  overwrites a file it last read some time ago.
+
+### 30g. A real bug this found: a folder-backed draft was never active
+
+`ensure_one_active_draft` was called when a draft mark came **off** and not when
+one went **on**. A vault whose only cut arrived via `toggle_draft_folder` —
+which is every vault that starts from a folder of chapters rather than from
+`workflow::infer` — therefore had no active draft at all, so Compile's "the
+active draft" and the rail's Working Draft pill had nothing to point at. One
+line, and `the_working_draft_is_a_choice_that_survives_the_next_open` pins it.
+
+### 30h. What was verified, and the one thing this container cannot do
+
+`cargo test`: **272 passing** (268 before; four new). `npm run build` green.
+
+Verified in the real Tauri shell on a scratch vault (`$HOME/aq-ms-vault`, an
+isolated `XDG_CONFIG_HOME`/`XDG_DATA_HOME` per §28g):
+
+* the window opens on a vault with no manuscript inferred (the folder is called
+  `Book`, which is not in `MANUSCRIPT_FOLDERS`);
+* `toggle_manuscript_folder` over raw MCP JSON-RPC seeded four chapters and
+  left `Title Page.md` out of them;
+* `toggle_draft_folder` on `Book/Second Pass` was accepted and came back active
+  (29g);
+* `list_manuscripts` reported 4 chapters / 65 words / 1 page, one count per
+  status, and the front matter as `[["Title Page", "Book/Title Page.md"]]`;
+* `set_active_draft` moved the flag and refused an unknown id **by listing the
+  ids the vault actually has**;
+* `set_synopsis` wrote the key into `Book/Ch_02.md` with the body untouched;
+* **and the sidebar grew its `MS` chip on `Book` with no restart** — the MCP
+  notify → `refreshTree` path, which is the half of "the tree reflects the mark"
+  that could have gone wrong.
+
+**What this container cannot do is click.** Under `GDK_BACKEND=x11`, xdotool's
+*motion* events reach the webview (hover states appear exactly where you put
+the pointer) but its *button and key* events do not — no click opens a menu, no
+⌘2 changes the view. This is the harness, not the app: every one of those
+interactions was then driven against the same React build in the browser
+preview on `http://localhost:1420`, where the mark menu, the two-card home
+grid, the status chips, the in-place synopsis and the front-matter "+" all
+behave. If you need to prove a *click* on the real shell, you need a human at
+the machine or a different automation route; do not spend an afternoon on
+xdotool the way this session started to.
+
+The browser preview is a real test surface for this row on purpose: the mock
+service in `browser-service.ts` implements the **rules** and not just the
+shapes — the front-matter exclusion, the "a draft folder needs a manuscript
+above it" refusal, and the one-active-draft invariant — so a rule that only
+existed in Rust would be a rule `npm run dev` could not show you breaking.

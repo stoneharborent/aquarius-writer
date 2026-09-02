@@ -26,7 +26,7 @@ import { DEFAULT_GOAL } from "@/lib/vault/sessions";
  * where the Swift audit's silence left the decision to us: the audit names
  * ManuscriptHome and says it is a home screen, but not what opens it. Putting
  * it on the entry that already means "the manuscript" keeps one door instead
- * of inventing a second (docs/NOTES.md §29).
+ * of inventing a second (docs/NOTES.md §30).
  */
 export type EditorView = "editor" | "home" | "outline" | "corkboard";
 

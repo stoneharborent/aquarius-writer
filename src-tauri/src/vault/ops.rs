@@ -1368,6 +1368,11 @@ pub fn toggle_draft_folder(
                 chapter_order: chapters.clone(),
                 folder: Some(rel.to_string()),
             });
+            // A vault whose only cut arrived this way had no active draft at
+            // all until now: `ensure_one_active_draft` was called on removal
+            // and not on addition, so Compile's "the active draft" and the
+            // rail's Working Draft pill had nothing to point at.
+            ensure_one_active_draft(&mut wf);
             FolderRoleReport {
                 path: rel.to_string(),
                 role: "draft".into(),
@@ -2902,6 +2907,11 @@ mod tests {
         workflow::read_or_create(t.path()).unwrap();
         let second = toggle_draft_folder(t.path(), "Drafts/Second Pass", &writes).unwrap();
         let second_id = second.id.unwrap();
+        {
+            // The first cut a vault gets is the active one, however it arrived.
+            let (wf, _) = workflow::read_or_create(t.path()).unwrap();
+            assert_eq!(wf.drafts.iter().filter(|d| d.active == Some(true)).count(), 1);
+        }
 
         let report = set_active_draft(t.path(), &second_id, &writes).unwrap();
         assert_eq!(report.name, "Second Pass");

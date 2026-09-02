@@ -8,6 +8,47 @@ as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches
 
 ## Unreleased
 
+Your book is a thing the app knows about now, not just a folder of files —
+and an emoji no longer closes the app.
+
+- **Tell Aquarius which folder your book lives in.** Open any folder's "⋯" menu
+  in the file list and choose **Mark as Manuscript**. That folder's chapters get
+  an order you can rearrange, a word count, an outline and a corkboard — and the
+  row gets a small **MS** badge so you can see at a glance which folder is the
+  book. Choose it again to take the mark off; nothing on your disk is moved,
+  renamed or deleted either way.
+- **Alternate cuts.** A folder *inside* your manuscript can be marked as a
+  **Draft folder** — a second pass, a shorter version — and you can switch
+  between cuts from the **Working draft** button at the top of the chapter list.
+  Which one you are working in is remembered the next time you open the app.
+- **A home screen for your manuscripts.** Click **Manuscript** in the sidebar
+  and you get a card for each one: how many chapters, how many words, roughly
+  how many pages, and a coloured bar showing how much is finished. Click a card
+  to open it. ⌘2 still takes you straight to the outline of the one you were
+  last in.
+- **Filter by status.** The outline and the cards now have **Outline /
+  Drafting / Revising / Final** buttons with a count on each. Press one and both
+  views show only those chapters, so "what have I still got to revise" is one
+  click. You can still drag chapters around while filtered, and the chapters you
+  have hidden stay exactly where they were.
+- **Write a synopsis straight onto the card.** Click the text on any corkboard
+  card and type. It saves to the chapter itself when you click away (Escape
+  throws the change away). Only the summary line is written — not a comma of
+  your actual chapter is touched.
+- **Front matter.** The chapter list has a **Front matter** section above the
+  chapters, with a row each for **Title page**, **Dedication** and **Epigraph**.
+  Press the "+" beside one and Aquarius makes the file for you, inside your
+  manuscript folder, named `Title Page.md`, `Dedication.md` or `Epigraph.md`.
+  These three are deliberately *not* counted as chapters: your title page is not
+  chapter one, and it is not included when you compile the book.
+- **An AI app can do all of this too, and two things it could not do before.**
+  There are now 33 operations on the MCP door instead of 31: it can pick which
+  draft you are working in, and it can ask for a summary of every manuscript in
+  the vault — chapters, words, pages and how many chapters are at each status —
+  without reading the whole book to work it out.
+- Fixed: if the only version of your book came from marking a folder as a draft,
+  the app had no "working draft" set at all, which left the Compile screen with
+  nothing to point at.
 - **Opening a note with an emoji in it no longer closes the app.** On
   AquariusOS, opening any markdown file containing a colour emoji — a heading
   like "## 🧠 WHO YOU ARE", a ✅ in a list — made the app quit on the spot. The

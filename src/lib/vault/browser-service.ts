@@ -651,6 +651,7 @@ export function createBrowserVaultService(): VaultService {
       LANTERN_WORKFLOW.drafts.push({
         id, name: nameOf(relPath), chapterOrder: chapters, folder: relPath,
       });
+      ensureOneActiveDraft();
       return { path: relPath, role: "draft", marked: true, id, chapters };
     },
 
