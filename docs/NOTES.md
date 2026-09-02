@@ -4303,13 +4303,35 @@ VITE_AQ_BENCH=1 npm run tauri:dev
 is nothing else for `createFile` to fall through to. Every number in §28f was
 taken this way.
 
-The deeper issue is still standing and is worth fixing properly one day:
+The deeper issue was still standing when the above was written:
 **`seed()` mixes an explicit-id write path with an ambient-current-workflow
 one.** A harness that takes a workflow id should use it for every write it
-makes. Until then, the isolated config dir is the guard, and it belongs in the
-command line every single time — the header comment in `typing-bench.ts`
-already says "point it at a scratch folder", and this is the sharp edge that
-warning is about.
+makes. Until that was fixed the isolated config dir was the only guard, and it
+belonged in the command line every single time — the header comment in
+`typing-bench.ts` already said "point it at a scratch folder", and this is the
+sharp edge that warning was about.
+
+**Fixed.** `seed()` has one write path now: all sixty notes go through
+`vault().writeFile(workflowId, …)`, the same explicit id the chapter and the
+screenplay always used. `createFile` is gone from the bench, and with it the
+branch that decided per-note which of the two paths to take. The tree reload
+afterwards is an explicit `loadWorkflow(id)` rather than `refreshTree()`, which
+reads the store's ambient "current" and is the same mistake wearing a different
+coat.
+
+The command line is no longer the only thing standing between the bench and a
+real vault. `assertBenchTarget` runs after `openWorkflow` and before the first
+byte is written, and it throws unless the workflow can account for itself:
+`dev_context` reported this id (i.e. `AQ_DEV_VAULT` registered it), or its
+title or path says "bench", or it is the browser mock, which has no disk. In
+every case the store must have *that* workflow open — the §28g failure was a
+right id with a wrong store, and that is now the first thing checked. A refused
+run says which workflow it found, why it will not write to it, and repeats the
+four export lines above. It writes nothing.
+
+The isolated `XDG_CONFIG_HOME` is still worth setting; it is now belt rather
+than braces. And `seeded: 62 editable files` is still the number to read — the
+bench prints the workflow it settled on directly above it.
 
 ### 28h. Re-entering later
 
