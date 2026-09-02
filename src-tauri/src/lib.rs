@@ -86,6 +86,7 @@ pub fn run() {
             commands::vault_create_sample_workflow,
             commands::vault_load_workflow,
             commands::vault_read_file,
+            commands::vault_search,
             commands::vault_write_file,
             commands::vault_read_binary,
             commands::vault_asset_ref,

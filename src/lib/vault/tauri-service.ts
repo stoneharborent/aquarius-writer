@@ -8,6 +8,7 @@ import type {
   FileRead,
   Goals,
   ReorderReport,
+  SearchHit,
   VaultNode,
   Workflow,
   WorkflowSummary,
@@ -148,6 +149,10 @@ export function createTauriVaultService(): VaultService {
 
     async setSynopsis(workflowId, relPath, synopsis) {
       await invoke("vault_set_synopsis", { workflowId, relPath, synopsis });
+    },
+
+    async searchWorkflow(workflowId, query) {
+      return invoke<SearchHit[]>("vault_search", { workflowId, query });
     },
 
     watch(workflowId, onChange) {

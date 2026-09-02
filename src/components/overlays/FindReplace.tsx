@@ -48,6 +48,12 @@ export function FindReplace() {
   const [semantic, setSemantic] = useState<SemanticStatus | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Which query the results on screen belong to. A search is asynchronous and
+  // a debounce only spaces requests out — it does not order the answers. Two
+  // in flight (a slow vault, a fast typist) could land newest-first and leave
+  // the stale one showing, which reads exactly like the sheet being "stuck".
+  // Every request takes a ticket; only the current ticket may write state.
+  const ticket = useRef(0);
 
   // Asked once when the sheet opens, so the By meaning tab already knows which
   // of its four states it is in before anyone clicks it — the same reason the
@@ -60,23 +66,38 @@ export function FindReplace() {
   useEffect(() => {
     if (!current || !tree) return;
     if (timer.current) clearTimeout(timer.current);
-    if (query.trim().length < 2) { setHits([]); setMeaningHits([]); return; }
+    if (query.trim().length < 2) {
+      // Retire anything in flight: its answer is for a query nobody is asking
+      // any more, and it must not repaint the emptied list.
+      ticket.current += 1;
+      setBusy(false);
+      setHits([]);
+      setMeaningHits([]);
+      return;
+    }
     if (mode === "meaning" && !semantic?.available) { setMeaningHits([]); return; }
     timer.current = setTimeout(async () => {
+      const mine = ++ticket.current;
       setBusy(true);
       try {
         if (mode === "exact") {
-          setHits(await searchWorkflow(current.id, tree, query.trim()));
+          const found = await searchWorkflow(current.id, tree, query.trim());
+          if (mine === ticket.current) setHits(found);
         } else {
-          setMeaningHits(await searchSemantic(current.id, tree, query.trim()));
+          const found = await searchSemantic(current.id, tree, query.trim());
+          if (mine === ticket.current) setMeaningHits(found);
         }
       } catch (e) {
+        if (mine !== ticket.current) return;
         // A refusal is an answer, not a crash: the card below already says
         // what is missing, so there is nothing to report here.
         if (!isRefusal(e)) setNote(String(e));
         setMeaningHits([]);
       } finally {
-        setBusy(false);
+        // Only the newest request may clear the spinner. A superseded one
+        // finishing would otherwise say "done" while the current query is
+        // still running.
+        if (mine === ticket.current) setBusy(false);
       }
     }, 250);
     return () => { if (timer.current) clearTimeout(timer.current); };
@@ -98,7 +119,11 @@ export function FindReplace() {
     // debounced save, which would otherwise land on a file this replace just
     // rewrote and raise a conflict for a document nobody is looking at.
     useEditor.getState().evict(hit.path);
-    if (tree) setHits(await searchWorkflow(current.id, tree, query.trim()));
+    if (tree) {
+      const mine = ++ticket.current;
+      const found = await searchWorkflow(current.id, tree, query.trim());
+      if (mine === ticket.current) setHits(found);
+    }
   };
 
   const download = async () => {

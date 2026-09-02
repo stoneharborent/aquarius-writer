@@ -269,6 +269,33 @@ pub fn vault_read_file(
     vault::ops::read_file(&root, &rel_path)
 }
 
+/// Search every text file in a workflow for a substring — one call, not one
+/// per file.
+///
+/// The Find sheet used to do this in the renderer: walk the tree it already
+/// had, `invoke("vault_read_file")` for each text file, scan the string, and
+/// await the next one. On Royce's vault that was 3,539 sequential IPC round
+/// trips per query, which is why typing in Find felt stuck. The disk was never
+/// the cost — the round trips were.
+///
+/// `vault::search` is the same algorithm the MCP `search` tool already used
+/// (its module doc carries the parity rule), and it searches **what is on
+/// disk**. So does the loop it replaces: that read files, not buffers, so a
+/// document with unsaved edits was already searched in its last-saved state.
+/// This keeps that exactly, rather than quietly changing what a hit means.
+///
+/// `limit` caps the number of files reported; omit it for everything.
+#[tauri::command]
+pub fn vault_search(
+    state: State<'_, AppState>,
+    workflow_id: String,
+    query: String,
+    limit: Option<usize>,
+) -> R<Vec<vault::search::SearchHit>> {
+    let root = root_of(&state, &workflow_id)?;
+    Ok(vault::search::search(&root, &query, limit.unwrap_or(usize::MAX)))
+}
+
 /// Save a document, optionally guarded by the baseline the caller is holding.
 ///
 /// Omit `expected` (or send null) and this is the force-write it always was.

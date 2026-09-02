@@ -80,6 +80,19 @@ export interface WorkflowSummary {
 
 export type NodeKind = "folder" | "markdown" | "fountain" | "image" | "pdf" | "other";
 
+/**
+ * One file that matched a Find query — the shape `vault::search::SearchHit`
+ * serialises to. `line` is 0-based, the same numbering the editor and the MCP
+ * tools count in.
+ */
+export interface SearchHit {
+  path: string;
+  line: number;
+  preview: string;
+  /** Matches in this file. Results are ordered by it, descending. */
+  count: number;
+}
+
 export interface VaultNode {
   name: string;
   path: string; // relative to workflow root

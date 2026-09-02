@@ -8,7 +8,7 @@
 import { vault } from "@/lib/vault";
 import { countWords } from "@/lib/words";
 import { auxBackend } from "./aux-store";
-import type { VaultNode } from "@/types/vault";
+import type { SearchHit, VaultNode } from "@/types/vault";
 
 export type { VersionEntry, CommentEntry, TrashEntry } from "./aux-store";
 import type { CommentEntry, TrashEntry, VersionEntry } from "./aux-store";
@@ -154,12 +154,7 @@ export function trashRetentionDays(): Promise<number> {
 
 // ── workflow search ──────────────────────────────────────────────────────
 
-export interface SearchHit {
-  path: string;
-  line: number;        // 0-based
-  preview: string;
-  count: number;       // matches in this file
-}
+export type { SearchHit };
 
 const MAX_RECENT_SEARCHES = 20;
 
@@ -175,38 +170,33 @@ function rememberSearch(wf: string, query: string) {
   auxBackend().saveSearches(wf, next);
 }
 
-function textFiles(node: VaultNode, out: string[] = []): string[] {
-  if (node.kind === "markdown" || node.kind === "fountain"
-      || /\.(md|fountain|txt)$/i.test(node.path ?? "")) {
-    if (node.path) out.push(node.path);
-  }
-  for (const child of node.children ?? []) textFiles(child, out);
-  return out;
-}
-
+/**
+ * Find every text file in the workflow containing `query`.
+ *
+ * **One IPC call.** This used to walk the tree in JavaScript and `readFile`
+ * each text file in turn, awaiting each one: 3,539 sequential round trips on
+ * Royce's vault, roughly 800 ms, re-run on every debounce tick as he typed.
+ * That is the half of "the search and find gets stuck" that the ignore rule
+ * did not fix. The scan itself now happens in `vault::search`, which is the
+ * same code the MCP `search` tool has always used.
+ *
+ * It searches what is on disk. So did the loop it replaces — that read files,
+ * not editor buffers — so a document with unsaved edits still matches its
+ * last-saved text, and nothing about what a hit *means* has changed. The
+ * editor's own autosave is what keeps the gap short.
+ *
+ * `tree` is no longer read; it stays in the signature because the sheet has it
+ * and passing it costs nothing, and because dropping it would make the
+ * semantic search's neighbouring call the odd one out.
+ */
 export async function searchWorkflow(
-  wf: string, tree: VaultNode, query: string,
+  wf: string, _tree: VaultNode, query: string,
 ): Promise<SearchHit[]> {
-  const q = query.toLowerCase();
+  const q = query.trim();
   if (!q) return [];
-  const hits: SearchHit[] = [];
-  for (const path of textFiles(tree)) {
-    let body: string;
-    try { body = await vault().readFile(wf, path); } catch { continue; }
-    const lines = body.split("\n");
-    let count = 0;
-    let first: { line: number; preview: string } | null = null;
-    for (let i = 0; i < lines.length; i++) {
-      const idx = lines[i].toLowerCase().indexOf(q);
-      if (idx >= 0) {
-        count += lines[i].toLowerCase().split(q).length - 1;
-        if (!first) first = { line: i, preview: lines[i].trim().slice(0, 120) };
-      }
-    }
-    if (count > 0 && first) hits.push({ path, ...first, count });
-  }
+  const hits = await vault().searchWorkflow(wf, q);
   rememberSearch(wf, query);
-  return hits.sort((a, b) => b.count - a.count);
+  return hits;
 }
 
 export async function replaceInFile(

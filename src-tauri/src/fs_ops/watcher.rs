@@ -325,6 +325,47 @@ mod tests {
     }
 
     #[test]
+    fn a_live_watch_ignores_a_dependency_folder_and_still_hears_a_real_note() {
+        // The paired assertion, against the real `notify` backend rather than
+        // the filter alone: writing inside `node_modules` must be silent, and
+        // the very next write to an ordinary note must still arrive. A filter
+        // that has gone too far would pass the first half of this on its own.
+        let t = TempDir::new("watch-deps");
+        t.write("Drafts/Ch_01.md", "before");
+        t.write("node_modules/react/README.md", "before");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let seen = hits.clone();
+        let watch = WorkflowWatch::start(t.path(), Arc::new(SelfWrites::default()), move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+        settle(&hits);
+
+        for i in 0..10 {
+            std::fs::write(
+                t.path().join("node_modules/react/README.md"),
+                format!("install {i}"),
+            )
+            .unwrap();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(DEBOUNCE * 3);
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "a dependency folder must never reload the workflow"
+        );
+
+        std::fs::write(t.path().join("Drafts/Ch_01.md"), "after").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while hits.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(hits.load(Ordering::SeqCst) >= 1, "a real note's edit must still arrive");
+        drop(watch);
+    }
+
+    #[test]
     fn writes_recorded_in_the_ledger_do_not_fire() {
         let t = TempDir::new("watch-echo");
         t.write("note.md", "before");

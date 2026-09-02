@@ -5532,3 +5532,200 @@ capture is refused by this GNOME session too), so the click was not simulated.
 The button calls `model::download`, which is the function the live test above
 exercises end to end against the real release, and the card and the Settings
 panel were both reviewed in the browser preview.
+
+---
+
+## 33. The search got stuck because the vault was five times bigger than the vault
+
+*Bench bug, 2026-09-02, on the §32 semantic-search build. Royce: "The search
+and find gets stuck when trying to search or type and takes a long time to
+register." Two independent structural causes, both measured, both fixed here.
+Neither is about the semantic feature — it only made a standing problem loud
+enough to report.*
+
+### 33a. Cause one: the walk counted a code repository as a manuscript
+
+A vault is a folder somebody chose, and Royce chose one with git repositories
+in it. `vault::paths::is_ignored_name` skipped dotfiles, `~`, `.swp`, `.tmp`
+and our own atomic-write temporaries — and nothing else. So the walk went into
+`node_modules/`, `node_modules.nosync/`, `src-tauri/target.nosync/`, `dist/`,
+every one of them.
+
+Measured on his real vault:
+
+| | the walk found | actually his |
+|---|---|---|
+| directories | **19,304** | 2,481 |
+| markdown files | **3,539** | 667 |
+
+2,870 of those markdown files are `README.md` inside `node_modules`. Everything
+that walks the tree was paying 5–8×: the sidebar, the Backlinks pass (§27l's
+"67 IPC reads per keystroke" is the same class of bug), the graph, the semantic
+backfill — which would have pushed all 2,870 generated READMEs through a neural
+network — and the file watcher, which registered a recursive inotify watch over
+19,304 directories. That last one *fit* (`max_user_watches` is 524,288 on this
+box) but every write inside a dependency folder was an event, and a surviving
+event reloads the workflow, which re-walks the tree and re-runs the embedding
+pass.
+
+### 33b. The ignore list, and why `.nosync` is on it
+
+`paths::is_ignored_dir` is the new rule, and it is a **built-in list**, ten
+names, compared case-insensitively because macOS filesystems are:
+
+```
+node_modules  target  dist  build  out
+__pycache__   venv    Pods  DerivedData  vendor
+```
+
+(`.venv`, `.git`, `.worktrees` and friends were already covered — they are
+dotfiles.)
+
+Plus one suffix rule: **any directory name ending `.nosync`.** That is not a
+guess. This project's own `scripts/nosync-link.sh` renames a folder to
+`<name>.nosync` precisely to tell iCloud not to sync it, then symlinks the
+original name at it. The suffix is a Mac convention meaning "bulk, derived, not
+worth syncing", which is the same question the walk is asking, so
+`Footage.nosync` is skipped even though `Footage` is not on the list.
+
+**A per-vault ignore file was considered and deliberately not built.** No
+`.aquarius/ignore`, not yet. The built-in list covers the case that actually
+happened, and a file nobody has asked for is a file with no design behind it.
+If a writer ever genuinely needs `Pods/` walked, *that* is when the per-vault
+list gets designed, and this is the note that says so.
+
+Two details that are easy to get wrong:
+
+- **It is a separate function from `is_ignored_name` on purpose.** That one is
+  also a **guard**: `vault::ops` refuses to create, rename or move anything
+  matching it, with "that name is reserved for app temporaries". Folding build
+  names into it would mean a writer could not rename a document to "build",
+  and the refusal would be a lie about why. `paths::skip_entry(name, is_dir)`
+  is what the walks call; the folder rule only applies when `is_dir`.
+- **`is_dir` comes from `DirEntry::file_type()`, which does not follow
+  symlinks.** So `node_modules -> node_modules.nosync` is neither a file nor a
+  directory to the walk and is dropped — the same tree is never scanned twice,
+  and a link pointing at an ancestor cannot hang it.
+
+Applied in one place each: `vault::tree::walk`, `vault::search`,
+`semantic::service`'s backfill walk, `vault::ops::list_folder`,
+`vault::workflow`'s kind sniff, and `fs_ops::watcher::is_interesting`. The
+watcher checks `is_ignored_name` on every path component but `is_ignored_dir`
+only on the components above the last, because those are certainly directories
+and a *file* called `build` is still a file the tree shows.
+
+The frontend's `collectMarkdown` and the Find sheet's `textFiles` walked their
+own copies of the tree — but the tree is the one the backend hands over, so
+cleaning it at the source fixed both without touching either. `textFiles` is
+gone anyway; see below.
+
+### 33c. Cause two: Exact search was one IPC round trip per file, awaited
+
+`src/lib/vault/aux.ts::searchWorkflow` walked the tree for text files and then,
+for each one, `await vault().readFile(...)` — one `invoke` at a time, in a
+`for` loop. On Royce's vault that is **3,539 sequential round trips per query**,
+re-run on every 250 ms debounce tick while he typed.
+
+The disk was never the cost. Reading all 3,539 files from the shell takes
+0.08 s. It was the round trips.
+
+A Rust search already existed — `vault::search`, written for the MCP `search`
+tool, with a module doc carrying a parity rule saying the two implementations
+must change together. So the fix is not new code, it is deleting the JavaScript
+one and pointing the sheet at the Rust one through a new `vault_search`
+command. One call per query.
+
+**Unsaved buffers: nothing changed, and that was the choice.** The loop that
+was removed read *files*, not editor buffers, so a document with unsaved edits
+was already searched in its last-saved state. `vault::search` reads disk too.
+Passing open dirty buffers down, or scanning them frontend-side and merging,
+would have been a *new* behaviour introduced inside a performance fix — a
+different hit meaning different things depending on which pane is open. The
+editor's autosave is what keeps the gap short, and the honest simple option is
+to keep the semantics identical and say so out loud, which is what
+`VaultService.searchWorkflow`'s doc comment does.
+
+`rememberSearch` still runs on the renderer side; recent queries are aux
+state, not vault state. `searchWorkflow`'s `tree` parameter stays in the
+signature (unused) so the call reads the same as the semantic search beside it.
+
+### 33d. Cause three, small but the one you actually feel: nothing ordered the answers
+
+The Find sheet debounced at 250 ms, which spaces requests out but does not
+**order the answers**. Two searches in flight could land newest-first, leaving
+stale results on screen under a query that no longer produces them — which is
+exactly what "gets stuck" looks like from the chair. `busy` had the same
+problem: a superseded request's `finally` cleared the spinner while the current
+one was still running.
+
+Every request now takes a ticket (`ticket.current`), and only the current
+ticket may call `setHits` / `setMeaningHits` / `setBusy`. Clearing the query
+below two characters bumps the ticket too, so an answer in flight cannot
+repaint a list the writer just emptied. The 250 ms debounce is left alone: at
+22 ms a query it is no longer the thing being waited on.
+
+### 33e. Before and after
+
+A scratch vault built for this at `$HOME/aq-ignore-vault` — 600 real-shaped
+notes across ten folders, plus a fake `node_modules` of 600 packages with
+3,000 generated `README.md` files, a `node_modules.nosync` with the symlink
+pointing at it, and one each of `dist`, `build`, `target`, `__pycache__`,
+`venv`, `Pods`, `DerivedData`, `vendor`. Same shape as Royce's vault, one
+sixth the size. Measured in the real shell (§28), with an isolated
+`XDG_CONFIG_HOME` (§28g), by `src/lib/dev/find-bench.ts`:
+
+```
+export XDG_CONFIG_HOME="$HOME/aq-ignore-config"
+export XDG_DATA_HOME="$HOME/aq-ignore-data"
+export AQ_DEV_VAULT="$HOME/aq-ignore-vault"
+VITE_AQ_FIND_BENCH=1 npm run tauri:dev
+```
+
+| | before | after |
+|---|---|---|
+| tree nodes | 7,239 | **617** |
+| folders in the tree | 3,030 | **17** |
+| files in the tree | 4,209 | **600** |
+| Find latency, `"la"` (median of 3) | **796 ms** | **22 ms** |
+| `readFile` IPC round trips per query | **×3,609** | **×0** |
+
+**36× on the query, and the reads are gone entirely.** The 22 ms that remain
+are one IPC call plus Rust reading and scanning 600 files; it is proportional
+to the writer's own vault now, which is the point.
+
+Note what the tree row means for everything *else*: Backlinks, the graph, the
+corkboard and the wiki-link autocomplete all walk that tree, and all of them
+just got the same 12× smaller input for free.
+
+### 33f. What was checked in the shell, and the one thing that was not
+
+- **The sidebar.** 17 folders and 600 files in the tree the backend handed
+  over — no `node_modules`, no `dist`, no `.nosync` twin. That tree *is* what
+  the sidebar draws.
+- **Find is instant.** 22 ms, ×0 reads, in the real Tauri shell.
+- **The watcher still hears a real edit, and no longer hears a fake one.**
+  Driven live: five writes into `node_modules/pkg-7/lib/README.md` while the
+  app was running produced no `[watch]` line and no tree reload; the very next
+  `>>` append to `Notes/Note 007.md` produced
+  `[watch] …: external change — notifying the renderer` and the bench saw the
+  tree replaced. The same pairing is a test
+  (`a_live_watch_ignores_a_dependency_folder_and_still_hears_a_real_note`)
+  against the real `notify` backend, so CI keeps it honest.
+- **The semantic backfill skips the junk** — asserted as a unit test on the
+  backfill's own walk (`the_backfill_never_embeds_a_dependency_folder`), **not**
+  driven live. The model is not in this session's isolated data dir, and
+  fetching 35 MB to re-prove a walk that is now the shared `skip_entry` rule
+  was not worth it. Royce's model folder was deliberately not borrowed.
+
+### 33g. The bench that measures it
+
+`src/lib/dev/find-bench.ts`, behind `VITE_AQ_FIND_BENCH=1`, alongside §27l's
+typing bench. It reports tree size, Find latency for a two-letter query (the
+shortest the sheet acts on), and the `readFile` round trips the query made —
+counted by wrapping the live service, so it cannot be fooled by a code path
+that reads a different way. Then it waits 25 seconds for an external edit and
+says whether the tree changed, which is the watcher check above.
+
+Unlike the typing bench it **writes nothing**, so it needs no
+`assertBenchTarget`. Run it with an isolated config dir anyway — not for
+safety, but so it measures the vault you think it does (§28g).

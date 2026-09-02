@@ -72,6 +72,25 @@ if (import.meta.env.DEV && import.meta.env.VITE_AQ_BENCH === "1") {
   })();
 }
 
+// The Find bench — query-to-results latency and the reads it cost
+// (dev/find-bench.ts). Its own flag: it is read-only and takes a second, but
+// it runs a whole-vault search three times, which is not something to do
+// behind someone's ordinary launch.
+if (import.meta.env.DEV && import.meta.env.VITE_AQ_FIND_BENCH === "1") {
+  void (async () => {
+    let workflowId: string | undefined;
+    if (typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const ctx = await invoke<{ workflowId: string | null }>("dev_context");
+        workflowId = ctx.workflowId ?? undefined;
+      } catch { /* older shell — measure whatever is open */ }
+    }
+    const { runFindBench } = await import("@/lib/dev/find-bench");
+    await runFindBench(workflowId);
+  })();
+}
+
 // Development-only backend check. Runs when the shell was started with
 // AQ_DEV_VAULT + AQ_DEV_SMOKE=1 (see src/lib/dev/smoke.ts); the dynamic import
 // inside the DEV guard keeps it out of production bundles entirely.

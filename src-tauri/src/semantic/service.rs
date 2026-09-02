@@ -576,6 +576,25 @@ mod tests {
     use crate::testutil::TempDir;
 
     #[test]
+    fn the_backfill_never_embeds_a_dependency_folder() {
+        // The most expensive way to get this wrong: 2,870 generated READMEs
+        // pushed through a neural network, once per vault open.
+        let t = TempDir::new("semantic-walk");
+        t.write("Drafts/Ch_01.md", "words");
+        t.write("Research/Notes.md", "words");
+        t.write("node_modules/react/README.md", "generated");
+        t.write("node_modules/react/lib/README.md", "generated");
+        t.write("Site/dist/index.md", "generated");
+        t.write("Rust/target.nosync/debug/x.md", "generated");
+        t.write(".aquarius/workflow.json", "{}");
+
+        let mut paths = Vec::new();
+        walk(t.path(), t.path(), 0, &mut paths);
+        paths.sort();
+        assert_eq!(paths, vec!["Drafts/Ch_01.md".to_string(), "Research/Notes.md".to_string()]);
+    }
+
+    #[test]
     fn embedding_a_document_skips_the_frontmatter_and_numbers_body_lines() {
         let text = "---\ntitle: Chapter One\nstatus: drafting\n---\nThe first body line.\n\nA second paragraph.";
         let doc = embed_document(&WordBagEmbedder, "a.md", text, "stamp1").unwrap();

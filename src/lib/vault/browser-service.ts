@@ -7,6 +7,7 @@ import type {
   FileStamp,
   NewFileKind,
   NodeKind,
+  SearchHit,
   VaultNode,
   Workflow,
   WorkflowKind,
@@ -677,6 +678,31 @@ export function createBrowserVaultService(): VaultService {
       LANTERN_WORKFLOW.goals = { ...LANTERN_WORKFLOW.goals, dailyWords };
       return LANTERN_WORKFLOW.goals;
     },
+    async searchWorkflow(_workflowId, query) {
+      // The preview's mirror of `vault::search`: same substring rule, same
+      // "first matching line plus a trimmed preview", same order. It reads the
+      // sample vault rather than a disk, which is the only difference — and
+      // unlike the compile mock there is nothing dishonest about that, because
+      // a search produces no file.
+      const needle = query.trim().toLowerCase();
+      if (!needle) return [];
+      const hits: SearchHit[] = [];
+      for (const [path, body] of Object.entries(FILE_CONTENTS)) {
+        if (!/\.(md|markdown|fountain|txt)$/i.test(path)) continue;
+        let count = 0;
+        let first: { line: number; preview: string } | null = null;
+        const lines = body.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          const inLine = lines[i].toLowerCase().split(needle).length - 1;
+          if (inLine === 0) continue;
+          count += inLine;
+          if (!first) first = { line: i, preview: lines[i].trim().slice(0, 120) };
+        }
+        if (first) hits.push({ path, ...first, count });
+      }
+      return hits.sort((a, b) => b.count - a.count || a.path.localeCompare(b.path));
+    },
+
     watch(_workflowId, _onChange) {
       return () => {};
     },

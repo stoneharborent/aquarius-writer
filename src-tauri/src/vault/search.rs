@@ -174,6 +174,26 @@ mod tests {
     }
 
     #[test]
+    fn a_hit_serialises_as_the_find_sheet_reads_it() {
+        // The renderer's `SearchHit` is `{ path, line, preview, count }` in
+        // camelCase, and the Find sheet jumps by `path` and `line`. If this
+        // shape drifts the sheet fails silently, so it is asserted rather than
+        // trusted to the derive.
+        let t = TempDir::new("search-shape");
+        t.write("Drafts/Ch_01.md", "quiet\nthe bell and the bell\n");
+        t.write("Drafts/Ch_02.md", "one bell");
+        let json = serde_json::to_value(search(t.path(), "bell", usize::MAX)).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!([
+                { "path": "Drafts/Ch_01.md", "line": 1, "preview": "the bell and the bell", "count": 2 },
+                { "path": "Drafts/Ch_02.md", "line": 0, "preview": "one bell", "count": 1 },
+            ]),
+            "ranked by count, descending — the order the sheet renders"
+        );
+    }
+
+    #[test]
     fn an_empty_query_finds_nothing_and_limit_caps_the_result() {
         let t = TempDir::new("search-limit");
         t.write("a.md", "x");

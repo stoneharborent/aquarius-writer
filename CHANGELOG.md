@@ -8,6 +8,21 @@ as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches
 
 ## Unreleased
 
+- **Find is fast again, and the sidebar only shows your writing.** If your
+  vault folder had a project folder in it — anything with a `node_modules`,
+  `dist`, `target` or `build` inside — the app was reading all of it. On
+  Royce's vault that meant 3,539 files where 667 are actually his, and Find had
+  to open every one of them before it could show you a single result. Those
+  folders are now skipped everywhere: the sidebar, Find, backlinks, the graph
+  and the search-by-meaning index. Anything ending in `.nosync` is skipped too.
+
+- **Typing in Find no longer stalls.** The search that runs when you type moved
+  into the app's faster half, so a query is one quick question instead of one
+  per file — on a test vault the same search went from **796 ms to 22 ms**. The
+  results are also kept in order: if you keep typing while a search is running,
+  the older answer can no longer arrive late and overwrite the newer one, which
+  is what "stuck" looked like.
+
 - **You can search for what a passage is about, not just the words in it.**
   Find (⇧⌘F) has a small switch on it now: **Exact** is the search you already
   have, and **By meaning** looks for the passage you are describing. Ask it for

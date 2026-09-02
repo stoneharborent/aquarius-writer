@@ -7,6 +7,7 @@ import type {
   Goals,
   NewFileKind,
   ReorderReport,
+  SearchHit,
   VaultNode,
   Workflow,
   WorkflowKind,
@@ -143,6 +144,19 @@ export interface VaultService {
    * block with it. Same `vault::ops::set_synopsis` as the MCP `set_synopsis`.
    */
   setSynopsis(workflowId: string, relPath: string, synopsis: string): Promise<void>;
+  /**
+   * Find every text file in the workflow containing `query`, case-insensitively.
+   *
+   * One call for the whole vault. The Find sheet used to walk its own copy of
+   * the tree and `readFile` each path in turn — 3,539 sequential round trips on
+   * a vault with a `node_modules` in it, which is what "the search gets stuck"
+   * was (docs/NOTES.md §33).
+   *
+   * It searches **what is on disk**, which is what the per-file loop did too:
+   * a document with unsaved edits matches its last-saved text. Substring, not
+   * regex. Ordered by match count, descending.
+   */
+  searchWorkflow(workflowId: string, query: string): Promise<SearchHit[]>;
   /** Subscribe to FS changes within a workflow. Returns an unsubscribe fn. */
   watch(workflowId: string, onChange: () => void): () => void;
 }
