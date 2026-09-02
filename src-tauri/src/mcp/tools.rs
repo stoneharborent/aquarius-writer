@@ -196,6 +196,19 @@ pub struct SearchParam {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct SemanticSearchParam {
+    /// Workflow id, from `list_workflows`.
+    pub workflow_id: String,
+    /// What you are looking for, in words — a description of the passage, not
+    /// the exact words in it. "the scene where she decides to leave" rather
+    /// than "decides to leave".
+    pub query: String,
+    /// Most documents to report. Defaults to 20.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct StatusParam {
     /// Workflow id, from `list_workflows`.
     pub workflow_id: String,
@@ -631,6 +644,39 @@ file; results are ranked by count."
     ) -> Result<String, ErrorData> {
         let root = self.root(&workflow_id)?;
         json(vault::search::search(&root, &query, limit.unwrap_or(50)))
+    }
+
+    #[tool(
+        name = "search_semantic",
+        description = "Find passages in a vault by what they MEAN rather than by the words they \
+contain — \"the scene where she decides to leave\" finds that scene even if none of those words \
+appear in it. Each hit gives the document's path, the best-matching passage's first line number \
+(0-based, counting body lines), a preview of it, a score from 0 to 1, and how many passages that \
+document has indexed; results are ranked by score, best document first. This needs a 35 MB model \
+that is downloaded once by the person using the app; when it is not there this answers \
+{\"available\": false, \"reason\": \"model-missing\", \"hint\": ...} instead of failing, and you \
+should fall back to `search`, which is an exact substring match and always works."
+    )]
+    fn search_semantic(
+        &self,
+        Parameters(SemanticSearchParam { workflow_id, query, limit }): Parameters<
+            SemanticSearchParam,
+        >,
+    ) -> Result<String, ErrorData> {
+        let root = self.root(&workflow_id)?;
+        // A refusal is an ANSWER, not an error. An agent must be able to see
+        // "there is no model on this machine" and fall back to `search`
+        // without parsing an error string — the same reasoning that gave
+        // CompileError a code and a hint.
+        match crate::semantic::service::search_blocking(
+            &self.app,
+            &root,
+            &query,
+            limit.unwrap_or(20),
+        ) {
+            Ok(hits) => json(hits),
+            Err(refusal) => json(refusal),
+        }
     }
 
     #[tool(
@@ -1294,6 +1340,13 @@ writing_stats is the vault's session log: words written today and on each of the
 days, the daily goal, and the current streak. It is read-only, and the numbers are gains rather \
 than totals — the app records them as the writer saves.
 
+search finds exact text; search_semantic finds passages by what they mean, which is what you \
+want when you know what happened in a scene but not the words it was written with. It needs a \
+model the writer downloads once inside the app, so it may answer {\"available\": false, \
+\"reason\": \"model-missing\"} — that is an answer, not a failure: fall back to search and say \
+so. There is deliberately no tool for starting that download; putting 35 MB on someone's disk \
+is their decision to make in the app.
+
 compile_document turns a manuscript into a finished file — markdown, fountain, epub, docx or \
 pdf. Markdown and fountain always work; the other three need pandoc installed on the machine, \
 and the failure tells you how to install it. The output lands inside the vault (a \
@@ -1350,6 +1403,7 @@ mod tests {
         "replace_lines",
         "restore_document",
         "search",
+        "search_semantic",
         "server_info",
         "set_active_draft",
         "set_frontmatter_status",

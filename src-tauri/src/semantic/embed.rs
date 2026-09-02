@@ -190,6 +190,15 @@ mod tests {
     #[test]
     fn a_real_model_embeds_one_string() {
         let Some(dir) = std::env::var_os("AQ_SEMANTIC_MODEL_DIR") else {
+            // On a developer's machine a missing model is a skip. In CI it is
+            // a failure: the whole point of the workflow's download step is
+            // that this test runs on both runners, and a test that silently
+            // skips itself there is worse than no test at all.
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "AQ_SEMANTIC_MODEL_DIR is unset in CI — the model download step did not work, \
+                 and the embedding runtime is therefore unproven on this runner"
+            );
             eprintln!("skipped: set AQ_SEMANTIC_MODEL_DIR to a bge-small folder to run this");
             return;
         };

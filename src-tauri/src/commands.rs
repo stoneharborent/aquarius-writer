@@ -241,6 +241,13 @@ pub fn vault_load_workflow(
     }
     state.grant_asset_access(&app, &wf.id, &root);
 
+    // One pass over the tree comparing content hashes with the semantic
+    // manifest, on a background thread. Nothing is embedded unless something
+    // actually changed, so opening an already-indexed vault costs a few KB of
+    // reads; opening one for the first time is the backfill, with progress on
+    // `semantic://state`. Does nothing at all when there is no model.
+    crate::semantic::service::spawn_sync(&app, wf.id.clone(), root.clone());
+
     Ok(LoadedWorkflow { workflow: wf, tree })
 }
 
@@ -270,6 +277,7 @@ pub fn vault_read_file(
 /// no longer matches it. See `vault::ops::write_document_checked`.
 #[tauri::command]
 pub fn vault_write_file(
+    app: AppHandle,
     state: State<'_, AppState>,
     workflow_id: String,
     rel_path: String,
@@ -280,13 +288,19 @@ pub fn vault_write_file(
     // The ledger is stamped inside `write_document_checked`, before the write,
     // so the watcher can't win the race and report our own save as an
     // external edit (docs/NOTES.md §3c).
-    vault::ops::write_document_checked(
+    let result = vault::ops::write_document_checked(
         &root,
         &rel_path,
         &content,
         expected.as_ref(),
         &state.self_writes,
-    )
+    )?;
+    // Search by meaning keeps up with the save, not with the keystroke. This
+    // call checks a boolean and hands a closure to a thread pool; the chunking
+    // and the model run on that pool, never here. The save has already been
+    // debounced by the editor, so this fires at the same cadence the disk does.
+    crate::semantic::service::spawn_document_sync(&app, root, rel_path);
+    Ok(result)
 }
 
 /// Raw bytes for pdf.js and friends. Returns an ArrayBuffer to the renderer
@@ -372,7 +386,11 @@ pub fn vault_rename(
     new_name: String,
 ) -> R<vault::ops::EntryReport> {
     let root = root_of(&state, &workflow_id)?;
-    vault::ops::rename_entry(&root, &rel_path, &new_name, &state.self_writes)
+    let report = vault::ops::rename_entry(&root, &rel_path, &new_name, &state.self_writes)?;
+    // The vectors follow the file. Re-keying a small file is instant;
+    // re-embedding a chapter is not, and nothing about it changed.
+    crate::semantic::service::note_rename(&root, &rel_path, &report.path);
+    Ok(report)
 }
 
 /// Move a file or folder into `dest_folder` (`""` for the vault root).
@@ -384,7 +402,9 @@ pub fn vault_move(
     dest_folder: String,
 ) -> R<vault::ops::EntryReport> {
     let root = root_of(&state, &workflow_id)?;
-    vault::ops::move_entry(&root, &rel_path, &dest_folder, &state.self_writes)
+    let report = vault::ops::move_entry(&root, &rel_path, &dest_folder, &state.self_writes)?;
+    crate::semantic::service::note_rename(&root, &rel_path, &report.path);
+    Ok(report)
 }
 
 #[tauri::command]
@@ -394,7 +414,11 @@ pub fn vault_soft_delete(
     rel_path: String,
 ) -> R<()> {
     let root = root_of(&state, &workflow_id)?;
-    vault::ops::trash_entry(&root, &rel_path, &state.self_writes).map(|_| ())
+    vault::ops::trash_entry(&root, &rel_path, &state.self_writes)?;
+    // A trashed document leaves no vectors behind — the index must never
+    // return a hit in a file that is not there.
+    crate::semantic::service::note_removed(&root, &rel_path);
+    Ok(())
 }
 
 // ── stars ────────────────────────────────────────────────────────────────
@@ -1083,16 +1107,67 @@ pub fn dev_log(line: String) {
     }
 }
 
-/// **Spike only.** Embed one string and hand back its vector.
-///
-/// This exists to prove, from inside the real shell on a real machine, that
-/// the ONNX Runtime linked and the model loads — the Phase-1 gate in
-/// `docs/semantic-search-research.md` §7. It takes a folder path rather than
-/// using the app's model folder deliberately: it must be usable before any of
-/// the download plumbing exists. Not in the command list on a release build.
+// ── search by meaning ────────────────────────────────────────────────────
+//
+// Four commands, and the shape is deliberately the Compile sheet's: the sheet
+// asks `semantic_probe` when it opens so it already knows which of four states
+// it is in — model present, downloading, absent, or broken — and draws a card
+// rather than failing on click (NOTES §19d).
+//
+// `semantic_download` is the only one that touches the network, and it exists
+// because the download is a **human click**. There is deliberately no MCP tool
+// for it: putting 35 MB on the writer's disk is consent, not an operation.
+
+/// What search by meaning can do on this machine. Cheap: a few `stat` calls.
 #[tauri::command]
-pub fn semantic_embed_probe(model_dir: String, text: String) -> Result<Vec<f32>, String> {
-    use crate::semantic::embed::Embedder;
-    let embedder = crate::semantic::embed::FastEmbed::load(std::path::Path::new(&model_dir))?;
-    Ok(embedder.embed(&[text])?.pop().unwrap_or_default())
+pub fn semantic_probe(app: AppHandle) -> crate::semantic::service::SemanticStatus {
+    crate::semantic::service::probe(&app)
+}
+
+/// Download the model. Progress arrives on `semantic://state`.
+#[tauri::command]
+pub async fn semantic_download(app: AppHandle) -> R<crate::semantic::service::SemanticStatus> {
+    crate::semantic::service::download(app).await
+}
+
+/// Delete the model from this machine. The index it built is left alone — it
+/// is keyed on this model, so a later re-download finds its vectors intact.
+#[tauri::command]
+pub fn semantic_remove(app: AppHandle) -> R<crate::semantic::service::SemanticStatus> {
+    crate::semantic::service::remove(&app)
+}
+
+/// Search a vault by meaning.
+///
+/// The error type is the structured `Refusal`, not a string: the renderer and
+/// an agent both have to tell "there is no model here" apart from "the search
+/// failed", and neither should be parsing English to do it.
+#[tauri::command]
+pub async fn semantic_search(
+    app: AppHandle,
+    workflow_id: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<crate::semantic::index::SemanticHit>, crate::semantic::service::Refusal> {
+    let root = app
+        .state::<AppState>()
+        .root_for(&workflow_id)
+        .map_err(crate::semantic::service::Refusal::model_broken)?;
+    let limit = limit.unwrap_or(50);
+    // Embedding the query plus a scan over every vector: milliseconds, but
+    // milliseconds on a thread that is not drawing the window.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::semantic::service::search_blocking(&app, &root, &query, limit)
+    })
+    .await
+    .map_err(|e| crate::semantic::service::Refusal::model_broken(format!("the search stopped ({e})")))?
+}
+
+/// Re-index a vault from scratch — the Settings button, for when someone wants
+/// to be sure. Returns immediately; progress arrives on `semantic://state`.
+#[tauri::command]
+pub fn semantic_reindex(app: AppHandle, workflow_id: String) -> R<()> {
+    let root = app.state::<AppState>().root_for(&workflow_id)?;
+    crate::semantic::service::spawn_sync(&app, workflow_id, root);
+    Ok(())
 }

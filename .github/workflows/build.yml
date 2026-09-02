@@ -230,11 +230,12 @@ jobs:
       # Royce instead of from CI.
       #
       # So: download the same files the app downloads, into a scratch folder,
-      # and point the tests at it. If the download fails the tests still run —
-      # that one test simply skips, exactly as it does on a developer's machine
-      # with no model. A GitHub outage should not turn into a red build.
+      # and point the tests at it. This step is allowed to fail the build. On a
+      # developer's machine a missing model makes that one test skip itself,
+      # which is right there and wrong here — a green CI run has to mean the
+      # embedding runtime was actually exercised on this runner, so the test
+      # refuses to skip when it sees CI set.
       - name: Fetch the embedding model for the tests
-        continue-on-error: true
         run: |
           set -euxo pipefail
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/models-v1"

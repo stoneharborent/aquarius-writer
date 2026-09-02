@@ -52,6 +52,13 @@ pub fn run() {
             // Reads the AquariusOS launcher's environment once. Off that OS it
             // finds nothing and the whole updater stays asleep.
             app.manage(updater::UpdaterState::from_process());
+            // Search by meaning. The model is not in the app — it is
+            // downloaded once, on a click, into this folder — so the state
+            // resolves that folder now rather than on a background thread
+            // where a failure would have nowhere to go.
+            let data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_dir).ok();
+            app.manage(semantic::service::SemanticState::new(data_dir));
             open_dev_vault(app.handle());
             // After the dev vault, so a smoke run has something registered by
             // the time a client can connect.
@@ -129,7 +136,11 @@ pub fn run() {
             commands::pty_resize,
             commands::pty_kill,
             commands::pty_resolve_path,
-            commands::semantic_embed_probe,
+            commands::semantic_probe,
+            commands::semantic_download,
+            commands::semantic_remove,
+            commands::semantic_search,
+            commands::semantic_reindex,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aquarius Writer");

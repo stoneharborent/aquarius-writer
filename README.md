@@ -340,13 +340,14 @@ Two more things worth knowing:
 
 ### What it can do
 
-Twenty-one operations, and the rule going forward is that this list keeps pace
+Thirty-three operations, and the rule going forward is that this list keeps pace
 with the app: **if you can do it in the window, an AI client can do it too.**
 
 | | |
 |---|---|
 | `list_workflows`, `get_workflow` | which vaults exist; one vault's manifest and file tree |
-| `list_folder`, `search` | look around; find text across the vault |
+| `list_folder`, `search` | look around; find exact text across the vault |
+| `search_semantic` | find passages by what they mean (needs the one-time model download) |
 | `read_document`, `write_document`, `create_document` | read a file, replace one, make a new one |
 | `create_folder`, `rename_document`, `move_document` | reorganise the vault, without rewriting a file's bytes |
 | `set_frontmatter_status` | mark a chapter final / drafting / rev / outline |
