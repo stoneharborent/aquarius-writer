@@ -12,7 +12,7 @@
 #
 # It builds TWO things at once, on two different machines:
 #
-#   Linux  (ubuntu-22.04)  ->  Aquarius_Writer_..._amd64.AppImage
+#   Linux  (ubuntu-24.04)  ->  Aquarius_Writer_..._amd64.AppImage
 #                              The AquariusOS build. An AppImage is one single
 #                              file: download it, mark it executable, run it.
 #                              Nothing to install.
@@ -80,15 +80,33 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ubuntu-22.04 rather than the newest Ubuntu on purpose. An AppImage
-          # can only run on systems whose glibc is at least as new as the one it
-          # was built against, so building on the OLDEST runner we support gives
-          # the widest compatibility. AquariusOS is Fedora-based and far newer,
-          # so this is headroom, not a requirement.
-          # If GitHub ever retires the ubuntu-22.04 label, move to ubuntu-24.04:
-          # the package list below is unchanged there (24.04 also ships
-          # webkit2gtk-4.1), only the glibc floor rises.
-          - os: ubuntu-22.04
+          # ubuntu-24.04. This used to be ubuntu-22.04, on the reasoning that
+          # building on the OLDEST runner we support gives the AppImage the
+          # widest compatibility — an AppImage can only run on systems whose
+          # glibc is at least as new as the one it was built against.
+          #
+          # That reasoning was right about glibc and wrong about fonts, and it
+          # crashed the app. The short version: an AppImage packs its own copy
+          # of the browser engine (WebKitGTK), but NOT its own copy of the font
+          # engine (FreeType) — that one always comes from the computer the app
+          # is running on. FreeType changed the shape of one of its colour-emoji
+          # data structures in version 2.13. A browser engine built on Ubuntu
+          # 22.04 was compiled against FreeType 2.11, so on AquariusOS (which
+          # has 2.13) it read that structure wrongly the moment it tried to
+          # paint a colour emoji, and killed itself. Opening any of Royce's
+          # emoji-heavy markdown files did exactly that. See docs/NOTES.md §29.
+          #
+          # Ubuntu 24.04 ships FreeType 2.13, the same generation AquariusOS
+          # has, so the two agree and colour emoji paint normally. Everything
+          # else the AppImage carries — GTK, Pango, Cairo — is built against
+          # that same 2.13 here too, which closes the same class of problem for
+          # them.
+          #
+          # The cost is the glibc floor: this AppImage now needs glibc 2.39 or
+          # newer. AquariusOS is Fedora-based and far newer than that, so it is
+          # still headroom, not a requirement. The package list below is
+          # unchanged from 22.04 — 24.04 also ships webkit2gtk-4.1.
+          - os: ubuntu-24.04
             label: Linux (AppImage)
             bundles: appimage
             artifact: aquarius-writer-linux-appimage
@@ -157,7 +175,7 @@ jobs:
       # 4.0, and pointing at the wrong one is the classic Tauri-on-Linux build
       # failure.
       - name: Install the Linux build libraries
-        if: matrix.os == 'ubuntu-22.04'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           set -euxo pipefail
           sudo apt-get update

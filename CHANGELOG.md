@@ -6,6 +6,19 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## Unreleased
+
+- **Opening a note with an emoji in it no longer closes the app.** On
+  AquariusOS, opening any markdown file containing a colour emoji — a heading
+  like "## 🧠 WHO YOU ARE", a ✅ in a list — made the app quit on the spot. The
+  cause was in the browser engine the Linux download carries inside itself: it
+  had been built on a machine whose font software was two versions older than
+  the one AquariusOS uses, and the two disagreed about how colour emoji are
+  stored. The download is now built on a machine that matches, and emoji paint
+  normally, in full colour. Nothing in the app itself changed — but you do need
+  this new version, because the broken engine was baked into the old download.
+  Written up in `docs/NOTES.md` §29.
+
 ## v0.5.2 — 2026-09-01
 
 Typing stops waiting for the disk, and the window stops redrawing for every panel.

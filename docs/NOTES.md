@@ -4354,3 +4354,231 @@ If `cargo` is missing, the container was rebuilt — run
 `bash scripts/linux-dev-env.sh` again. If `cargo` is there but the build fails
 on a missing `.h` file, it is the same cause: the apt packages went, the home
 directory stayed.
+
+---
+
+## 29. An emoji killed the app, and the culprit was not the app
+
+*Bug pass, 2026-09-01. Royce reported "the app froze when opening a .md file"
+on AquariusOS. It was not a freeze and it was not that file: v0.5.2's Linux
+download quit the moment it was asked to paint a colour emoji, and every one
+of Royce's vault documents has emoji in its headings.*
+
+### 29a. What the log actually said
+
+`~/.local/state/aquarius/aquarius-writer.log` from the crashing run — v0.5.2,
+the downloaded overlay copy, Wayland, GNOME, NVIDIA — carried one line that is
+not ours:
+
+```
+././/include/c++/12/bits/stl_vector.h:1123: … colrv1_configure_skpaint(FT_Face,
+  const SkSpan<unsigned int>&, SkColor, const FT_COLR_Paint&, SkPaint*) …
+  ::ColorStop … : Assertion '__n < this->size()' failed.
+```
+
+Unpacked, in order:
+
+* `colrv1_configure_skpaint` is a function in **Skia**, the graphics library
+  inside WebKit. It turns one COLRv1 glyph — a modern colour-emoji glyph, drawn
+  as shapes and gradients rather than as a picture — into something to paint.
+* `ColorStop` is the type of the little list of colours along one gradient.
+* `Assertion '__n < this->size()'` is the C++ standard library catching a read
+  past the end of that list, and killing the process rather than reading
+  rubbish. Ubuntu builds with that check switched on, which is the only reason
+  we got a message at all instead of a mystery.
+
+So: something asked for colour stop number *n* of a list that had fewer than
+*n* entries. Not our code, not even close to our code — this is the browser
+engine painting a font.
+
+### 29b. The font on the machine
+
+`fc-list` on AquariusOS shows three emoji fonts, and the one that wins is the
+new kind:
+
+```
+/run/host/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf
+/run/host/usr/share/fonts/twemoji/Twemoji.ttf
+/run/host/usr/share/fonts/google-noto-emoji-fonts/NotoEmoji-Regular.ttf
+```
+
+`Noto-COLRv1.ttf` is exactly the COLRv1 kind of font the crashing function
+exists to draw. That is the "why now": Fedora switched Noto Color Emoji from
+the old picture-based format to COLRv1, and AquariusOS inherited it.
+
+### 29c. Reproducing it, and the first two dead ends
+
+Two things made this awkward to reproduce in the Ubuntu container (§28a).
+
+**Dead end one: you cannot click the app from a script here.** The window opens
+and can be screenshotted through XWayland, but XTest pointer warping does not
+reach a Wayland compositor's real pointer — every synthetic click landed
+nowhere. There is no way to drive the UI from this shell. Do not spend an hour
+on it a second time.
+
+**Dead end two: the container prefers a different emoji font.** Launching the
+real 0.5.2 overlay against a scratch vault, with an emoji in a filename so the
+sidebar had to paint it, produced a `.notdef` box and no crash. The container's
+fontconfig ranks `Symbola`, then monochrome `Noto Emoji`, then `Twemoji` ahead
+of `Noto Color Emoji` for U+1F9E0, so WebKit's own fallback never reached the
+COLRv1 file. On Royce's Fedora host the ordering is the other way round. The
+container is not a faithful stand-in for the desktop's fonts.
+
+The way through was to stop driving the app and drive the *engine*, with the
+font named outright rather than left to fallback. That is
+`scripts/emoji-probe.py`, which is in the repo because this will come round
+again: a bare GTK window, a `WebKit2.WebView`, one page of emoji with
+`font-family: "Noto Color Emoji"`, a `web-process-terminated` handler, and a
+timer that prints `survived paint` and quits. Roughly thirty lines of Python
+through `gi`, run twice — once against the system WebKitGTK, once against the
+copy the AppImage carries.
+
+Pointing it at the bundled engine takes three things:
+
+```
+LD_LIBRARY_PATH=<staged libs>     # libwebkit2gtk-4.1.so.0, libjavascriptcoregtk,
+                                  # libicu*.so.70, libwoff2*
+cd <dir containing lib/x86_64-linux-gnu/webkit2gtk-4.1/>
+```
+
+The second one is the surprise: linuxdeploy rewrote the engine's path to its
+helper processes as the **relative** string
+`././/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess`, so the
+directory you launch from has to contain that layout or the engine dies at
+startup saying it cannot spawn a child. (`WEBKIT_EXEC_PATH` is not consulted.)
+That relative path is also why the launcher log carries a
+`getcwd: cannot access parent directories` line just above the crash.
+
+The result, immediately:
+
+| engine | version | result |
+|---|---|---|
+| system, in this container | **2.52.6** | `PROBE: survived paint`, emoji in full colour |
+| the copy inside v0.5.2 | **2.50.4** | the exact assertion from Royce's log, web process dead |
+
+Every emoji tried crashed it — 🧠 🏗️ 🧭 💾 ⚡ 🎯 👤 🎬 🚀 ✅ ☑️ 🔥 💡 📊 🐛 😀,
+sixteen for sixteen. That "all of them" is the tell: a bug in one glyph's
+gradient would hit one glyph. Something structural was wrong.
+
+(The versions came from a two-line script calling
+`WebKit2.get_major_version()` and friends against each library — the `.so` has
+no readable version string in it.)
+
+### 29d. The actual cause: two libraries disagreeing about a struct
+
+An AppImage carries its own copy of the browser engine. It does **not** carry
+its own copy of **FreeType**, the font engine — linuxdeploy deliberately leaves
+that on the excludelist, so it always comes from the computer the app is
+running on. Confirmed: there is no `libfreetype` anywhere under
+`versions/0.5.2/usr/lib`.
+
+FreeType 2.13 changed `FT_ColorStopIterator` — the little bookmark that walks a
+gradient's colour stops. Its current definition, all four fields marked
+"since 2.13":
+
+```c
+typedef struct FT_ColorStopIterator_ {
+  FT_UInt   num_color_stops;
+  FT_UInt   current_color_stop;
+  FT_Byte*  p;
+  FT_Bool   read_variable;      /* the new one */
+} FT_ColorStopIterator;
+```
+
+v0.5.2's engine was compiled on **ubuntu-22.04**, against FreeType **2.11.1**,
+which has no `read_variable`. AquariusOS runs FreeType **2.13.3**. So Skia
+hands FreeType a struct of the old shape, FreeType reads and writes a field
+that is not there, the stop count it reports back stops matching the vector
+Skia sized from it, and the loop indexes past the end. Hence: every emoji,
+not one.
+
+Proved by A/B, which is the part worth keeping. Same engine, same page, same
+font, one variable changed — the FreeType it loads:
+
+```
+bundled engine + host FreeType 2.13.2  →  Assertion failed, web process dead
+bundled engine + FreeType 2.11.1       →  PROBE: survived paint
+```
+
+(2.11.1 came from jammy's `libfreetype6` .deb, unpacked into the staged lib
+directory so the loader found it first.)
+
+So this is not a WebKit bug to wait for a fix to. It is a **build/run skew**
+that our own workflow created, and nothing in the app's own code is involved.
+There is no upstream patch to point at because nothing upstream is broken.
+
+### 29e. The fix: build the Linux download on ubuntu-24.04
+
+One line in `.github/workflows/build.yml`, plus the `if:` conditions that name
+the runner, plus a long comment saying why.
+
+`ubuntu-22.04` was chosen on purpose and for a good reason: an AppImage only
+runs on systems whose glibc is at least as new as the build machine's, so the
+oldest runner gives the widest reach. That reasoning was right about glibc and
+silently wrong about everything the AppImage does *not* carry. FreeType is one
+of those things; so, in the same way, are fontconfig and harfbuzz.
+
+`ubuntu-24.04` ships FreeType 2.13.2 — the same generation AquariusOS has —
+and WebKitGTK 2.52.6. Everything else the bundle carries (GTK, Pango, Cairo,
+all of which also talk to FreeType) is built against that same 2.13 there.
+The cost is a glibc floor of 2.39; AquariusOS is far newer, so it is headroom.
+
+Rejected, with reasons:
+
+* **A fontconfig rule in the AppRun hook that refuses COLRv1 fonts.** Would
+  work, and works on any host, but it throws away colour emoji to dodge a
+  problem that has a real fix — and on a machine whose only emoji font is the
+  COLRv1 one it leaves `.notdef` boxes.
+* **Bundling an emoji font of the older kind.** Same objection, plus megabytes,
+  plus it does not stop fallback reaching the COLRv1 face on its own.
+* **Bundling `libfreetype` in the AppImage.** Tempting — it would make the app
+  immune to the host's FreeType forever — and it is proved to work by the A/B
+  above. But linuxdeploy excludes FreeType by design, overriding that is not a
+  supported knob in Tauri's bundler, and a bundled FreeType then has to agree
+  with the *host's* fontconfig, which is the same class of skew wearing the
+  other hat. Left alone.
+
+**The residual risk, stated plainly:** the AppImage now assumes the machine it
+runs on has FreeType 2.13 or newer. Every current distribution does — 2.13 is
+from February 2023 — and the struct is unchanged in 2.14. If FreeType ever
+breaks that ABI again, this crash comes back in the same shape, and
+`scripts/emoji-probe.py` is how to confirm it in ten minutes.
+
+### 29f. Proving the fix
+
+This container **is** Ubuntu 24.04 with FreeType 2.13.2 and WebKitGTK 2.52.6,
+so a local `npm run tauri:build -- --bundles appimage` produces the same thing
+the changed workflow will. Three checks on the result:
+
+1. The engine it carries reports **2.52.6**, not 2.50.4.
+2. `scripts/emoji-probe.py` run against *that* engine — the one from the new bundle,
+   staged the same way as §29c — prints `PROBE: survived paint` and paints the
+   emoji in colour. The identical run against 0.5.2's engine, same page, same
+   font, same machine, dies with Royce's assertion.
+3. The AppImage itself starts, opens a window and loads the app against a
+   scratch vault holding one plain-ASCII note and one emoji note, with an
+   isolated `XDG_CONFIG_HOME` / `XDG_DATA_HOME` / `XDG_STATE_HOME` (§28g — the
+   same discipline, for the same reason). So the runner change did not break
+   packaging.
+
+What could **not** be checked from this shell is the last mile: clicking the
+emoji note in the packaged app, for the reason in §29c's first dead end. The
+proof stops at the engine, which is where the bug is — the app's own code never
+enters into it. The one thing worth doing on the real desktop when the next
+build lands is exactly what Royce did the first time: open a vault file with
+emoji in the headings.
+
+A curiosity noticed along the way and deliberately left alone: an emoji in a
+*filename* renders as a `.notdef` box in the sidebar even with the emoji font
+forced to the front of fontconfig's list, on both engines. Whatever the file
+tree's font stack does, it stops WebKit falling back for that string. Cosmetic,
+unrelated to this crash, and not worth touching in a fix commit.
+
+Nothing here needs the AppRun hook, which matters for the delivery path: the
+updater unpacks the whole AppImage into
+`~/.local/share/aquarius/aquarius-writer/versions/<version>/` and the OS
+launcher runs `AppRun` out of that folder (`src-tauri/src/updater/overlay.rs`).
+The fix travels in `usr/lib` inside that copy, so it arrives the same way
+whether the file is run as a single AppImage or unpacked into the overlay.
+Royce simply needs the next build; the broken engine is baked into the 0.5.2
+file already on his disk and no configuration change can rescue it.
