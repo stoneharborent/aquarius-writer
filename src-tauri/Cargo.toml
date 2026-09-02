@@ -1,6 +1,6 @@
 [package]
 name = "aquarius-writer"
-version = "0.5.2"
+version = "0.5.3"
 description = "Aquarius Writer — local-first desktop writing studio"
 edition = "2021"
 # Raised from 1.77 in Stage 5: rmcp (the official Rust MCP SDK) declares 1.88.

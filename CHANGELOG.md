@@ -6,7 +6,7 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
-## Unreleased
+## v0.5.3 — 2026-09-01
 
 Your book is a thing the app knows about now, not just a folder of files —
 and an emoji no longer closes the app.
