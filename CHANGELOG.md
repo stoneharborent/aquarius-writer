@@ -6,7 +6,7 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
-## Unreleased
+## v0.5.4 — 2026-09-02
 
 - **Deleting a document asks first.** The small "×" on a file in the sidebar
   used to move the file to Recently Deleted the moment it was clicked, and the
