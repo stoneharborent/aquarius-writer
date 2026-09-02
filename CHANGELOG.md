@@ -8,21 +8,19 @@ as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches
 
 ## Unreleased
 
-<<<<<<< HEAD
 - **Naming a snapshot happens inside Aquarius now.** "Take snapshot" in the
   Versions pane used to pop up the system's own little grey box to ask what to
   call it. It asks in the app's own window instead — same wording you would
   expect, the name already filled in and selected so you can just start typing,
   Enter to save it, Escape to back out. Leave it blank and the snapshot is
   called "Snapshot", exactly as before.
-=======
+
 - **The file list is quicker to click through.** Picking a document or folding a
   folder used to make the whole sidebar redraw itself — every row, every time —
   which is why a long list of chapters could feel slightly sticky on a slower
   machine. Now only the rows that actually changed redraw: the one you left and
   the one you landed on. Nothing about how the sidebar looks or behaves has
   changed.
->>>>>>> perf/sidebar-memo
 
 ## v0.5.4 — 2026-09-02
 
