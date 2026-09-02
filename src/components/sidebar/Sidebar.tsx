@@ -13,6 +13,7 @@ import {
 } from "@/icons";
 import {
   createContext,
+  memo,
   useCallback,
   useContext,
   useEffect,
@@ -23,6 +24,7 @@ import {
 import type { CSSProperties, DragEvent as ReactDragEvent } from "react";
 import type { ChapterStatus, NewFileKind, NodeKind, VaultNode } from "@/types/vault";
 import { useVault } from "@/state/vaultStore";
+import { useTreeUi } from "@/state/treeUiStore";
 import { useOverlay } from "@/state/overlayStore";
 import { useShell, ZOOM_MAX, ZOOM_MIN } from "@/state/shellStore";
 import { useFavorites } from "@/state/favoritesStore";
@@ -48,16 +50,16 @@ interface Composer {
 }
 
 /**
- * Which row currently owns the tree's one open menu / inline editor.
+ * What every tree row needs and none of them should ask for twice.
  *
- * Kept in the Sidebar rather than in each row so only one can ever be open —
- * two rename fields at once would be a way to lose an edit.
+ * Two fields only, and both change roughly never: the folder list the "Move
+ * to…" menu offers, and the manuscript/draft marks. Everything that changes
+ * *often* — the open menu, the rename, the drag — was in here too and is now in
+ * `treeUiStore`, because a context value is one identity shared by all sixteen
+ * rows and re-renders every one of them on any change (docs/NOTES.md §27n).
+ * What is left is stable enough that a row can read it for free.
  */
 interface TreeOps {
-  menuFor: string | null;
-  setMenuFor: (path: string | null) => void;
-  renaming: string | null;
-  setRenaming: (path: string | null) => void;
   /** Every folder path in the workflow, for the "Move to…" list. */
   folders: string[];
   /**
@@ -65,19 +67,23 @@ interface TreeOps {
    * without every row subscribing to the manifest separately (PARITY row 8).
    */
   roleOf: (path: string) => "manuscript" | "draft" | null;
-  /**
-   * Remember which folder the writer last touched, so "+" adds *there*.
-   *
-   * Deliberately not the vault's `selectedPath`: selecting a folder would put
-   * a folder in the editor pane, which has nothing to render for one.
-   */
-  noteTarget: (folder: string) => void;
-  /** Drag-a-row-into-a-folder. See `useTreeDrag`. */
-  drag: TreeDrag;
 }
 
 const TreeOpsContext = createContext<TreeOps | null>(null);
 const useTreeOps = () => useContext(TreeOpsContext)!;
+
+/** How long a closed folder has to be hovered before it springs open. */
+const SPRING_MS = 700;
+
+/** One spring-open timer, because only one folder can be under the pointer. */
+let spring: { folder: string; id: number } | null = null;
+
+function cancelSpring() {
+  if (spring) {
+    window.clearTimeout(spring.id);
+    spring = null;
+  }
+}
 
 /**
  * Dragging a row onto a folder to move it there.
@@ -90,92 +96,59 @@ const useTreeOps = () => useContext(TreeOpsContext)!;
  * Deliberately *not* here: reordering rows inside a folder (chapter order is
  * the manuscript rail's job, and the tree is sorted folders-then-name), and
  * dragging in or out of the OS file manager (PARITY row 6).
+ *
+ * **A module constant rather than a hook.** This used to be `useTreeDrag()`,
+ * which returned a fresh object of fresh closures on every Sidebar render and
+ * handed it to every row through the context — one new identity was enough to
+ * re-render all sixteen rows whatever `React.memo` said. The callbacks are the
+ * same six functions for the life of the app now; the *state* they read lives
+ * in `treeUiStore`, so a row can select the one boolean about itself.
  */
-interface TreeDrag {
-  /** The row being carried, or null when no drag is in flight. */
-  path: string | null;
-  /** The folder currently accepting the drop — "" is the vault root. */
-  into: string | null;
-  begin: (path: string) => void;
-  end: () => void;
-  /** Hover a folder. False means "not a legal target" — don't accept the drop. */
-  hover: (folder: string) => boolean;
-  leave: (folder: string) => void;
-  commit: (folder: string) => void;
-  /** Whether `folder` is somewhere the in-flight drag could actually land. */
-  allows: (folder: string) => boolean;
-}
-
-/** How long a closed folder has to be hovered before it springs open. */
-const SPRING_MS = 700;
-
-function useTreeDrag(): TreeDrag {
-  const moveEntry = useVault((s) => s.moveEntry);
-  const [path, setPath] = useState<string | null>(null);
-  const [into, setInto] = useState<string | null>(null);
-  // One spring-open timer, because only one folder can be under the pointer.
-  const spring = useRef<{ folder: string; id: number } | null>(null);
-
-  const cancelSpring = useCallback(() => {
-    if (spring.current) {
-      window.clearTimeout(spring.current.id);
-      spring.current = null;
-    }
-  }, []);
-
-  const end = useCallback(() => {
-    cancelSpring();
-    setPath(null);
-    setInto(null);
-  }, [cancelSpring]);
-
-  // Esc cancels. The engine already aborts a native drag on Escape and answers
-  // with `dragend`, which is what really clears this — the listener is the belt
-  // to that braces, because WebKitGTK has not always delivered key events to
-  // the page mid-drag. Both routes end in the same `end()`, so a double fire is
-  // harmless.
-  useEffect(() => {
-    if (path === null) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") end(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [path, end]);
-
-  // Unmounting mid-drag (switching workflows) must not leave a timer running.
-  useEffect(() => cancelSpring, [cancelSpring]);
-
+const treeDrag = {
   /**
+   * Whether `folder` is somewhere the in-flight drag could actually land.
+   *
    * The three refusals, in the UI so the writer sees them rather than finding
    * out from a failure notice. The backend refuses the first two as well —
    * `ops::move_entry` on the Rust side, `relocate` in the browser mock — this
    * is the same rule drawn.
    */
-  const allows = useCallback((folder: string) => {
+  allows(folder: string): boolean {
+    const path = useTreeUi.getState().dragPath;
     if (path === null) return false;
     if (folder === path) return false;                    // a folder into itself
     if (folder.startsWith(`${path}/`)) return false;      // …or into its own descendant
     if (folder === parentOf(path)) return false;          // already there: a no-op
     return true;
-  }, [path]);
+  },
 
-  const begin = useCallback((p: string) => {
+  begin(path: string) {
     cancelSpring();
-    setPath(p);
-    setInto(null);
-  }, [cancelSpring]);
+    const ui = useTreeUi.getState();
+    ui.setDragPath(path);
+    ui.setDragInto(null);
+  },
 
-  const hover = useCallback((folder: string) => {
-    if (!allows(folder)) return false;
-    setInto(folder);
+  end() {
+    cancelSpring();
+    const ui = useTreeUi.getState();
+    ui.setDragPath(null);
+    ui.setDragInto(null);
+  },
+
+  /** Hover a folder. False means "not a legal target" — don't accept the drop. */
+  hover(folder: string): boolean {
+    if (!treeDrag.allows(folder)) return false;
+    useTreeUi.getState().setDragInto(folder);
     // Spring-open, so a drag can reach a nested destination without being let
     // go of first. The root strip ("") has nothing to open.
-    if (spring.current?.folder !== folder) {
+    if (spring?.folder !== folder) {
       cancelSpring();
       if (folder && !useVault.getState().expanded.has(folder)) {
-        spring.current = {
+        spring = {
           folder,
           id: window.setTimeout(() => {
-            spring.current = null;
+            spring = null;
             const vault = useVault.getState();
             if (!vault.expanded.has(folder)) vault.toggleExpanded(folder);
           }, SPRING_MS),
@@ -183,26 +156,52 @@ function useTreeDrag(): TreeDrag {
       }
     }
     return true;
-  }, [allows, cancelSpring]);
+  },
 
-  const leave = useCallback((folder: string) => {
-    setInto((v) => (v === folder ? null : v));
-    if (spring.current?.folder === folder) cancelSpring();
-  }, [cancelSpring]);
+  leave(folder: string) {
+    const ui = useTreeUi.getState();
+    if (ui.dragInto === folder) ui.setDragInto(null);
+    if (spring?.folder === folder) cancelSpring();
+  },
 
-  const commit = useCallback((folder: string) => {
-    const from = path;
-    end();
-    if (from === null || !allows(folder)) return;
-    void moveEntry(from, folder).then((to) => {
+  commit(folder: string) {
+    // Asked *before* `end()` clears the drag — `allows` reads the store, and
+    // the store answers immediately rather than on the next render.
+    const from = useTreeUi.getState().dragPath;
+    const legal = treeDrag.allows(folder);
+    treeDrag.end();
+    if (from === null || !legal) return;
+    void useVault.getState().moveEntry(from, folder).then((to) => {
       // Open the tree to where it landed. Dropping a chapter into a folded
       // folder otherwise reads as "my file vanished" — which is the one thing a
       // move must never look like.
       if (to && folder) useVault.getState().expandAll([...ancestorsOf(folder), folder]);
     });
-  }, [path, allows, end, moveEntry]);
+  },
+};
 
-  return { path, into, begin, end, hover, leave, commit, allows };
+/**
+ * Esc cancels a drag, and unmounting mid-drag must not leave a timer running.
+ *
+ * The engine already aborts a native drag on Escape and answers with
+ * `dragend`, which is what really clears this — the listener is the belt to
+ * that braces, because WebKitGTK has not always delivered key events to the
+ * page mid-drag. Both routes end in the same `end()`, so a double fire is
+ * harmless. It is mounted for the sidebar's whole life now rather than only
+ * while a drag is in flight, which costs one no-op key check and saves the
+ * Sidebar a re-render at the start and end of every drag.
+ */
+function useTreeDragLifecycle() {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && useTreeUi.getState().dragPath !== null) treeDrag.end();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      cancelSpring();
+    };
+  }, []);
 }
 
 /** Every folder in the tree, depth-first, as vault-relative paths. */
@@ -275,21 +274,19 @@ function folderPaths(node: VaultNode, out: string[] = []): string[] {
 export function Sidebar() {
   // One selector per field. `useVault()` with no selector woke the entire
   // sidebar — every row, every branch — on any vault change at all.
+  //
+  // Four fields, and none of them is the selection or the expanded set: those
+  // belong to the *rows*, which read them one boolean at a time. The Sidebar
+  // does not re-render when a document is selected or a folder is folded, and
+  // that is what keeps its children still (docs/NOTES.md §27n).
   const current = useVault((s) => s.current);
   const tree = useVault((s) => s.tree);
-  const expanded = useVault((s) => s.expanded);
-  const selectedPath = useVault((s) => s.selectedPath);
-  const toggleExpanded = useVault((s) => s.toggleExpanded);
-  const selectPath = useVault((s) => s.selectPath);
   const expandAll = useVault((s) => s.expandAll);
   const openOverlay = useOverlay((s) => s.open);
   const query = useShell((s) => s.query);
   const sidebarZoom = useShell((s) => s.sidebarZoom);
   const [composer, setComposer] = useState<Composer | null>(null);
-  const [menuFor, setMenuFor] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [lastFolder, setLastFolder] = useState<string | null>(null);
-  const drag = useTreeDrag();
+  useTreeDragLifecycle();
 
   const folders = useMemo(() => (tree ? collectFolders(tree) : []), [tree]);
 
@@ -303,6 +300,11 @@ export function Sidebar() {
     return map;
   }, [current?.manuscripts, current?.drafts]);
   const roleOf = useCallback((path: string) => roles.get(path) ?? null, [roles]);
+
+  // One identity for as long as its two fields hold still. An object literal
+  // here would be a new context value on every render, and a new context value
+  // re-renders every row regardless of `React.memo`.
+  const ops = useMemo<TreeOps>(() => ({ folders, roleOf }), [folders, roleOf]);
 
   // The top bar's ⌘K capsule filters the tree by name; Enter in it opens the
   // full-text Find sheet, which is the part a name filter cannot do.
@@ -320,11 +322,6 @@ export function Sidebar() {
 
   if (!current || !tree) return null;
 
-  // New things land beside whatever the writer last touched: inside the folder
-  // they opened, alongside the document they selected, at the root otherwise.
-  // Same rule the Swift add menu follows.
-  const target = lastFolder ?? (selectedPath ? parentOf(selectedPath) : "");
-
   return (
     <aside className="sidebar">
       {/* Just a title now. Switching workflows is the chip at the bottom of
@@ -340,7 +337,7 @@ export function Sidebar() {
       <div className="sb-eyebrow">
         <span className="sb-eyebrow-label">Workflow</span>
         <NavigatorZoom />
-        <AddMenu onPick={(what) => setComposer({ what, parent: target })} />
+        <AddMenu onPick={(what) => setComposer({ what, parent: targetFolder() })} />
       </div>
 
       {/* `--sb-zoom` scales only what is inside this container. The quick views
@@ -349,7 +346,7 @@ export function Sidebar() {
       <div
         className="sb-tree"
         style={{ "--sb-zoom": sidebarZoom } as CSSProperties}
-        onClick={() => setMenuFor(null)}
+        onClick={() => useTreeUi.getState().setMenuFor(null)}
       >
         {composer && (
           <Composer
@@ -379,49 +376,17 @@ export function Sidebar() {
             subline="Every document lives in this folder. Make the first one and it opens straight away."
             action={{
               label: "New document",
-              onClick: () => setComposer({ what: "file", parent: target }),
+              onClick: () => setComposer({ what: "file", parent: targetFolder() }),
             }}
           />
         )}
-        <TreeOpsContext.Provider
-          value={{
-            menuFor, setMenuFor, renaming, setRenaming, folders, roleOf,
-            noteTarget: setLastFolder, drag,
-          }}
-        >
+        <TreeOpsContext.Provider value={ops}>
           {shown?.children?.map((node) => (
-            <TreeBranch
-              key={node.path}
-              node={node}
-              depth={0}
-              expanded={expanded}
-              onToggle={toggleExpanded}
-              selected={selectedPath}
-              onSelect={selectPath}
-            />
+            <TreeBranch key={node.path} node={node} depth={0} />
           ))}
         </TreeOpsContext.Provider>
 
-        {/* The vault root as a drop target. Only while a drag is in flight, and
-            only when the row is not already at the root — an always-visible
-            strip would be a permanent 30px of chrome for a rare act, and one
-            that refuses the drop is worse than one that is not there. */}
-        {drag.allows("") && (
-          <div
-            className={`sb-droproot${drag.into === "" ? " on" : ""}`}
-            onDragOver={(e) => {
-              if (!drag.hover("")) return;
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-            }}
-            onDragLeave={() => drag.leave("")}
-            onDrop={(e) => { e.preventDefault(); drag.commit(""); }}
-          >
-            {/* "Vault root" is what the ⋯ menu's own destination list calls it
-                — two names for one place would be two places. */}
-            Move to the vault root
-          </div>
-        )}
+        <DropRoot />
       </div>
 
       {/* Six now, not four: Palette and Settings moved here when the status bar
@@ -448,6 +413,53 @@ export function Sidebar() {
 }
 
 /**
+ * Where a new file or folder lands: inside the folder the writer last opened,
+ * alongside the document they selected, at the vault root otherwise. Same rule
+ * the Swift add menu follows.
+ *
+ * Read at the moment "+" is clicked rather than on every render, so neither
+ * the selection nor the last-touched folder is a thing the Sidebar has to
+ * subscribe to.
+ */
+function targetFolder(): string {
+  const last = useTreeUi.getState().lastFolder;
+  if (last !== null) return last;
+  const selected = useVault.getState().selectedPath;
+  return selected ? parentOf(selected) : "";
+}
+
+/**
+ * The vault root as a drop target. Only while a drag is in flight, and only
+ * when the row is not already at the root — an always-visible strip would be a
+ * permanent 30px of chrome for a rare act, and one that refuses the drop is
+ * worse than one that is not there.
+ *
+ * Its own component so that the two fields it watches are watched *here*: in
+ * the Sidebar they would re-render the whole column twice per drag.
+ */
+const DropRoot = memo(function DropRoot() {
+  const dragPath = useTreeUi((s) => s.dragPath);
+  const into = useTreeUi((s) => s.dragInto);
+  if (dragPath === null || !treeDrag.allows("")) return null;
+  return (
+    <div
+      className={`sb-droproot${into === "" ? " on" : ""}`}
+      onDragOver={(e) => {
+        if (!treeDrag.hover("")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+      }}
+      onDragLeave={() => treeDrag.leave("")}
+      onDrop={(e) => { e.preventDefault(); treeDrag.commit(""); }}
+    >
+      {/* "Vault root" is what the ⋯ menu's own destination list calls it — two
+          names for one place would be two places. */}
+      Move to the vault root
+    </div>
+  );
+});
+
+/**
  * Starred · Today · Manuscript — the three shortcuts that sit above the
  * WORKFLOW eyebrow in the Swift app (SWIFT-AUDIT §1.4).
  *
@@ -455,10 +467,9 @@ export function Sidebar() {
  * and giving them a second visual language would make the top of the sidebar
  * look like a toolbar someone bolted on.
  */
-function QuickViews() {
+const QuickViews = memo(function QuickViews() {
   const tree = useVault((s) => s.tree);
   const view = useVault((s) => s.view);
-  const expanded = useVault((s) => s.expanded);
   const setView = useVault((s) => s.setView);
   const selectPath = useVault((s) => s.selectPath);
   const toggleExpanded = useVault((s) => s.toggleExpanded);
@@ -482,7 +493,9 @@ function QuickViews() {
     // useful thing instead.
     expandAll(ancestorsOf(node.path));
     if (node.kind === "folder") {
-      if (!expanded.has(node.path)) toggleExpanded(node.path);
+      // Read at click time — the expanded set is not something this list has
+      // any reason to re-render for.
+      if (!useVault.getState().expanded.has(node.path)) toggleExpanded(node.path);
       return;
     }
     selectPath(node.path);
@@ -551,7 +564,7 @@ function QuickViews() {
       </button>
     </div>
   );
-}
+});
 
 /**
  * A− / A+ beside the WORKFLOW eyebrow — SWIFT-AUDIT §1.4's navigator zoom.
@@ -693,26 +706,41 @@ function Composer({
   );
 }
 
-function TreeBranch({
+/**
+ * One row of the tree, plus its children when it is an open folder.
+ *
+ * **Memoised, and its props are down to two.** It used to take `expanded`,
+ * `selected`, `onToggle` and `onSelect` from the Sidebar, which meant the whole
+ * tree re-rendered whenever any one row's state changed — a `Set` and a
+ * `string | null` describe *every* row, so every row had to be handed them
+ * again to find out about one. Each row now asks the store the one question it
+ * cares about, as a boolean: am I selected, am I open, am I the one being
+ * dragged. Selecting a document re-renders the row that lost the highlight and
+ * the row that gained it, and folding a folder re-renders that folder and the
+ * subtree it is folding. docs/NOTES.md §27n.
+ *
+ * `node` and `depth` are all that is left, and `node` holds still until the
+ * tree itself is reloaded — which is a redraw of everything by definition.
+ */
+const TreeBranch = memo(function TreeBranch({
   node,
   depth,
-  expanded,
-  onToggle,
-  selected,
-  onSelect,
 }: {
   node: VaultNode;
   depth: number;
-  expanded: Set<string>;
-  onToggle: (path: string) => void;
-  selected: string | null;
-  onSelect: (path: string) => void;
 }) {
   const ops = useTreeOps();
-  const drag = ops.drag;
   const isFolder = node.kind === "folder";
-  const isOpen = expanded.has(node.path);
-  const isSelected = selected === node.path;
+  // Booleans, not the containers they come out of: `s.expanded` is a new Set on
+  // every toggle and `s.selectedPath` changes for every row at once, so
+  // selecting either of them wholesale is a subscription to the whole tree.
+  const isOpen = useVault((s) => isFolder && s.expanded.has(node.path));
+  const isSelected = useVault((s) => s.selectedPath === node.path);
+  const isRenaming = useTreeUi((s) => s.renaming === node.path);
+  const isDragging = useTreeUi((s) => s.dragPath === node.path);
+  const isDropTarget = useTreeUi((s) => s.dragInto === node.path);
+  const toggleExpanded = useVault((s) => s.toggleExpanded);
+  const selectPath = useVault((s) => s.selectPath);
   const indent = 10 + depth * 14 + (isFolder ? 0 : 14);
 
   // A row is picked up by its *wrapper*, never by the `<button>` inside it:
@@ -727,9 +755,9 @@ function TreeBranch({
       // Some engines refuse to start a drag with an empty payload, and the
       // path is the honest thing to carry anyway.
       e.dataTransfer.setData("text/plain", node.path);
-      drag.begin(node.path);
+      treeDrag.begin(node.path);
     },
-    onDragEnd: () => drag.end(),
+    onDragEnd: () => treeDrag.end(),
   };
 
   // Only folders accept a drop. A file row is not a target: "into the folder
@@ -739,7 +767,7 @@ function TreeBranch({
     onDragOver: (e: ReactDragEvent<HTMLDivElement>) => {
       // No preventDefault when the move is illegal or a no-op — that is how the
       // engine is told "not here", cursor included.
-      if (!drag.hover(node.path)) return;
+      if (!treeDrag.hover(node.path)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
     },
@@ -751,27 +779,26 @@ function TreeBranch({
       // left the window entirely, which is one too).
       const to = e.relatedTarget as Node | null;
       if (to && e.currentTarget.contains(to)) return;
-      drag.leave(node.path);
+      treeDrag.leave(node.path);
     },
     onDrop: (e: ReactDragEvent<HTMLDivElement>) => {
       e.preventDefault();
-      drag.commit(node.path);
+      treeDrag.commit(node.path);
     },
   };
 
   const wrapClass = [
     "sb-rowwrap",
-    drag.path === node.path ? "sb-dragging" : "",
-    drag.into === node.path ? "sb-drop-into" : "",
+    isDragging ? "sb-dragging" : "",
+    isDropTarget ? "sb-drop-into" : "",
   ].filter(Boolean).join(" ");
 
-  if (ops.renaming === node.path) {
+  if (isRenaming) {
     return (
       <>
         <RenameRow node={node} indent={indent} />
         {isFolder && isOpen && node.children?.map((child) => (
-          <TreeBranch key={child.path} node={child} depth={depth + 1} expanded={expanded}
-            onToggle={onToggle} selected={selected} onSelect={onSelect} />
+          <TreeBranch key={child.path} node={child} depth={depth + 1} />
         ))}
       </>
     );
@@ -785,8 +812,14 @@ function TreeBranch({
           <button
             className={`sb-row sb-folder${isSelected ? " selected" : ""}`}
             style={{ paddingLeft: scaled(indent) }}
-            onClick={() => { ops.noteTarget(node.path); onToggle(node.path); }}
-            onContextMenu={(e) => { e.preventDefault(); ops.setMenuFor(node.path); }}
+            onClick={() => {
+              useTreeUi.getState().setLastFolder(node.path);
+              toggleExpanded(node.path);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              useTreeUi.getState().setMenuFor(node.path);
+            }}
           >
             <span className="sb-caret">
               <Caret open={isOpen} color="var(--ink-soft)" />
@@ -811,15 +844,7 @@ function TreeBranch({
         </div>
         {isOpen &&
           node.children?.map((child) => (
-            <TreeBranch
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              expanded={expanded}
-              onToggle={onToggle}
-              selected={selected}
-              onSelect={onSelect}
-            />
+            <TreeBranch key={child.path} node={child} depth={depth + 1} />
           ))}
       </>
     );
@@ -832,8 +857,14 @@ function TreeBranch({
       <button
         className={`sb-row sb-file${isSelected ? " selected" : ""}`}
         style={{ paddingLeft: scaled(indent) }}
-        onClick={() => { ops.noteTarget(parentOf(node.path)); onSelect(node.path); }}
-        onContextMenu={(e) => { e.preventDefault(); ops.setMenuFor(node.path); }}
+        onClick={() => {
+          useTreeUi.getState().setLastFolder(parentOf(node.path));
+          selectPath(node.path);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          useTreeUi.getState().setMenuFor(node.path);
+        }}
       >
         <FileGlyph kind={node.kind} />
         <span className="sb-label">{node.name}</span>
@@ -851,12 +882,12 @@ function TreeBranch({
       <RowMenu node={node} />
     </div>
   );
-}
+});
 
 /** The row, replaced by a text field, while it is being renamed. */
 function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
   const renameEntry = useVault((s) => s.renameEntry);
-  const ops = useTreeOps();
+  const setRenaming = useTreeUi((s) => s.setRenaming);
   const [name, setName] = useState(node.name);
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -868,11 +899,11 @@ function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
 
   async function submit() {
     if (busy) return;
-    if (!name.trim() || name === node.name) { ops.setRenaming(null); return; }
+    if (!name.trim() || name === node.name) { setRenaming(null); return; }
     setBusy(true);
     const to = await renameEntry(node.path, name);
     setBusy(false);
-    if (to) ops.setRenaming(null);
+    if (to) setRenaming(null);
   }
 
   return (
@@ -888,7 +919,7 @@ function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") void submit();
-          if (e.key === "Escape") ops.setRenaming(null);
+          if (e.key === "Escape") setRenaming(null);
         }}
         onBlur={() => { if (!busy) void submit(); }}
       />
@@ -906,8 +937,9 @@ function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
  * so a folder with no manuscript above it is not offered a mark the backend
  * would refuse (PARITY row 8).
  */
-function RowMenu({ node }: { node: VaultNode }) {
+const RowMenu = memo(function RowMenu({ node }: { node: VaultNode }) {
   const ops = useTreeOps();
+  const open = useTreeUi((s) => s.menuFor === node.path);
   const moveEntry = useVault((s) => s.moveEntry);
   const manuscripts = useVault((s) => s.current?.manuscripts);
   const drafts = useVault((s) => s.current?.drafts);
@@ -925,9 +957,9 @@ function RowMenu({ node }: { node: VaultNode }) {
     (m) => m.folder && node.path.startsWith(`${m.folder}/`),
   );
 
-  useEffect(() => { if (ops.menuFor !== node.path) setPicking(false); }, [ops.menuFor, node.path]);
+  useEffect(() => { if (!open) setPicking(false); }, [open]);
 
-  if (ops.menuFor !== node.path) return null;
+  if (!open) return null;
 
   // Where this row could go: any folder except the one it is already in, and —
   // for a folder — never into itself or anything it contains.
@@ -943,19 +975,19 @@ function RowMenu({ node }: { node: VaultNode }) {
     <div
       className="sb-menu"
       onClick={(e) => e.stopPropagation()}
-      onMouseLeave={() => ops.setMenuFor(null)}
+      onMouseLeave={() => useTreeUi.getState().setMenuFor(null)}
     >
       {!picking ? (
         <>
           <button
             className="sb-menu-item"
-            onClick={() => { ops.setMenuFor(null); void toggleFavorite(node.path); }}
+            onClick={() => { useTreeUi.getState().setMenuFor(null); void toggleFavorite(node.path); }}
           >{starred ? "Unstar" : "Star"}</button>
           {isFile && (
             <button
               className="sb-menu-item"
               onClick={() => {
-                ops.setMenuFor(null);
+                useTreeUi.getState().setMenuFor(null);
                 // Editable, not reference — the pane's own header switches it
                 // to read-only, and the writer asked for a second editor.
                 useSplit.getState().openSplit(node.path, false);
@@ -968,7 +1000,7 @@ function RowMenu({ node }: { node: VaultNode }) {
             <button
               className="sb-menu-item"
               onClick={() => {
-                ops.setMenuFor(null);
+                useTreeUi.getState().setMenuFor(null);
                 void toggleManuscriptFolder(node.path);
               }}
             >{isManuscript ? "Unmark Manuscript" : "Mark as Manuscript"}</button>
@@ -977,14 +1009,18 @@ function RowMenu({ node }: { node: VaultNode }) {
             <button
               className="sb-menu-item"
               onClick={() => {
-                ops.setMenuFor(null);
+                useTreeUi.getState().setMenuFor(null);
                 void toggleDraftFolder(node.path);
               }}
             >{isDraft ? "Unmark Draft folder" : "Mark as Draft folder"}</button>
           )}
           <button
             className="sb-menu-item"
-            onClick={() => { ops.setMenuFor(null); ops.setRenaming(node.path); }}
+            onClick={() => {
+              const ui = useTreeUi.getState();
+              ui.setMenuFor(null);
+              ui.setRenaming(node.path);
+            }}
           >Rename</button>
           <button
             className="sb-menu-item"
@@ -999,7 +1035,7 @@ function RowMenu({ node }: { node: VaultNode }) {
               key={folder || "/"}
               className="sb-menu-item"
               onClick={() => {
-                ops.setMenuFor(null);
+                useTreeUi.getState().setMenuFor(null);
                 void moveEntry(node.path, folder);
               }}
             >{folder || "Vault root"}</button>
@@ -1008,7 +1044,7 @@ function RowMenu({ node }: { node: VaultNode }) {
       )}
     </div>
   );
-}
+});
 
 /**
  * The star on a tree row.
@@ -1018,7 +1054,7 @@ function RowMenu({ node }: { node: VaultNode }) {
  * is in the row's ⋯ menu and in the command palette, because a hover-only
  * control is not a control on a trackpad-less machine.
  */
-function StarAffordance({ path }: { path: string }) {
+const StarAffordance = memo(function StarAffordance({ path }: { path: string }) {
   const starred = useFavorites((s) => s.starred.has(path));
   const toggle = useFavorites((s) => s.toggle);
   return (
@@ -1039,10 +1075,14 @@ function StarAffordance({ path }: { path: string }) {
       />
     </span>
   );
-}
+});
 
-function MoreAffordance({ path }: { path: string }) {
-  const ops = useTreeOps();
+/**
+ * The row's "⋯". It reads which menu is open at click time rather than
+ * subscribing to it: sixteen of these watching one string is sixteen rows
+ * re-rendering every time any menu opens.
+ */
+const MoreAffordance = memo(function MoreAffordance({ path }: { path: string }) {
   return (
     <span
       className="sb-more"
@@ -1050,11 +1090,12 @@ function MoreAffordance({ path }: { path: string }) {
       title="Rename or move"
       onClick={(e) => {
         e.stopPropagation();
-        ops.setMenuFor(ops.menuFor === path ? null : path);
+        const ui = useTreeUi.getState();
+        ui.setMenuFor(ui.menuFor === path ? null : path);
       }}
     >⋯</span>
   );
-}
+});
 
 /** Every editable file under `node`, however deep. Folders do not count. */
 function countFilesIn(node: VaultNode): number {
@@ -1094,8 +1135,11 @@ function deleteQuestion(node: VaultNode): { title: string; body: string } {
  * The safety net is the same one either way — the file is in Recently Deleted,
  * not gone.
  */
-function DeleteAffordance({ node }: { node: VaultNode }) {
-  const current = useVault((s) => s.current);
+const DeleteAffordance = memo(function DeleteAffordance({ node }: { node: VaultNode }) {
+  // The id, not the whole workflow: `current` is replaced wholesale whenever
+  // anything in the manifest moves, and this row only needs to know where to
+  // send the file.
+  const workflowId = useVault((s) => s.current?.id);
   const removeFromTree = useVault((s) => s.removeFromTree);
   const path = node.path;
   return (
@@ -1105,7 +1149,7 @@ function DeleteAffordance({ node }: { node: VaultNode }) {
       title="Move to Recently Deleted"
       onClick={(e) => {
         e.stopPropagation();
-        if (!current) return;
+        if (!workflowId) return;
         void (async () => {
           const { title, body } = deleteQuestion(node);
           const ok = await confirmAsk({
@@ -1118,7 +1162,7 @@ function DeleteAffordance({ node }: { node: VaultNode }) {
           // Everything below is unchanged from before the gate existed.
           // Evict first: a pending debounced save would resurrect the file.
           useEditor.getState().evict(path);
-          await trashFile(current.id, path);
+          await trashFile(workflowId, path);
           removeFromTree(path);
           // The backend already dropped the star (`ops::trash_entry`); this is
           // the sidebar catching up without another round trip.
@@ -1127,16 +1171,16 @@ function DeleteAffordance({ node }: { node: VaultNode }) {
       }}
     >×</span>
   );
-}
+});
 
-function FileGlyph({ kind }: { kind: NodeKind }) {
+const FileGlyph = memo(function FileGlyph({ kind }: { kind: NodeKind }) {
   const color = "var(--ink-mute)";
   const size = 12;
   if (kind === "fountain") return <ScreenplayIcon size={size} color={color} />;
   if (kind === "image") return <ImageIcon size={size} color={color} />;
   if (kind === "pdf") return <PdfIcon size={size} color={color} />;
   return <FileIcon size={size} color={color} />;
-}
+});
 
 /**
  * The workflow switcher, as a chip pinned to the bottom of the sidebar — the
@@ -1147,7 +1191,7 @@ function FileGlyph({ kind }: { kind: NodeKind }) {
  *
  * The popover opens upward, since the chip is at the bottom of the column.
  */
-function WorkflowChip() {
+const WorkflowChip = memo(function WorkflowChip() {
   const current = useVault((s) => s.current);
   const workflows = useVault((s) => s.workflows);
   const workflowsLoading = useVault((s) => s.workflowsLoading);
@@ -1237,4 +1281,4 @@ function WorkflowChip() {
       )}
     </div>
   );
-}
+});

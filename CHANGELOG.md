@@ -6,6 +6,15 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## Unreleased
+
+- **The file list is quicker to click through.** Picking a document or folding a
+  folder used to make the whole sidebar redraw itself — every row, every time —
+  which is why a long list of chapters could feel slightly sticky on a slower
+  machine. Now only the rows that actually changed redraw: the one you left and
+  the one you landed on. Nothing about how the sidebar looks or behaves has
+  changed.
+
 ## v0.5.4 — 2026-09-02
 
 - **Deleting a document asks first.** The small "×" on a file in the sidebar

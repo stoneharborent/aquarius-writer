@@ -4053,6 +4053,199 @@ that scaffolding is in the commit — the diff is the selectors and nothing else
 
 ---
 
+### 27n. The sixteen rows that followed their parent down
+
+*§27m ends with a piece of unfinished business named out loud: `Sidebar`,
+`QuickViews`, `WorkflowChip` and `TreeBranch` were the three rows in its tables
+that did not move, and it said why — "they are its children and are not
+memoised, so they follow it down regardless of what they subscribe to. **That
+is the next win in this file, and it is a different change** — `React.memo` on
+the tree row plus a stable row callback — not more selectors." This is that
+change. The before numbers below were re-measured on `2da51ff` rather than
+copied across, and they match §27m's to the render.*
+
+#### Selectors could not finish this, because the subscriptions were right
+
+The Sidebar reads `selectedPath` and it reads `expanded`. Both genuinely change
+when a document is selected or a folder is folded, so the Sidebar genuinely
+re-renders, and no amount of narrowing changes that. The cost was never its own
+render — it is one component. The cost was everything under it.
+
+**Selecting eight documents in a row, and expanding/collapsing one folder eight
+times, before:**
+
+| scenario | `Sidebar` | `QuickViews` | `WorkflowChip` | `TreeBranch` (16 rows) |
+|---|---|---|---|---|
+| select 8 documents | 8 | 8 | 8 | **128** |
+| expand/collapse one folder 8× | 8 | 8 | 8 | **120** |
+| open/close an overlay 8× | 0 | 0 | 0 | 0 |
+| type 20 characters in a note | 0 | 0 | 0 | 0 |
+
+The bottom two rows are §27m's and §27l's wins still holding. They are in the
+table so this pass can prove it did not spend them.
+
+#### A `selected` prop cannot work in a recursive tree, and it looks like it can
+
+The obvious shape is to hand each row `selected={selectedPath === node.path}`
+so `React.memo` has a boolean to compare. It is wrong here, and it is worth
+writing down because it reads as correct.
+
+The tree is recursive — `TreeBranch` renders its own children. If memo does its
+job and a folder row does *not* re-render, its children never receive the new
+prop at all, so a nested row that has just gained the selection never lights up.
+Prop-drilling per-row state down a tree only works when every level re-renders,
+which is the thing being fixed.
+
+So the direction inverts. **Each row asks the store its own question, and the
+answer is a boolean:**
+
+```ts
+const isOpen     = useVault((s) => isFolder && s.expanded.has(node.path));
+const isSelected = useVault((s) => s.selectedPath === node.path);
+```
+
+`s.expanded` is a fresh `Set` on every toggle and `s.selectedPath` changes for
+every row at once — but `.has(node.path)` and `=== node.path` hold still for
+fifteen of the sixteen. `TreeBranch`'s props are down to `node` and `depth`, and
+`node` holds still until the tree itself is reloaded, which is a redraw of
+everything by definition and correct.
+
+The Sidebar then stops subscribing to `selectedPath` and `expanded` at all, and
+that is what takes `QuickViews` and `WorkflowChip` to zero: they are memoised,
+they have no props, and their parent no longer moves.
+
+#### The four identity leaks, and where each one actually lived
+
+`React.memo` is worth nothing until all of these are gone, and every one was
+fixed at the source rather than papered over with a custom comparator — a
+comparator that ignores a prop is a note saying "this prop is a lie", and
+somebody has to trust it later.
+
+- **The context object.** `TreeOpsContext` was handed an object literal:
+  `{menuFor, setMenuFor, renaming, setRenaming, folders, roleOf, noteTarget, drag}`.
+  A fresh identity every render, and a changed context value re-renders every
+  consumer *regardless* of memo. Four of its eight fields were things that
+  change constantly; those moved to `treeUiStore`. What is left — `folders` and
+  `roleOf` — is `useMemo`d and holds still between tree reloads.
+- **`useTreeDrag()`.** A hook returning eight fresh closures in a fresh object
+  on every Sidebar render, travelling to all sixteen rows through that same
+  context. It is a module constant now, `treeDrag`, the same six callbacks for
+  the life of the app, reading its state from the store at call time rather than
+  closing over it; the spring-open timer went with it as a module variable
+  rather than a `useRef`. One ordering detail that would have been a silent bug:
+  `commit()` called `end()` and *then* `allows(folder)`, which was safe only
+  because `allows` closed over a `useState` value that had not flushed yet. The
+  store answers immediately, so the legality question is asked before `end()`
+  now and the answer kept.
+- **`RowMenu`'s open test.** All sixteen menus read `ops.menuFor` to find out
+  whether they were the open one, so opening any menu re-rendered every row. It
+  selects `s.menuFor === node.path` now. The row's ⋯ (`MoreAffordance`) does not
+  need to watch it at all and reads it with `getState()` at click time — §27m's
+  own rule about a field only used inside an event handler.
+- **`noteTarget`.** The sneaky one. Every row click called it, and it was
+  `setLastFolder`, a `useState` setter in the Sidebar — so selecting a document
+  re-rendered the Sidebar even after all of the above. It lives in
+  `treeUiStore` too, and the folder a new file lands in is worked out at the
+  moment "+" is clicked (`targetFolder()`) instead of on every render, which
+  takes `selectedPath` out of the Sidebar for good.
+
+Narrowed while in there, in §27m's spirit: `DeleteAffordance` held
+`useVault((s) => s.current)` and used exactly one field of it. It selects
+`s.current?.id`.
+
+#### `treeUiStore`, and why this state is not `useState`
+
+`src/state/treeUiStore.ts` is five fields — `menuFor`, `renaming`, `dragPath`,
+`dragInto`, `lastFolder` — and their setters. Nothing persisted, nothing on
+disk; where a file *lives* is still `vaultStore`'s business.
+
+It exists for the same reason the props had to invert. Every row needs to know
+whether it is the row in question, and a shared value re-renders all sixteen to
+tell one of them. A store lets a row select the boolean about itself. A second
+context would not have helped: consumers re-render on any change to the value,
+memo or no memo.
+
+#### After
+
+| scenario | `Sidebar` | `QuickViews` | `WorkflowChip` | `TreeBranch` (16 rows) |
+|---|---|---|---|---|
+| select 8 documents | 8 → **0** | 8 → **0** | 8 → **0** | 128 → **14** |
+| expand/collapse one folder 8× | 8 → **0** | 8 → **0** | 8 → **0** | 120 → **16** |
+| open/close an overlay 8× | 0 | 0 | 0 | 0 |
+| type 20 characters in a note | 0 | 0 | 0 | 0 |
+
+**Fourteen, not sixteen, for eight selections.** The first click landed on the
+row that was already selected — the app boots with the manuscript's first
+chapter open — and re-rendered nothing at all. The other seven re-rendered
+exactly two rows each: the one that lost the highlight and the one that gained
+it. That is the floor.
+
+**Sixteen for eight folder toggles** is the toggled subtree and nothing else.
+The folder measured has two children, so an expand is three renders — the folder
+row, plus two children mounting — and a collapse is one. Four of each is 12 + 4.
+The other fourteen rows do not move.
+
+#### Checked in the browser preview
+
+`React.memo` breaks things by *not* re-rendering, and the failure looks like a
+stale pixel rather than a crash — so every affordance on a row was driven, with
+`StrictMode` back on:
+
+- **Selection** moves: exactly one row carries `.selected`, and it is the one
+  clicked.
+- **Expand / collapse**: 16 rows → 17 → 16, caret following.
+- **Drag and drop** a file into a folder: `.sb-dragging` on the row being
+  carried, `.sb-drop-into` on the folder under the pointer, `Imogen.md` landed
+  in `Worldbuilding/`, both classes cleared afterwards.
+- **The three refusals** still refuse — hovering a row's own parent folder
+  paints no ring, which is `allows()` reading the store instead of a closure.
+- **Spring-open**: hovering the folded `Episodes` for 700ms mid-drag opened it
+  (15 rows → 16, `Pilot — Cold Open.fountain` visible).
+- **The vault-root strip** appears only while a drag is in flight, lights up on
+  hover, moved the file to the root on drop, and went away again.
+- **Hover affordances**: on the hovered row `.sb-star` / `.sb-more` / `.sb-del`
+  compute to `grid` / `block` / `block`; on every other row, `none`.
+- **The delete `×` still asks** (§31's gate): `Delete “The Bell Ringer”?` with
+  the Recently Deleted subline and `Delete` in red; Cancel keeps the row,
+  Confirm removes it. Folders still have no `×`, exactly as before.
+- **The ⋯ menu**: one open at a time; the file menu is Star / Open in Split View
+  / Rename / Move to…, the folder menu is Star / Mark as Manuscript / Rename /
+  Move to…, and clicking the tree closes it.
+- **Move to…** lists `Vault root` plus every folder except the row's own parent
+  and itself.
+- **Rename** opens the inline field prefilled, commits on Enter, closes.
+- **Open in Split View** put `Worldbuilding/Helmreach.md` in the secondary pane.
+- **The manuscript marks** (PARITY row 8): `Mark as Manuscript` added a second
+  `MS` eyebrow and `Unmark` took it away; a new folder inside the manuscript was
+  offered `Mark as Draft folder` and earned the `Draft` chip.
+- **Favorites**: the star toggles on the row, the `Starred` quick view lists the
+  starred document, and clicking it selects the row.
+- **"+" still adds in the right place** — after clicking `Drafts` the composer
+  said "in Drafts" and the folder landed there. That is `targetFolder()` reading
+  `lastFolder` at click time rather than at render time.
+- **Watcher-driven reload**: `refreshTree()` — the function the file watcher
+  calls — rebuilt the tree with the selection and every expanded folder intact.
+  (The browser mock has no `trash`, so a document deleted in the preview comes
+  back after a refresh. That is the mock, not the sidebar, and it predates this
+  change.)
+- **The search capsule** still filters and auto-expands (`helm` → 4 rows), still
+  says "No file name matches" on a miss, and restores on clear.
+- **Navigator zoom** still scales the tree (`--sb-zoom: 1.1`).
+
+#### How it was measured
+
+§27m's harness, unchanged: an `rc(name)` incrementing a `window.__rc` map,
+called at the top of the four component bodies, with `React.StrictMode` removed
+for the duration so nothing was double-counted. Browser preview on the mock
+Lantern vault, sixteen visible rows, each scenario driven from the page's own
+console with a 130–140ms pause between clicks so React could not batch eight
+interactions into one render. None of that scaffolding is in the commit — the
+diff is the memoisation and nothing else.
+
+`npm run build` green. No Rust changed, so `cargo test` was not re-run.
+
+---
+
 ---
 
 ## 28. The Linux box can build the shell now
