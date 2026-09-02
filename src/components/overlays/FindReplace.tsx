@@ -16,8 +16,10 @@ import { useOverlay } from "@/state/overlayStore";
 import { useEditor } from "@/state/editorStore";
 import { replaceInFile, searchWorkflow, type SearchHit } from "@/lib/vault/aux";
 import {
+  documentLabel,
   downloadSemanticModel,
   formatModelSize,
+  indexingSummary,
   isRefusal,
   onSemanticState,
   probeSemantic,
@@ -162,9 +164,16 @@ export function FindReplace() {
 
         {mode === "meaning" && semantic?.indexing && (
           <p className="fr-idle">
-            Indexing {semantic.indexing.done} of {semantic.indexing.total} documents…
-            Results are from what is done so far.
+            Indexing {semantic.indexing.done} of {semantic.indexing.total} documents
+            {semantic.indexing.path ? ` — ${documentLabel(semantic.indexing.path)}` : "…"}
+            {" "}Results are from what is done so far.
           </p>
+        )}
+
+        {/* Once the pass is done the counts stay, so a vault that skipped a
+            file says so rather than leaving a number that does not add up. */}
+        {mode === "meaning" && semantic && !semantic.indexing && indexingSummary(semantic) && (
+          <p className="fr-idle">{indexingSummary(semantic)}</p>
         )}
 
         <div className="fr-hits">

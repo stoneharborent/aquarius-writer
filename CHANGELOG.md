@@ -8,6 +8,37 @@ as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches
 
 ## Unreleased
 
+- **Building the search index no longer stops on one odd file.** If a single
+  file in your vault could not be read, the whole indexing pass gave up
+  silently — and the window sat on "Reading 857 of 858…" forever, with the 857
+  documents that had worked thrown away and re-done the next time you opened
+  it. Now one file can never stop the rest: it is stepped over, written down,
+  and everything else finishes.
+
+- **Files that are not writing are left out of search by meaning.** A shader
+  cache, a log, a data dump, a minified bundle — anything over a megabyte, or
+  with a thousand characters in a row and no spaces — is recognised as not
+  being prose, skipped, and noted so it is not looked at again unless you
+  change it. One such file in Royce's vault was 3.2 million characters on a
+  single line, and it was costing more than every chapter he has written put
+  together.
+
+- **Indexing says what it is doing.** The progress line now names the document
+  it is on — "Reading 857 of 858 — Chapter Nine.md" — and when it finishes,
+  Settings → Search and the Find sheet say "Indexed 857 documents, skipped 1."
+  rather than going quiet.
+
+- **The app stays responsive while it indexes.** Indexing used to take every
+  processor core on the machine, which is why the window felt frozen while it
+  ran. It now takes half of them, leaves the rest to the window, and hands the
+  model smaller batches so a search you start mid-index answers quickly.
+
+- **Unreal Engine and Python projects are skipped like other project folders.**
+  `site-packages`, `Intermediate`, `Binaries`, `DerivedDataCache` and
+  `ShaderDebugInfo` join `node_modules` and friends. A folder called `Saved` is
+  only skipped when it sits beside an Unreal `.uproject` file — if you have
+  your own folder called "Saved", it is still your writing and still searched.
+
 - **Find is fast again, and the sidebar only shows your writing.** If your
   vault folder had a project folder in it — anything with a `node_modules`,
   `dist`, `target` or `build` inside — the app was reading all of it. On

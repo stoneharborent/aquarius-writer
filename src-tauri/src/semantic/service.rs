@@ -306,7 +306,7 @@ fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<String>) {
         let Ok(ft) = entry.file_type() else { continue };
         // The backfill embeds what this returns, so a dependency folder here
         // is 2,870 generated READMEs through a neural network.
-        if crate::vault::paths::skip_entry(&name, ft.is_dir()) {
+        if crate::vault::paths::skip_entry_in(dir, &name, ft.is_dir()) {
             continue;
         }
         if ft.is_dir() {
@@ -715,6 +715,30 @@ mod tests {
             }
             WordBagEmbedder.embed(texts)
         }
+    }
+
+    #[test]
+    fn the_backfill_never_walks_into_an_unreal_projects_saved_folder() {
+        // The exact shape of Royce's vault: a game project sitting beside the
+        // manuscripts, with a 3 MB shader key inside it.
+        let t = TempDir::new("semantic-uproject");
+        t.write("Drafts/Ch_01.md", "words");
+        t.write("Game/MyGame.uproject", "{}");
+        t.write("Game/Saved/ShaderDebugInfo/VULKAN_SM6/x/DDCKey-Editor.txt", "hex");
+        t.write("Game/Intermediate/PipInstall/lib/site-packages/scipy/notes.txt", "hex");
+        // And a writer's own "Saved" folder, which must survive.
+        t.write("Clippings/Saved/A thing I liked.md", "words");
+
+        let mut paths = Vec::new();
+        walk(t.path(), t.path(), 0, &mut paths);
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![
+                "Clippings/Saved/A thing I liked.md".to_string(),
+                "Drafts/Ch_01.md".to_string(),
+            ]
+        );
     }
 
     #[test]

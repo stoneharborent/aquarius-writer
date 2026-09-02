@@ -5729,3 +5729,240 @@ says whether the tree changed, which is the watcher check above.
 Unlike the typing bench it **writes nothing**, so it needs no
 `assertBenchTarget`. Run it with an isolated config dir anyway — not for
 safety, but so it measures the vault you think it does (§28g).
+
+---
+
+## 34. One file in eight hundred and fifty-eight, and the backfill that stopped there
+
+*Bench bug, 2026-09-02, on the §32/§33 build. Royce: "the vault index isn't
+getting built." It was, twice over — 857 of 858 documents had vectors on disk
+and the window still said **"Reading 857 of 858…"** with no end to it. Three
+separate things were wrong, and only one of them is about a big file.*
+
+### 34a. The file
+
+`_Productivity/Unreal/Projects/UE6/_Tests/TestUE6/Saved/ShaderDebugInfo/VULKAN_SM6/…/DDCKey-Editor.txt`
+— **3,213,390 bytes, one line, 3,213,297 characters with no line break in
+it.** It is Unreal Engine's shader cache key: a hex-and-underscore string the
+engine writes so it can tell one compiled shader from another. Four more like
+it live under `…/Intermediate/PipInstall/lib/python3.11/site-packages/scipy/`,
+at 178 KB each.
+
+`paths.sort()` in the backfill puts `_Productivity` last, which is why 857
+documents finished first and this one was always the cliff.
+
+An equivalent file from the same engine version was measured here rather than
+Royce's, because his vault is not this session's to open:
+`~/UnrealEngine6/Engine/Saved/ShaderDebugInfo/VULKAN_SM6/…/DDCKey-Editor.txt`,
+3,211,645 bytes, **two** whitespace characters in the whole file, longest
+unbroken run 3,211,559 characters.
+
+### 34b. What it actually cost, which is not what was assumed
+
+The working theory going in was that HuggingFace's WordPiece tokenizer goes
+quadratic on a giant whitespace-free token. **It does not, and the reason is
+worth writing down so nobody re-derives it:** bge-small's `tokenizer.json`
+carries `"max_input_chars_per_word": 100`. A "word" longer than that is not
+matched at all — it becomes a single `[UNK]`. The quadratic path is closed by
+the model's own config.
+
+What it does cost, measured on this box (8 threads, release build):
+
+| input | chunker | embed |
+|---|---|---|
+| the real 3.2 MB DDC key | 3 ms | **1.31 s** |
+| 3.2 MB of generated hex, no punctuation | 4 ms | 456 ms |
+| 3.2 MB of hex with `/-_.:` in it | 3 ms | **1.89 s** |
+| 178 KB of the same | 0.2 ms | 95 ms |
+
+The cost is the *pre-tokenizer*: BERT's splits on punctuation, so 3 MB of
+`A1B2_C3-D4.E5` becomes something near a million pieces, each of which is
+looked up. It is linear, and it is still 1.3 seconds of **every core** to
+produce one vector of a string that is not English, cannot be searched for,
+and will be returned to nobody. In a debug build the same file takes 4.6 s.
+
+So: **the multi-minute stall Royce watched was not reproduced here, and this
+section will not claim it was.** One file costs seconds, not minutes. What is
+certain is everything below, and any one of the three would produce the screen
+he was looking at.
+
+### 34c. Cause one: one bad document ended the whole pass
+
+`sync_vault` had `let doc = embed_document(...)?;` in its loop. One `?`.
+
+Every failure that reaches it — the embedder erroring, a `.vec` that will not
+write, the ONNX session objecting to something — ended the pass, which meant
+`index::write_manifest` at the bottom **never ran**. 857 documents' worth of
+`.vec` files were sitting on disk with no manifest to account for them, so the
+next open re-embedded all 857 and arrived at the same cliff. The progress
+state was left where it stopped, which is the "Reading 857 of 858…" that never
+moved. Nothing was logged, because nothing had gone wrong as far as the loop
+was concerned; it had simply returned.
+
+Now: a per-document failure is counted, logged as
+`[semantic] skipped <rel>: <reason>`, and **stepped over**. The manifest is
+written either way, so the documents that worked stay worked. The pass returns
+a `SyncReport { embedded, skipped, failed }` rather than a bare count, and the
+distinction between the last two is the point:
+
+- **skipped** — the document was read and deliberately not embedded. That is a
+  decision, and it is recorded in the manifest so it is not paid for again.
+- **failed** — the *model* went wrong on this document. That is not the
+  document's fault, nothing is recorded, and the next pass tries it again.
+
+### 34d. Cause two: nothing said which document
+
+`IndexProgress` was `{ done, total }`. "Reading 857 of 858…" is a sentence
+with no information in it. It now carries `path`, and the window shows the file
+name: **"Reading 857 of 858 — DDCKey-Editor.txt"**. That line alone would have
+turned this bug into a two-minute diagnosis, which is the whole argument for
+it.
+
+The counts survive the pass too. `SemanticStatus.lastSync` holds the last
+report, and Settings → Search and the Find sheet both say **"Indexed 857
+documents, skipped 1."** when it is over — because a number that quietly does
+not add up is worse than no number.
+
+### 34e. The guards, and the number each constant is
+
+All in `semantic::chunk`, all `pub const` with the reasoning beside them.
+
+| constant | value | why that value |
+|---|---|---|
+| `MAX_BODY_BYTES` | 1,048,576 | 1 MB is ~170,000 words — twice a long novel — **in one file**. Everything seen at that size is generated. |
+| `MAX_UNBROKEN_RUN_CHARS` | 1,000 | The longest word in English is 45 letters. 1,000 characters with no space is a hash, a base64 blob, a minified line, or a shader key. |
+| `MAX_AVERAGE_WORD_CHARS` | 40 | English averages about five. Only applied at ≥ 50 words (`MIN_WORDS_FOR_AVERAGE`), because a two-line note whose second line is one long URL averages 66 and is still a note — that case is in the tests. |
+| `MAX_CHUNK_CHARS` | 2,000 | The model stops at 512 tokens. English runs ~4 characters to a WordPiece token, so 512 tokens ≈ 2,000 characters — and a 180-word chunk of prose is ~1,100. **The cap cannot bite on writing.** Applied on a char boundary, and *before* tokenizing, which is the entire point: clipping afterwards would already have paid. |
+| `MAX_CHUNKS_PER_DOC` | 2,000 | 360,000 words, four times the longest novel anyone will write here. Past it the file is wrong rather than long: the beginning is indexed and the manifest says so. |
+
+`non_prose_reason(body)` runs the first three, in one pass, **before** the
+chunker and before the tokenizer, and returns early on the first over-long
+run — so the expensive answer is also the cheapest one to reach. Its reason is
+a sentence, because it ends up in a log line somebody has to read and in the
+manifest:
+
+```json
+"Dump/DDCKey-Editor.txt": {
+  "stamp": "…", "chunks": 0, "updatedAt": …,
+  "skipped": "not prose: 3213297 bytes of body, over the 1048576 byte ceiling"
+}
+```
+
+A skipped entry has **no `.vec` file**, so nothing can rank it and a document
+that used to be embedded loses its old vectors (`index::prune` deliberately
+leaves skipped entries out of its keep set). And because the entry is keyed on
+`stamp` like every other one, **editing the file re-opens the question by
+itself** — no special case, no cache to invalidate. That round trip is a test.
+
+### 34f. Cause three, and the one that actually removes the work: the ignore list
+
+§33 taught the walk about `node_modules`. It had not met Unreal Engine.
+
+Five names go on the **global** list (`IGNORED_DIR_NAMES`), because no person
+names a folder of writing any of them:
+
+```
+site-packages  DerivedDataCache  ShaderDebugInfo  Intermediate  Binaries
+```
+
+And one name could not: **`Saved`**. A writer may perfectly well keep a folder
+called "Saved" — clippings, drafts, anything — and putting it on the global
+list would silently make their work invisible to the sidebar, to Find and to
+search by meaning. So this is the new idea in §34, and it is small:
+
+> **A directory name may be ignored *because of what else is in the folder*.**
+
+`MARKER_SCOPED` pairs a marker file extension with the names it condemns. One
+entry today: a `*.uproject` in a directory means its `Saved`, `Intermediate`,
+`Binaries` and `DerivedDataCache` children are Unreal's. The last three are on
+the global list as well, deliberately — the two rules are allowed to be
+trimmed independently, and if `Intermediate` ever comes off the global list
+because a real writer complained, it must still go inside a game project.
+
+The cost is one extra `read_dir`, and it is only ever reached for a directory
+already named one of the four — so on a vault of prose it runs **zero** times.
+That is why it is a lazy check rather than a marker scan per directory.
+
+`skip_entry(name, is_dir)` is **gone**, replaced by
+`skip_entry_in(parent, name, is_dir)`. There is deliberately no version
+without a parent: a caller that cannot say where it found a name cannot answer
+the scoped question, and would silently get the looser answer. All six walks
+were moved over (`vault::tree`, `vault::search`, `vault::ops::list_folder`,
+`vault::workflow`'s kind sniff, `semantic::service`'s backfill), and the
+watcher's `is_interesting` now walks a `parent` down beside the path
+components so it can ask the same question of an event.
+
+A `Cargo.toml` → `target` pair would be the same shape and is deliberately
+**not** written down: `target` is already global, and a second rule saying the
+same thing is a second rule to keep in step.
+
+### 34g. Leaving the window a core
+
+The other half of "the app feels stuck". ONNX Runtime's default intra-op
+thread count is every core it can find, which is exactly the 750% CPU Royce
+measured on an eight-thread box — with nothing left to draw the window with.
+
+The knob is `fastembed::InitOptionsUserDefined::with_intra_threads` (fastembed
+6.0.2, which passes it to `ort`'s session builder; `ort`'s own
+`SessionBuilder::with_intra_threads` is the same setting one layer down, and
+fastembed owns the session, so the fastembed door is the one to use). There is
+no inter-op knob exposed at either layer and none is wanted — one embedding is
+one graph, run once. `embed::intra_threads()` is
+`max(1, available_parallelism() / 2)`: four threads here, and indexing is
+allowed to take twice as long if the machine stays usable while it happens.
+
+**On the lock.** `FastEmbed` holds its ONNX session behind a `Mutex` because
+`TextEmbedding::embed` takes `&mut self`. That lock *is* shared with the query
+path, so a search issued mid-backfill waits for one `embed()` call. Nothing
+else is held across it — `SemanticState`'s `progress`, `busy` and `phase`
+locks are each taken, written and dropped — so the wait is bounded by one
+call and nothing more. To keep that bound short, `embed_document` now sends
+chunks in batches of `EMBED_BATCH = 32` rather than one call per document: a
+few hundred milliseconds is the longest a query should ever wait because
+indexing happened to be running, and a 900-chunk chapter in one call would
+have made it a second or more.
+
+### 34h. Before and after, in the shell
+
+A scratch vault at `$HOME/aq-backfill-vault`: fifty real-shaped notes, one
+generated 3,213,297-character single-line `.txt`, and a fake Unreal project —
+`Game/MyGame.uproject` beside `Game/Saved/ShaderDebugInfo/…/DDCKey-Editor.txt`
+(another copy of the 3 MB file) and
+`Game/Intermediate/PipInstall/lib/python3.11/site-packages/scipy/_lib.txt`
+(178 KB on one line). Run per §28g with isolated `XDG_CONFIG_HOME` /
+`XDG_DATA_HOME`, with the six `models-v1` files placed in the isolated data
+dir by hand and checked against the release's `SHA256SUMS.txt`.
+
+`sync_vault` against the real model, release build, same vault both times:
+
+| | before (`main`) | after |
+|---|---|---|
+| documents the walk found | **53** | **51** |
+| documents embedded | 53 | 50 |
+| documents skipped | — | **1** |
+| whole pass | **1.571 s** | **533 ms** |
+
+Two documents vanish because the Unreal project's `Saved/` and
+`Intermediate/` are never entered. The third — `Dump/DDCKey-Editor.txt`, which
+is not inside a project and so is still *visited* — is the one the guard
+catches, and it is caught in microseconds instead of 1.3 seconds of every core.
+That is the layering working as intended: the ignore list removes the work, and
+the guard is what catches the file nobody thought of.
+
+The `[semantic] skipped …` line is the one that would have made this
+diagnosable:
+
+```
+[semantic] skipped Dump/DDCKey-Editor.txt: not prose: 3213297 bytes of body,
+           over the 1048576 byte ceiling
+```
+
+### 34i. What is still not proven here
+
+- **The multi-minute stall itself.** Reproduced as *seconds*, not minutes, on
+  this hardware. §34c is a complete explanation for the screen not moving; the
+  CPU time is not fully accounted for, and this section says so rather than
+  inventing a mechanism.
+- **Royce's actual vault.** Never opened by this session, by rule. Every
+  number above is from a scratch vault or from an equivalent Unreal file in
+  `~/UnrealEngine6`.

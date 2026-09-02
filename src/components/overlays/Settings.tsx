@@ -16,8 +16,10 @@ import { useOverlay } from "@/state/overlayStore";
 import { PROVIDERS, useSync } from "@/state/syncStore";
 import { useUpdates } from "@/state/updateStore";
 import {
+  documentLabel,
   downloadSemanticModel,
   formatModelSize,
+  indexingSummary,
   onSemanticState,
   probeSemantic,
   reindexSemantic,
@@ -238,6 +240,7 @@ function SearchTab() {
   if (!status) return <div className="st-section"><h3>Search by meaning</h3></div>;
 
   const { phase, percent, indexing } = status;
+  const summary = indexingSummary(status);
   const line = (() => {
     switch (phase) {
       case "downloading":
@@ -310,7 +313,8 @@ function SearchTab() {
           <div className="st-row st-update-row">
             <span className="st-dot live" />
             <span>
-              Reading {indexing.done} of {indexing.total} documents…
+              Reading {indexing.done} of {indexing.total} documents
+              {indexing.path ? ` — ${documentLabel(indexing.path)}` : "…"}
             </span>
           </div>
           <div
@@ -330,6 +334,26 @@ function SearchTab() {
             This happens in the background. You can keep writing — it never
             touches the document you have open.
           </p>
+        </div>
+      )}
+
+      {/* What the last pass did. A skipped document is not an error: it is a
+          file that is not writing — a log, a data dump, a shader key — and
+          saying so is better than a count that quietly does not add up. */}
+      {!indexing && summary && (
+        <div className="st-section">
+          <h3>Indexing</h3>
+          <div className="st-row st-update-row">
+            <span className="st-dot" />
+            <span>{summary}</span>
+          </div>
+          {(status.lastSync?.skipped ?? 0) > 0 && (
+            <p className="st-help">
+              A skipped file is one that is not writing — a log, a data dump, a
+              build artefact. It is left out of search by meaning and looked at
+              again if you ever change it.
+            </p>
+          )}
         </div>
       )}
     </>

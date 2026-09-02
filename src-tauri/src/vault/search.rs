@@ -17,7 +17,7 @@
 //! If one side's behaviour changes, change the other in the same commit —
 //! the same parity rule `vault::frontmatter` carries.
 
-use super::paths::skip_entry;
+use super::paths::skip_entry_in;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -76,7 +76,7 @@ fn walk(root: &Path, dir: &Path, depth: usize, needle: &str, out: &mut Vec<Searc
         // Not `metadata()`: `file_type()` leaves symlinks unfollowed, so a
         // symlinked `node_modules` is neither dir nor file here and falls out.
         let Ok(ft) = entry.file_type() else { continue };
-        if skip_entry(&name, ft.is_dir()) {
+        if skip_entry_in(dir, &name, ft.is_dir()) {
             continue;
         }
         if ft.is_dir() {

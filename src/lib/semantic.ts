@@ -34,7 +34,37 @@ export interface SemanticStatus {
   bytesOnDisk: number;
   percent?: number;
   message?: string;
-  indexing?: { done: number; total: number };
+  indexing?: { done: number; total: number; path: string };
+  /** What the last finished pass did. Absent until one has finished. */
+  lastSync?: { embedded: number; skipped: number; failed: number };
+}
+
+/**
+ * The tail of a vault path, for a progress line.
+ *
+ * The line has one job — say which document the pass is on — and a full
+ * `_Productivity/Unreal/Projects/UE6/…/DDCKey-Editor.txt` would push the
+ * count off the row. The file name is the part that identifies it.
+ */
+export function documentLabel(path: string, max = 40): string {
+  const name = path.split("/").pop() ?? path;
+  return name.length <= max ? name : `${name.slice(0, max - 1)}…`;
+}
+
+/**
+ * "Indexed 857 documents, skipped 1" — or nothing, when there is nothing
+ * worth saying. A pass that indexed everything it found says so silently by
+ * saying nothing at all.
+ */
+export function indexingSummary(s: SemanticStatus): string | null {
+  const last = s.lastSync;
+  if (!last) return null;
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  const parts = [`Indexed ${plural(last.embedded, "document")}`];
+  if (last.skipped > 0) parts.push(`skipped ${last.skipped}`);
+  if (last.failed > 0) parts.push(`${last.failed} could not be read`);
+  if (parts.length === 1 && last.embedded === 0) return null;
+  return `${parts.join(", ")}.`;
 }
 
 export interface SemanticHit {

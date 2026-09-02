@@ -168,7 +168,7 @@ fn has_extension(root: &Path, ext: &str, depth: usize) -> bool {
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().to_string();
         let Ok(ft) = entry.file_type() else { continue };
-        if super::paths::skip_entry(&name, ft.is_dir()) {
+        if super::paths::skip_entry_in(root, &name, ft.is_dir()) {
             continue;
         }
         if ft.is_file() && name.to_lowercase().ends_with(&format!(".{ext}")) {

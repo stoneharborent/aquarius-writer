@@ -6,7 +6,7 @@
 //! have their data without the renderer reading every file.
 
 use super::frontmatter;
-use super::paths::{is_ignored_name, skip_entry};
+use super::paths::{is_ignored_name, skip_entry_in};
 use crate::model::VaultNode;
 use std::fs;
 use std::path::Path;
@@ -81,7 +81,7 @@ fn walk_dir(
         // applies: `node_modules` the folder is skipped, a file of that name
         // would not be.
         let Ok(ft) = entry.file_type() else { continue };
-        if skip_entry(&name, ft.is_dir()) {
+        if skip_entry_in(dir, &name, ft.is_dir()) {
             continue;
         }
         let rel = match super::paths::rel_from_root(root, &path) {

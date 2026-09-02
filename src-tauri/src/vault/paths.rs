@@ -117,7 +117,40 @@ pub const IGNORED_DIR_NAMES: &[&str] = &[
     "Pods",           // cocoapods
     "DerivedData",    // xcode
     "vendor",         // go modules, composer, bundler
+    // Added after NOTES §34, when the same vault turned out to hold an Unreal
+    // Engine project as well as the git repositories §33 found. None of these
+    // is a name a person gives a folder of writing.
+    "site-packages",   // python, and the five 178 KB single-line scipy files
+    "DerivedDataCache", // unreal's shader/asset cache
+    "ShaderDebugInfo",  // unreal — where the 3 MB single-line key lived
+    "Intermediate",     // unreal build intermediates
+    "Binaries",         // unreal compiled output
 ];
+
+/// Directory names that are only machine output **next to a project marker**.
+///
+/// `Saved` is the case that forced this. A writer can perfectly well have a
+/// folder called "Saved" — of clippings, of drafts, of anything — and putting
+/// it in the list above would silently make their work invisible to the
+/// sidebar, to Find, and to search by meaning. Beside a `.uproject` file it is
+/// certainly Unreal's, and Unreal's `Saved/` is where the shader dumps live.
+///
+/// So the rule is scoped: the name is ignored only when its **parent
+/// directory** carries the marker. The four Unreal names are all listed even
+/// though the last three are on the built-in list above, because the two rules
+/// are allowed to be trimmed independently — if `Intermediate` ever comes off
+/// the global list because a writer complained, it must still be ignored
+/// inside an Unreal project.
+///
+/// The mechanism generalises: a `Cargo.toml` beside a `target` would be the
+/// same shape, and it is deliberately *not* written down, because `target` is
+/// already on the global list and a second rule saying the same thing is a
+/// second rule to keep in step.
+const MARKER_SCOPED: [(&str, &[&str]); 1] = [(
+    // A file with this extension in the directory marks it as an Unreal project.
+    "uproject",
+    &["Saved", "Intermediate", "Binaries", "DerivedDataCache"],
+)];
 
 /// True for a **directory** name we never walk into.
 ///
@@ -138,14 +171,53 @@ pub fn is_ignored_dir(name: &str) -> bool {
     IGNORED_DIR_NAMES.iter().any(|d| d.eq_ignore_ascii_case(name))
 }
 
+/// True when `parent` holds a file with extension `ext`.
+///
+/// One extra `read_dir`, and it is only ever reached for a directory whose
+/// name is already one of the four scoped ones — so on a vault of prose it
+/// runs zero times, and on Royce's it runs a handful.
+fn has_marker(parent: &Path, ext: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(parent) else { return false };
+    let suffix = format!(".{ext}");
+    for entry in entries.filter_map(Result::ok) {
+        if entry.file_type().map(|t| t.is_file()).unwrap_or(false)
+            && entry.file_name().to_string_lossy().to_lowercase().ends_with(&suffix)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// `is_ignored_dir`, plus the rules that depend on what else is in the folder.
+///
+/// `parent` is the directory the entry was read from — the one that would
+/// carry the `.uproject`, not the entry itself.
+pub fn is_ignored_dir_in(parent: &Path, name: &str) -> bool {
+    if is_ignored_dir(name) {
+        return true;
+    }
+    for (ext, names) in MARKER_SCOPED.iter() {
+        if names.iter().any(|n| n.eq_ignore_ascii_case(name)) && has_marker(parent, ext) {
+            return true;
+        }
+    }
+    false
+}
+
 /// The one question a tree walk asks about a directory entry it just read.
+///
+/// `parent` is the directory the entry came out of — the scoped rules are
+/// questions about the folder, not the name. There is deliberately no version
+/// of this without a `parent`: a caller that cannot say where it found the
+/// name cannot answer them, and would silently get the looser answer.
 ///
 /// `is_dir` must come from `DirEntry::file_type()`, which does **not** follow
 /// symlinks — a symlinked directory reports as neither file nor dir and is
 /// dropped by the caller, which is what keeps a `node_modules -> node_modules.nosync`
 /// link from being walked twice and a link to an ancestor from hanging.
-pub fn skip_entry(name: &str, is_dir: bool) -> bool {
-    name == AQ_DIR || is_ignored_name(name) || (is_dir && is_ignored_dir(name))
+pub fn skip_entry_in(parent: &Path, name: &str, is_dir: bool) -> bool {
+    name == AQ_DIR || is_ignored_name(name) || (is_dir && is_ignored_dir_in(parent, name))
 }
 
 /// `~`-shortened display path for the workflow picker.
@@ -233,10 +305,51 @@ mod tests {
         // The name rule is a guard in `vault::ops` — a *document* called
         // "build" must still be creatable and renamable.
         assert!(!is_ignored_name("build"));
-        assert!(!skip_entry("build", false));
-        assert!(skip_entry("build", true));
-        assert!(skip_entry(".aquarius", true));
-        assert!(skip_entry(".DS_Store", false));
-        assert!(!skip_entry("Ch_01.md", false));
+        // A folder with nothing special in it — no marker, so only the global
+        // rules apply.
+        let plain = crate::testutil::TempDir::new("paths-plain");
+        let d = plain.path();
+        assert!(!skip_entry_in(d, "build", false));
+        assert!(skip_entry_in(d, "build", true));
+        assert!(skip_entry_in(d, ".aquarius", true));
+        assert!(skip_entry_in(d, ".DS_Store", false));
+        assert!(!skip_entry_in(d, "Ch_01.md", false));
+    }
+
+    #[test]
+    fn the_folders_an_unreal_project_generates_are_not_the_writers_work() {
+        // The names that need no marker: nobody calls a folder of prose
+        // "ShaderDebugInfo".
+        for name in ["site-packages", "DerivedDataCache", "ShaderDebugInfo", "Intermediate", "Binaries"] {
+            assert!(is_ignored_dir(name), "{name} should be skipped anywhere");
+        }
+        assert!(is_ignored_dir("SITE-PACKAGES"), "the rule is case-insensitive");
+        // And a *file* of that name is still a file.
+        let plain = crate::testutil::TempDir::new("paths-unreal-file");
+        assert!(!skip_entry_in(plain.path(), "Binaries", false));
+    }
+
+    #[test]
+    fn saved_is_only_ignored_beside_a_uproject() {
+        // A writer's folder of saved things, in an ordinary folder.
+        let writer = crate::testutil::TempDir::new("paths-writer");
+        writer.write("Notes.md", "words");
+        assert!(
+            !skip_entry_in(writer.path(), "Saved", true),
+            "a writer may have a folder called Saved and it must still be walked"
+        );
+
+        // The same name beside a .uproject is Unreal's, and holds the 3 MB
+        // shader keys that started NOTES §34.
+        let game = crate::testutil::TempDir::new("paths-uproject");
+        game.write("MyGame.uproject", "{}");
+        assert!(skip_entry_in(game.path(), "Saved", true));
+        assert!(skip_entry_in(game.path(), "saved", true), "case-insensitive here too");
+        // The marker only speaks for its own folder, not for the tree below it.
+        assert!(!skip_entry_in(writer.path(), "Saved", true));
+        // And it still says nothing about a file.
+        assert!(!skip_entry_in(game.path(), "Saved", false));
+        // Nor about a folder that is nobody's build output.
+        assert!(!skip_entry_in(game.path(), "Characters", true));
     }
 }

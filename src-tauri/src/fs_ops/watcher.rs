@@ -14,7 +14,7 @@
 //! Survivors are debounced (300 ms of quiet) into a single "something changed"
 //! callback — a burst of thirty events from a `git checkout` is one reload.
 
-use crate::vault::paths::{is_ignored_dir, is_ignored_name, is_metadata};
+use crate::vault::paths::{is_ignored_dir_in, is_ignored_name, is_metadata};
 use notify::{RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -111,12 +111,20 @@ pub fn is_interesting(root: &Path, path: &Path, self_writes: &SelfWrites) -> boo
             _ => None,
         })
         .collect();
+    // `parent` walks down beside the components, because the scoped rules
+    // (`Saved` beside a `.uproject`) are questions about the folder a name was
+    // found in, not about the name. Only reached for the four scoped names, so
+    // an ordinary event pays nothing for it.
+    let mut parent = root.to_path_buf();
     for (i, name) in names.iter().enumerate() {
         if is_ignored_name(name) {
             return false;
         }
-        if i + 1 < names.len() && is_ignored_dir(name) {
-            return false;
+        if i + 1 < names.len() {
+            if is_ignored_dir_in(&parent, name) {
+                return false;
+            }
+            parent.push(name);
         }
     }
     !self_writes.is_own(path)

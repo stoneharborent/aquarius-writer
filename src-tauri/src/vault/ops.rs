@@ -113,7 +113,7 @@ pub fn list_folder(root: &Path, rel: &str) -> OpResult<Vec<FolderEntry>> {
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().to_string();
         let Ok(ft) = entry.file_type() else { continue };
-        if paths::skip_entry(&name, ft.is_dir()) {
+        if paths::skip_entry_in(&dir, &name, ft.is_dir()) {
             continue;
         }
         let Some(path) = paths::rel_from_root(root, &entry.path()) else { continue };
