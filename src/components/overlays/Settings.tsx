@@ -15,11 +15,20 @@ import { useVault } from "@/state/vaultStore";
 import { useOverlay } from "@/state/overlayStore";
 import { PROVIDERS, useSync } from "@/state/syncStore";
 import { useUpdates } from "@/state/updateStore";
+import {
+  downloadSemanticModel,
+  formatModelSize,
+  onSemanticState,
+  probeSemantic,
+  reindexSemantic,
+  removeSemanticModel,
+  type SemanticStatus,
+} from "@/lib/semantic";
 import "./Settings.css";
 
-type Tab = "appearance" | "sync" | "workflows" | "mcp" | "about";
+type Tab = "appearance" | "search" | "sync" | "workflows" | "mcp" | "about";
 
-const TABS: Tab[] = ["appearance", "sync", "workflows", "mcp", "about"];
+const TABS: Tab[] = ["appearance", "search", "sync", "workflows", "mcp", "about"];
 
 export function Settings() {
   // The caller may name the tab it wants — the sidebar's "Manage workflows…"
@@ -136,6 +145,8 @@ export function Settings() {
             </>
           )}
 
+          {tab === "search" && <SearchTab />}
+
           {tab === "sync" && <SyncTab />}
 
           {tab === "mcp" && <McpTab />}
@@ -177,6 +188,151 @@ export function Settings() {
         </div>
       </div>
     </Overlay>
+  );
+}
+
+/**
+ * The Search tab — what "search by meaning" can do on this machine.
+ *
+ * The 35 MB is never invisible. This panel is where it is named, where its
+ * size on disk is shown, and where it can be removed again. It is also the
+ * only place other than the Find sheet's card that can start the download, and
+ * both are a button somebody presses.
+ *
+ * Everything it shows comes from the backend, which re-checks the disk each
+ * time it is asked — so deleting the folder from a file manager makes this
+ * panel say "not downloaded" rather than lie.
+ */
+function SearchTab() {
+  const [status, setStatus] = useState<SemanticStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const current = useVault((s) => s.current);
+
+  useEffect(() => {
+    void probeSemantic().then(setStatus);
+    return onSemanticState(setStatus);
+  }, []);
+
+  const download = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setStatus(await downloadSemanticModel());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      setStatus(await removeSemanticModel());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!status) return <div className="st-section"><h3>Search by meaning</h3></div>;
+
+  const { phase, percent, indexing } = status;
+  const line = (() => {
+    switch (phase) {
+      case "downloading":
+        return `Downloading the model… ${percent ?? 0}%`;
+      case "ready":
+        return `Ready — ${formatModelSize(status.bytesOnDisk)} on this computer.`;
+      case "error":
+        return status.message ?? "That didn't work.";
+      default:
+        return `Not downloaded. Search by meaning needs a one-time ${formatModelSize(
+          status.downloadBytes,
+        )} download.`;
+    }
+  })();
+
+  return (
+    <>
+      <div className="st-section">
+        <h3>Search by meaning</h3>
+        <div className="st-row st-update-row">
+          <span className={`st-dot${phase === "downloading" ? " live" : ""}`} />
+          <span className={phase === "error" ? "st-warn" : undefined}>{line}</span>
+        </div>
+
+        {phase === "downloading" && (
+          <div
+            className="st-progress"
+            role="progressbar"
+            aria-valuenow={percent ?? 0}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <span style={{ width: `${percent ?? 0}%` }} />
+          </div>
+        )}
+
+        <div className="st-row">
+          {(phase === "absent" || phase === "error") && (
+            <button className="st-chip active" disabled={busy} onClick={() => void download()}>
+              Download the model
+            </button>
+          )}
+          {phase === "ready" && (
+            <>
+              <button
+                className="st-chip"
+                disabled={busy || !current}
+                onClick={() => current && void reindexSemantic(current.id)}
+              >
+                Rebuild this vault's index
+              </button>
+              <button className="st-chip" disabled={busy} onClick={() => void remove()}>
+                Remove the model
+              </button>
+            </>
+          )}
+        </div>
+        {error && <p className="st-warn">{error}</p>}
+
+        <p className="st-help">
+          {status.modelId} ({status.modelLicence}). It runs on this computer, on
+          the processor, and nothing you write is ever sent anywhere. Removing it
+          leaves the exact-text search working exactly as it does now.
+        </p>
+      </div>
+
+      {indexing && (
+        <div className="st-section">
+          <h3>Indexing</h3>
+          <div className="st-row st-update-row">
+            <span className="st-dot live" />
+            <span>
+              Reading {indexing.done} of {indexing.total} documents…
+            </span>
+          </div>
+          <div
+            className="st-progress"
+            role="progressbar"
+            aria-valuenow={indexing.done}
+            aria-valuemin={0}
+            aria-valuemax={indexing.total}
+          >
+            <span
+              style={{
+                width: `${indexing.total ? (indexing.done / indexing.total) * 100 : 0}%`,
+              }}
+            />
+          </div>
+          <p className="st-help">
+            This happens in the background. You can keep writing — it never
+            touches the document you have open.
+          </p>
+        </div>
+      )}
+    </>
   );
 }
 

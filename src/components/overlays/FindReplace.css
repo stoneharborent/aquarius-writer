@@ -123,3 +123,80 @@
   text-decoration-color: color-mix(in srgb, var(--danger, #c8463b) 45%, transparent);
 }
 .vd-skip { display: block; color: var(--ink-mute); text-align: center; user-select: none; }
+
+/* ── Exact · By meaning ──
+   A two-way segmented control on the input row. It sits before the field
+   rather than above it so the row still reads left to right as one sentence:
+   how to search, then what to search for. */
+.fr-modes {
+  display: flex;
+  flex: none;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-soft);
+}
+
+.fr-mode {
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fr-mode:hover { color: var(--ink); }
+.fr-mode.active { color: var(--ink); background: var(--bg); font-weight: 600; }
+
+/* The third line of a By meaning hit: how many passages the document has in
+   the index, and which line the winning one starts on. */
+.fr-where {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The "needs a model" card, in the empty-results slot. Same shape as the
+   Compile sheet's missing-pandoc card: what it is, what it needs, and the one
+   button that gets it — never a disabled control with no explanation. */
+.fr-card {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-soft);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fr-card-head {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.fr-card-body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.fr-card-actions { display: flex; gap: 8px; }
+
+.fr-card-note {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--ink-mute);
+}
