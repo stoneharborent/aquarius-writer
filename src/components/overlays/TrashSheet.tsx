@@ -26,8 +26,11 @@ import "./FindReplace.css";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function TrashSheet() {
-  const { current, selectPath, addToTree } = useVault();
-  const notices = useNotices();
+  const current = useVault((s) => s.current);
+  const selectPath = useVault((s) => s.selectPath);
+  const addToTree = useVault((s) => s.addToTree);
+  const say = useNotices((s) => s.say);
+  const fail = useNotices((s) => s.fail);
   const [entries, setEntries] = useState<TrashEntry[]>([]);
   const [retention, setRetention] = useState<number | null>(null);
   const [emptying, setEmptying] = useState(false);
@@ -72,9 +75,9 @@ export function TrashSheet() {
     setEmptying(true);
     try {
       await emptyTrash(current.id);
-      notices.say(`Trash emptied — ${n} ${n === 1 ? "item" : "items"} deleted for good`);
+      say(`Trash emptied — ${n} ${n === 1 ? "item" : "items"} deleted for good`);
     } catch (e) {
-      notices.fail("Could not empty the trash", e);
+      fail("Could not empty the trash", e);
     } finally {
       setEmptying(false);
       reload();

@@ -137,16 +137,14 @@ function carriesFiles(dt: DataTransfer): boolean {
 }
 
 export function SelectWorkflow() {
-  const {
-    workflows,
-    fetchWorkflows,
-    openWorkflow,
-    addWorkflowFromFolder,
-    addWorkflowByPath,
-    createWorkflow,
-    openSampleWorkflow,
-    pending,
-  } = useVault();
+  const workflows = useVault((s) => s.workflows);
+  const pending = useVault((s) => s.pending);
+  const fetchWorkflows = useVault((s) => s.fetchWorkflows);
+  const openWorkflow = useVault((s) => s.openWorkflow);
+  const addWorkflowFromFolder = useVault((s) => s.addWorkflowFromFolder);
+  const addWorkflowByPath = useVault((s) => s.addWorkflowByPath);
+  const createWorkflow = useVault((s) => s.createWorkflow);
+  const openSampleWorkflow = useVault((s) => s.openSampleWorkflow);
 
   /** Which panel is open under the cards: the new-workflow form, or neither. */
   const [panel, setPanel] = useState<"create" | null>(null);
@@ -159,7 +157,7 @@ export function SelectWorkflow() {
   const [typedPath, setTypedPath] = useState("");
   const nameInput = useRef<HTMLInputElement>(null);
 
-  const notices = useNotices();
+  const say = useNotices((s) => s.say);
   /** A folder is being dragged over the window right now. */
   const [dropping, setDropping] = useState(false);
   const pathInput = useRef<HTMLInputElement>(null);
@@ -213,7 +211,7 @@ export function SelectWorkflow() {
     if (!dropped) return;
 
     if (!dropped.isDirectory) {
-      notices.say(
+      say(
         "A workflow is a folder, not a file",
         dropped.name ? `Drop the folder “${dropped.name}” is in instead.` : undefined,
       );
@@ -228,7 +226,7 @@ export function SelectWorkflow() {
     // The honest failure. Name what was dropped so it is clearly *this* drop
     // being answered, say the one true reason, and put the two ways in right
     // under the pointer.
-    notices.say(
+    say(
       dropped.name ? `Can’t open “${dropped.name}” from a drop` : "Can’t open a folder from a drop",
       "This window can see the folder’s name but not where it is on disk. Use “Open existing”, or type the path below.",
     );

@@ -12,7 +12,8 @@ const STATUS_COLOR: Record<ChapterStatus, string> = {
 export function Corkboard({
   chapters, tree,
 }: { chapters: string[]; tree: VaultNode }) {
-  const { selectPath, setView } = useVault();
+  const selectPath = useVault((s) => s.selectPath);
+  const setView = useVault((s) => s.setView);
 
   return (
     <div className="ms-corkboard">

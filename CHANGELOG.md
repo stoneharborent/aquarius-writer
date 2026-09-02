@@ -26,6 +26,12 @@ Typing stops waiting for the disk.
 - Long screenplays do less work per keystroke, though the remaining cost there
   is the page layout itself — that one is a bigger job, and it's written up in
   `docs/NOTES.md` §27l.
+- **Opening a panel no longer redraws the whole window.** Opening or closing
+  Today, Graph, Find, Settings or the command palette — and expanding a folder
+  in the file list — used to make every other part of the app redraw itself,
+  file tree and editor included. Each part of the window now only redraws when
+  something it actually shows has changed. Nothing looks or behaves any
+  different; there is just less happening behind it.
 - For the curious: launch with `VITE_AQ_BENCH=1` in development to measure
   keystroke latency per pane.
 

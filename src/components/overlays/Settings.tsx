@@ -29,7 +29,10 @@ export function Settings() {
   const [tab, setTab] = useState<Tab>(
     TABS.includes(wanted as Tab) ? (wanted as Tab) : "appearance",
   );
-  const { theme, accent, setTheme, setAccent } = useTheme();
+  const theme = useTheme((s) => s.theme);
+  const accent = useTheme((s) => s.accent);
+  const setTheme = useTheme((s) => s.setTheme);
+  const setAccent = useTheme((s) => s.setAccent);
   const [fontSize, setFontSize] = useState(17);
   const [lineHeight, setLineHeight] = useState(1.65);
 
@@ -459,7 +462,10 @@ interface McpStatus {
 }
 
 function SyncTab() {
-  const { folder, provider, setFolder, setProvider } = useSync();
+  const folder = useSync((s) => s.folder);
+  const provider = useSync((s) => s.provider);
+  const setFolder = useSync((s) => s.setFolder);
+  const setProvider = useSync((s) => s.setProvider);
 
   return (
     <>

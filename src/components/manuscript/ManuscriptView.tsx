@@ -7,7 +7,12 @@ import { Corkboard } from "./Corkboard";
 import "./Manuscript.css";
 
 export function ManuscriptView() {
-  const { current, tree, view, setView, activeDraftId, setActiveDraft } = useVault();
+  const current = useVault((s) => s.current);
+  const tree = useVault((s) => s.tree);
+  const view = useVault((s) => s.view);
+  const activeDraftId = useVault((s) => s.activeDraftId);
+  const setView = useVault((s) => s.setView);
+  const setActiveDraft = useVault((s) => s.setActiveDraft);
   if (!current || !tree) return null;
 
   const manuscript = current.manuscripts[0];

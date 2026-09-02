@@ -23,7 +23,7 @@ export function ChapterRail({ chapters, selected, onSelect, onReorder }: Chapter
   const [collapsed, setCollapsed] = useState(false);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
-  const { tree } = useVault();
+  const tree = useVault((s) => s.tree);
 
   const items = chapters.map((p) => ({ path: p, node: findNode(tree, p) }));
 

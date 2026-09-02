@@ -46,10 +46,12 @@ function diffLines(oldT: string, newT: string): DiffLine[] {
 const CONTEXT = 2;
 
 export function VersionDiff() {
-  const { payload } = useOverlay();
-  const { current } = useVault();
-  const { docs } = useEditor();
+  const payload = useOverlay((s) => s.payload);
+  const current = useVault((s) => s.current);
   const path = payload.path;
+  // Only the document being diffed. Subscribing to the whole editor store
+  // re-ran the line diff whenever any other buffer changed.
+  const doc = useEditor((s) => (path ? s.docs[path] : undefined));
   const version = useMemo(() => {
     if (!current || !path || !payload.versionId) return null;
     return listVersions(current.id, path).find((v) => v.id === payload.versionId) ?? null;
@@ -58,10 +60,9 @@ export function VersionDiff() {
   const lines = useMemo(() => {
     if (!version || !path) return [];
     // Versions hold the full serialized doc — compare like with like.
-    const doc = docs[path];
     const cur = doc ? stringify(doc.frontmatter, doc.body) : "";
     return diffLines(version.body, cur);
-  }, [version, path, docs]);
+  }, [version, path, doc]);
 
   const keep = useMemo(() => {
     const k = new Array(lines.length).fill(false);

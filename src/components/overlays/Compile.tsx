@@ -55,7 +55,9 @@ type Phase =
   | { state: "failed"; error: CompileFailure };
 
 export function Compile() {
-  const { current, selectedPath, activeDraftId } = useVault();
+  const current = useVault((s) => s.current);
+  const selectedPath = useVault((s) => s.selectedPath);
+  const activeDraftId = useVault((s) => s.activeDraftId);
   const close = useOverlay((s) => s.close);
 
   const sourceKind: SourceKind = useMemo(() => {

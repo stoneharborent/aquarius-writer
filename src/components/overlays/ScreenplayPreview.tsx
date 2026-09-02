@@ -29,11 +29,14 @@ const KIND_CLASS: Record<string, string> = {
 };
 
 export function ScreenplayPreview() {
-  const { payload } = useOverlay();
-  const { selectedPath } = useVault();
-  const { docs } = useEditor();
+  const payload = useOverlay((s) => s.payload);
+  const selectedPath = useVault((s) => s.selectedPath);
   const path = payload.path ?? selectedPath;
-  const raw = (path && docs[path]?.body) || "";
+  // This document, not the whole editor store: `useEditor()` with no selector
+  // re-rendered the preview — and re-paginated the script — on every keystroke
+  // in every *other* open buffer too.
+  const body = useEditor((s) => (path ? s.docs[path]?.body : undefined));
+  const raw = body || "";
 
   const pages = useMemo(() => {
     const { body } = splitTitlePage(raw);

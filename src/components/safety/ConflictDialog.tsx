@@ -20,7 +20,8 @@ import "./ConflictDialog.css";
  * again rather than quietly overwriting anything.
  */
 export function ConflictDialog() {
-  const { pending, resolve } = useConflict();
+  const pending = useConflict((s) => s.pending);
+  const resolve = useConflict((s) => s.resolve);
   const resolveConflict = useEditor((s) => s.resolveConflict);
   const [busy, setBusy] = useState<Resolution | null>(null);
 

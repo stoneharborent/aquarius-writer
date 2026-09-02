@@ -3925,3 +3925,128 @@ are `Mach-O 64-bit arm64`, and so are both binaries under
 `src-tauri/target.nosync`. `npm run dev`, `npm run build` and the app itself
 therefore cannot run on the Linux machine until a native `npm install` — and,
 for the shell, a Rust toolchain, which that box does not have yet.
+
+### 27m. The other forty — and what a selector-less store actually costs
+
+*§27l counted 52 selector-less store subscriptions, fixed the ones on the
+typing path, and left the rest with "a real but quieter cost". This is the
+rest. `grep -rnE "= use(Editor|Vault|Shell|Overlay|Toolbar|Settings|Update)\(\)"
+src` found **38**; a wider grep across all fifteen stores in `src/state` found
+**45**. Both are zero now.*
+
+#### The cost was never in the keystroke — it was in every other click
+
+The first surprise was that the remaining 38 were **not** on the typing path at
+all, and the measurement says so plainly: with a render counter on the nine
+components at the top of the tree, typing twenty characters into a note
+re-rendered **none of them, before or after**. §27l had already taken the
+editor store off the shared path, and the vault store does not move when a
+character is typed.
+
+What the leftovers cost was everything *else*. `const overlay = useOverlay()`
+subscribes to the whole overlay store, and the overlay store changes when any
+sheet opens or closes. `App`, `Sidebar`, `TopBar` and `RightPane` all held one.
+So opening the Today sheet re-rendered the entire application — including the
+editor column and every row of the file tree — and closing it did the same
+again:
+
+**Opening and closing the Today sheet four times (eight state changes):**
+
+| component | before | after |
+|---|---|---|
+| `App` | 8 | **0** |
+| `MainWindow` | 8 | **0** |
+| `SplitHost` | 8 | **0** |
+| `TopBar` | 8 | **0** |
+| `RightPane` | 8 | **0** |
+| `Sidebar` | 8 | **0** |
+| `QuickViews` | 8 | **0** |
+| `WorkflowChip` | 8 | **0** |
+| `TreeBranch` (16 rows) | 128 | **0** |
+
+Nothing outside the sheet needs to know a sheet is open. Nothing outside it
+now does.
+
+The same shape, one store over. Expanding a folder in the sidebar writes a new
+`expanded` set into the vault store, and every whole-store `useVault()`
+subscriber woke for it — including the editor column, which cannot see the
+sidebar at all:
+
+**Expanding and collapsing one folder eight times:**
+
+| component | before | after |
+|---|---|---|
+| `App` · `MainWindow` · `SplitHost` · `TopBar` · `RightPane` | 8 each | **0 each** |
+| `Sidebar` · `QuickViews` · `WorkflowChip` | 8 each | 8 each |
+| `TreeBranch` | 120 | 120 |
+
+**Selecting eight documents in a row:**
+
+| component | before | after |
+|---|---|---|
+| `App` | 8 | **0** |
+| `MainWindow` | 8 | **0** |
+| `TopBar` | 16 | 7 |
+| `SplitHost` · `RightPane` | 8 each | 7 each |
+| `Sidebar` · `QuickViews` · `WorkflowChip` | 8 each | 8 each |
+| `TreeBranch` | 128 | 128 |
+
+`App` reads two things — the workflow's title and whether boot has finished —
+and neither changes when the selection does, so it now sits still through all
+eight. `TopBar` halved because `useToolbar()` was a whole-store read: a pane
+switch calls `setContext` and then `setElement`, which is two store writes and
+was two renders; selecting `kind`, `path` and `element` separately makes it
+one.
+
+The rows that did not move are not a failure, and the numbers are left in to
+say so. `Sidebar` genuinely paints the selection and the expansion, so it
+genuinely re-renders. `QuickViews`, `WorkflowChip` and `TreeBranch` are its
+children and are not memoised, so they follow it down regardless of what they
+subscribe to. **That is the next win in this file, and it is a different
+change** — `React.memo` on the tree row plus a stable row callback — not more
+selectors.
+
+#### Two more of the Backlinks bug, in `useMemo` rather than `useEffect`
+
+§27l's 67-reads-per-keystroke bug was a whole-store subscription putting a
+wholesale-replaced map (`editor.docs`) into an effect's dependency list. Two
+more of exactly that turned up, both in `useMemo`, both in overlays that sit
+open beside the editor:
+
+- **`VersionDiff`** held `const { docs } = useEditor()` and listed `docs` as a
+  dependency of the memo that computes the line diff. `edit()` replaces `docs`
+  wholesale, so with the diff sheet open, a character typed in *any* buffer —
+  including a different document in the split pane — re-serialised the compared
+  document and re-ran the whole line diff. It selects `s.docs[path]` now, so
+  only an edit to the document actually being diffed re-runs it.
+- **`ScreenplayPreview`** had the same subscription and re-paginated the entire
+  script — `splitTitlePage`, `classifyLines`, `paginate` — on any editor-store
+  change at all. It selects `s.docs[path]?.body` now. The preview still updates
+  live as that script is typed, which is the point of it; it just no longer
+  updates when something else is.
+
+#### The rules used, so the next pass does not have to re-derive them
+
+- **One selector per field**, never an object literal. A selector returning
+  `{a, b}` allocates a fresh object every render and compares unequal every
+  time, which is the whole-store subscription wearing a disguise. `useShallow`
+  exists in the installed zustand (4.5.7, `zustand/react/shallow`) and was not
+  needed anywhere in these 45.
+- **Actions are stable**, so selecting them is free and they never re-fire.
+  `useVault((s) => s.selectPath)` costs nothing.
+- **A field a component only reads inside an event handler is not a
+  subscription.** `App` reads `selectedPath`, the overlay store and the popout
+  store through `getState()` at the moment the shortcut fires — the pattern
+  `VersionsTab` adopted in §27l, and the one the file's own `shell` handle
+  already used.
+
+#### How it was measured
+
+A temporary counter — `rc(name)` incrementing a `window.__rc` map, called at
+the top of nine component bodies — plus `React.StrictMode` removed for the
+duration, since StrictMode double-invokes every render and doubles every number
+in the tables above. Two worktrees, `4831524` and this branch, on the same
+`node_modules`, the same browser and the same mock-backend sample workflow;
+each scenario driven from the page's own console with a 120–150ms pause between
+clicks so React could not batch eight interactions into one render. None of
+that scaffolding is in the commit — the diff is the selectors and nothing else.

@@ -18,7 +18,10 @@ import "./Today.css";
 const TOP_DOCS = 5;
 
 export function Today() {
-  const { selectPath, setView, current, setDailyGoal } = useVault();
+  const current = useVault((s) => s.current);
+  const selectPath = useVault((s) => s.selectPath);
+  const setView = useVault((s) => s.setView);
+  const setDailyGoal = useVault((s) => s.setDailyGoal);
   const today = useSessions((s) => s.today);
   const days = useSessions((s) => s.days);
   const streak = useSessions((s) => s.streak);

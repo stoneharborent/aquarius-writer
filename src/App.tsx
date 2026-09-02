@@ -16,37 +16,46 @@ import { getPopoutPath } from "@/lib/popout";
 import { PopoutWindow } from "@/components/popout/PopoutWindow";
 
 export default function App() {
-  const { current, setView, selectedPath, bootstrap, booted } = useVault();
-  const overlay = useOverlay();
-  const popout = usePopout();
+  // One selector per field. `useVault()` with no selector re-rendered App —
+  // and the whole window under it — on every vault change, including ones it
+  // does not paint. App paints exactly two things: the workflow's title and
+  // whether boot has finished.
+  const current = useVault((s) => s.current);
+  const booted = useVault((s) => s.booted);
+  const setView = useVault((s) => s.setView);
+  const bootstrap = useVault((s) => s.bootstrap);
   // Read imperatively rather than subscribing: App has no reason to re-render
-  // on every pixel of a splitter drag, and these handlers only ever *write*.
+  // on every pixel of a splitter drag, on every overlay that opens, or on
+  // every pop-out — these handlers only ever *write*.
   const shell = useShell.getState;
+  const overlay = useOverlay.getState;
+  const popout = usePopout.getState;
+  const vault = useVault.getState;
   const startUpdates = useUpdates((s) => s.start);
   const popoutPath = getPopoutPath();
 
   const shortcuts = useMemo<Shortcut[]>(() => [
     { id: "palette", combo: "⌘P", group: "navigation", label: "Command palette",
       match: (e) => mod(e) && e.key.toLowerCase() === "p" && !e.shiftKey,
-      run: () => overlay.toggle("palette") },
+      run: () => overlay().toggle("palette") },
     { id: "compile", combo: "⌘E", group: "system", label: "Compile / Export",
       match: (e) => mod(e) && e.key.toLowerCase() === "e",
-      run: () => overlay.open("compile") },
+      run: () => overlay().open("compile") },
     { id: "today", combo: "⌘T", group: "navigation", label: "Today",
       match: (e) => mod(e) && e.key.toLowerCase() === "t" && !e.shiftKey,
-      run: () => overlay.open("today") },
+      run: () => overlay().open("today") },
     { id: "graph", combo: "⌘G", group: "view", label: "Graph",
       match: (e) => mod(e) && e.key.toLowerCase() === "g" && !e.shiftKey,
-      run: () => overlay.open("graph") },
+      run: () => overlay().open("graph") },
     { id: "settings", combo: "⌘,", group: "system", label: "Settings",
       match: (e) => mod(e) && e.key === ",",
-      run: () => overlay.open("settings") },
+      run: () => overlay().open("settings") },
     { id: "cheats", combo: "⌘?", group: "system", label: "Cheat sheet",
       match: (e) => (e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "?",
-      run: () => overlay.open("cheatsheet") },
+      run: () => overlay().open("cheatsheet") },
     { id: "find", combo: "⇧⌘F", group: "navigation", label: "Find in workflow",
       match: (e) => mod(e) && e.shiftKey && e.key.toLowerCase() === "f",
-      run: () => overlay.open("find") },
+      run: () => overlay().open("find") },
     { id: "search", combo: "⌘K", group: "navigation", label: "Focus the search capsule",
       match: (e) => mod(e) && e.key.toLowerCase() === "k",
       run: () => {
@@ -99,12 +108,13 @@ export default function App() {
           window.close();
           return;
         }
+        const selectedPath = vault().selectedPath;
         if (selectedPath) {
-          if (popout.isPopped(selectedPath)) popout.reattach(selectedPath);
-          else popout.popOut(selectedPath);
+          if (popout().isPopped(selectedPath)) popout().reattach(selectedPath);
+          else popout().popOut(selectedPath);
         }
       } },
-  ], [overlay, setView, popout, selectedPath, popoutPath, shell]);
+  ], [overlay, setView, popout, popoutPath, shell, vault]);
 
   useGlobalShortcuts(shortcuts);
 

@@ -20,7 +20,9 @@ const STATUS_LABEL: Record<ChapterStatus, string> = {
 export function Outline({
   chapters, tree,
 }: { chapters: string[]; tree: VaultNode }) {
-  const { reorderChapters, selectPath, setView } = useVault();
+  const reorderChapters = useVault((s) => s.reorderChapters);
+  const selectPath = useVault((s) => s.selectPath);
+  const setView = useVault((s) => s.setView);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
 

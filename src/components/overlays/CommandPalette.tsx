@@ -36,9 +36,15 @@ export function CommandPalette() {
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const { tree, selectPath, setView, selectedPath } = useVault();
-  const { open: openOv, close } = useOverlay();
-  const { theme, setTheme, setAccent } = useTheme();
+  const tree = useVault((s) => s.tree);
+  const selectedPath = useVault((s) => s.selectedPath);
+  const selectPath = useVault((s) => s.selectPath);
+  const setView = useVault((s) => s.setView);
+  const openOv = useOverlay((s) => s.open);
+  const close = useOverlay((s) => s.close);
+  const theme = useTheme((s) => s.theme);
+  const setTheme = useTheme((s) => s.setTheme);
+  const setAccent = useTheme((s) => s.setAccent);
   const starred = useFavorites((s) => s.starred);
   const toggleStar = useFavorites((s) => s.toggle);
 

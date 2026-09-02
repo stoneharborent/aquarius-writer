@@ -39,11 +39,16 @@ import type { ChapterStatus } from "@/types/vault";
 import "./MainWindow.css";
 
 export function MainWindow() {
-  const { view } = useVault();
-  const {
-    sidebarWidth, sidebarCollapsed, setSidebarWidth, setSidebarCollapsed,
-    rightWidth, rightCollapsed, rightTab, setRightWidth, setRightCollapsed,
-  } = useShell();
+  const view = useVault((s) => s.view);
+  const sidebarWidth = useShell((s) => s.sidebarWidth);
+  const sidebarCollapsed = useShell((s) => s.sidebarCollapsed);
+  const rightWidth = useShell((s) => s.rightWidth);
+  const rightCollapsed = useShell((s) => s.rightCollapsed);
+  const rightTab = useShell((s) => s.rightTab);
+  const setSidebarWidth = useShell((s) => s.setSidebarWidth);
+  const setSidebarCollapsed = useShell((s) => s.setSidebarCollapsed);
+  const setRightWidth = useShell((s) => s.setRightWidth);
+  const setRightCollapsed = useShell((s) => s.setRightCollapsed);
   const host = useRef<HTMLDivElement>(null);
 
   /**
@@ -315,7 +320,11 @@ function DocView({ path, pane = "primary", readOnly = false }: {
   path: string | null; pane?: SplitPane; readOnly?: boolean;
 }) {
   const secondary = pane === "secondary";
-  const { current, selectPath, setView, reorderChapters, activeDraftId } = useVault();
+  const current = useVault((s) => s.current);
+  const activeDraftId = useVault((s) => s.activeDraftId);
+  const selectPath = useVault((s) => s.selectPath);
+  const setView = useVault((s) => s.setView);
+  const reorderChapters = useVault((s) => s.reorderChapters);
   const draft = current?.drafts.find((d) => d.id === activeDraftId) ?? current?.drafts[0];
   const chapters = draft?.chapterOrder ?? current?.manuscripts[0]?.chapterOrder ?? [];
   const isChapter = path ? chapters.includes(path) : false;
@@ -756,12 +765,12 @@ function NotePane({ workflowId, path, pane = "primary", readOnly = false }: {
 }
 
 function PopoutButton({ path }: { path: string }) {
-  const popout = usePopout();
+  const popOut = usePopout((s) => s.popOut);
   return (
     <button
       className="mw-popout-btn"
       title="Pop out (⌃⌘O)"
-      onClick={() => popout.popOut(path)}
+      onClick={() => popOut(path)}
     >↗</button>
   );
 }
@@ -776,7 +785,9 @@ function PopoutButton({ path }: { path: string }) {
  * get two *editable* documents, open the other one from its row's ⋯ menu.
  */
 function SplitButton({ path }: { path: string }) {
-  const { openSplit, secondaryPath, closeSplit } = useSplit();
+  const secondaryPath = useSplit((s) => s.secondaryPath);
+  const openSplit = useSplit((s) => s.openSplit);
+  const closeSplit = useSplit((s) => s.closeSplit);
   const open = secondaryPath === path;
   return (
     <button

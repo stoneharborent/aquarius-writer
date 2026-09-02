@@ -37,7 +37,10 @@ function classify(path: string): Node["kind"] {
 }
 
 export function Graph() {
-  const { tree, current, selectPath, setView } = useVault();
+  const tree = useVault((s) => s.tree);
+  const current = useVault((s) => s.current);
+  const selectPath = useVault((s) => s.selectPath);
+  const setView = useVault((s) => s.setView);
   const closeOv = useOverlay((s) => s.close);
   const [graph, setGraph] = useState<{ nodes: Node[]; edges: Edge[] } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);

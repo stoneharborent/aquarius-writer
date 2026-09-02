@@ -15,7 +15,8 @@ interface PopoutWindowProps {
 }
 
 export function PopoutWindow({ path }: PopoutWindowProps) {
-  const { current, bootstrap } = useVault();
+  const current = useVault((s) => s.current);
+  const bootstrap = useVault((s) => s.bootstrap);
   // One document per popout window — select it, rather than waking this whole
   // window's tree on every keystroke in every buffer the store holds.
   const doc = useEditor((s) => s.docs[path]);

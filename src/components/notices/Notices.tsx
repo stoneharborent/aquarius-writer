@@ -9,7 +9,8 @@ import "./Notices.css";
  * screen, which is the one place the app had no chrome to complain in.
  */
 export function Notices() {
-  const { notices, dismiss } = useNotices();
+  const notices = useNotices((s) => s.notices);
+  const dismiss = useNotices((s) => s.dismiss);
   if (notices.length === 0) return null;
 
   return (

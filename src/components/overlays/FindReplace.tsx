@@ -9,7 +9,10 @@ import { EmptyState } from "@/components/shell/EmptyState";
 import "./FindReplace.css";
 
 export function FindReplace() {
-  const { current, tree, selectPath, setView } = useVault();
+  const current = useVault((s) => s.current);
+  const tree = useVault((s) => s.tree);
+  const selectPath = useVault((s) => s.selectPath);
+  const setView = useVault((s) => s.setView);
   const close = useOverlay((s) => s.close);
   // Seeded when the top bar's ⌘K capsule handed its words over on Enter.
   const seed = useOverlay((s) => s.payload.query);

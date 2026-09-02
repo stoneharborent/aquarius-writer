@@ -23,8 +23,10 @@ export function TopBar() {
   const toggleSidebar = useShell((s) => s.toggleSidebar);
   const toggleRightTab = useShell((s) => s.toggleRightTab);
   const setQuery = useShell((s) => s.setQuery);
-  const { kind, path, element } = useToolbar();
-  const overlay = useOverlay();
+  const kind = useToolbar((s) => s.kind);
+  const path = useToolbar((s) => s.path);
+  const element = useToolbar((s) => s.element);
+  const openOverlay = useOverlay((s) => s.open);
   const search = useRef<HTMLInputElement>(null);
 
   // ⌘K bumps `focusTick`; skip the first render so the app does not open with
@@ -66,7 +68,7 @@ export function TopBar() {
               // the other half of "find" and the thing a filtered tree cannot
               // do: look inside the documents.
               if (e.key === "Enter" && query.trim().length >= 2) {
-                overlay.open("find", { query: query.trim() });
+                openOverlay("find", { query: query.trim() });
               }
               if (e.key === "Escape") {
                 setQuery("");

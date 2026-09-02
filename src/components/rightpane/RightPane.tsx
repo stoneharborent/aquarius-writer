@@ -34,7 +34,8 @@ import "./RightPane.css";
  * rather than a stub of this component.
  */
 export function RightPane() {
-  const { current, selectedPath } = useVault();
+  const current = useVault((s) => s.current);
+  const selectedPath = useVault((s) => s.selectedPath);
   const tab = useShell((s) => s.rightTab);
   const setRightTab = useShell((s) => s.setRightTab);
   const setRightCollapsed = useShell((s) => s.setRightCollapsed);
@@ -145,7 +146,7 @@ function CommentCard({ c, wf, path, onChange }: {
 
 function VersionsTab({ wf, path }: { wf: string; path: string }) {
   const openDoc = useEditor((s) => s.open);
-  const overlay = useOverlay();
+  const openOverlay = useOverlay((s) => s.open);
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const reload = useCallback(() => setVersions(listVersions(wf, path)), [wf, path]);
   useEffect(reload, [reload]);
@@ -194,7 +195,7 @@ function VersionsTab({ wf, path }: { wf: string; path: string }) {
             <time>{new Date(v.at).toLocaleString()} · {v.words.toLocaleString()} w</time>
             <span className="rp-spacer" />
             <button className="rp-link" onClick={() =>
-              overlay.open("version-diff", { path, versionId: v.id })
+              openOverlay("version-diff", { path, versionId: v.id })
             }>Diff</button>
             <button className="rp-link danger" onClick={() => void restore(v)}>Restore</button>
           </footer>

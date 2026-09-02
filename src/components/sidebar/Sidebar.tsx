@@ -267,10 +267,16 @@ function folderPaths(node: VaultNode, out: string[] = []): string[] {
 }
 
 export function Sidebar() {
-  const {
-    current, tree, expanded, toggleExpanded, selectedPath, selectPath, expandAll,
-  } = useVault();
-  const overlay = useOverlay();
+  // One selector per field. `useVault()` with no selector woke the entire
+  // sidebar — every row, every branch — on any vault change at all.
+  const current = useVault((s) => s.current);
+  const tree = useVault((s) => s.tree);
+  const expanded = useVault((s) => s.expanded);
+  const selectedPath = useVault((s) => s.selectedPath);
+  const toggleExpanded = useVault((s) => s.toggleExpanded);
+  const selectPath = useVault((s) => s.selectPath);
+  const expandAll = useVault((s) => s.expandAll);
+  const openOverlay = useOverlay((s) => s.open);
   const query = useShell((s) => s.query);
   const sidebarZoom = useShell((s) => s.sidebarZoom);
   const [composer, setComposer] = useState<Composer | null>(null);
@@ -406,17 +412,17 @@ export function Sidebar() {
           that used to be down there lost its button. */}
       <div className="sb-rail">
         <button className="sb-rail-btn" title="Command palette (⌘P)"
-          onClick={() => overlay.open("palette")}>Palette</button>
+          onClick={() => openOverlay("palette")}>Palette</button>
         <button className="sb-rail-btn" title="Today (⌘T)"
-          onClick={() => overlay.open("today")}>Today</button>
+          onClick={() => openOverlay("today")}>Today</button>
         <button className="sb-rail-btn" title="Graph (⌘G)"
-          onClick={() => overlay.open("graph")}>Graph</button>
+          onClick={() => openOverlay("graph")}>Graph</button>
         <button className="sb-rail-btn" title="Find in workflow (⇧⌘F)"
-          onClick={() => overlay.open("find")}>Find</button>
+          onClick={() => openOverlay("find")}>Find</button>
         <button className="sb-rail-btn" title="Recently Deleted"
-          onClick={() => overlay.open("trash")}>Trash</button>
+          onClick={() => openOverlay("trash")}>Trash</button>
         <button className="sb-rail-btn" title="Settings (⌘,)"
-          onClick={() => overlay.open("settings")}>Settings</button>
+          onClick={() => openOverlay("settings")}>Settings</button>
       </div>
 
       <WorkflowChip />
@@ -433,8 +439,14 @@ export function Sidebar() {
  * look like a toolbar someone bolted on.
  */
 function QuickViews() {
-  const { tree, view, setView, selectPath, toggleExpanded, expandAll, expanded } = useVault();
-  const overlay = useOverlay();
+  const tree = useVault((s) => s.tree);
+  const view = useVault((s) => s.view);
+  const expanded = useVault((s) => s.expanded);
+  const setView = useVault((s) => s.setView);
+  const selectPath = useVault((s) => s.selectPath);
+  const toggleExpanded = useVault((s) => s.toggleExpanded);
+  const expandAll = useVault((s) => s.expandAll);
+  const openOverlay = useOverlay((s) => s.open);
   const starred = useFavorites((s) => s.starred);
   const [showStarred, setShowStarred] = useState(false);
 
@@ -500,7 +512,7 @@ function QuickViews() {
         )
       )}
 
-      <button className="sb-row sb-quick-row" onClick={() => overlay.open("today")}>
+      <button className="sb-row sb-quick-row" onClick={() => openOverlay("today")}>
         <span className="sb-caret" />
         <SparkleIcon size={12} color="var(--ink-soft)" />
         <span className="sb-label">Today</span>
@@ -600,7 +612,8 @@ function Composer({
   parent: string;
   onDone: () => void;
 }) {
-  const { createFile, createFolder } = useVault();
+  const createFile = useVault((s) => s.createFile);
+  const createFolder = useVault((s) => s.createFolder);
   const [name, setName] = useState("");
   const [kind, setKind] = useState<NewFileKind>("markdown");
   const [busy, setBusy] = useState(false);
@@ -812,7 +825,7 @@ function TreeBranch({
 
 /** The row, replaced by a text field, while it is being renamed. */
 function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
-  const { renameEntry } = useVault();
+  const renameEntry = useVault((s) => s.renameEntry);
   const ops = useTreeOps();
   const [name, setName] = useState(node.name);
   const [busy, setBusy] = useState(false);
@@ -860,10 +873,11 @@ function RenameRow({ node, indent }: { node: VaultNode; indent: number }) {
  */
 function RowMenu({ node }: { node: VaultNode }) {
   const ops = useTreeOps();
-  const { moveEntry } = useVault();
-  const favorites = useFavorites();
+  const moveEntry = useVault((s) => s.moveEntry);
+  const starredPaths = useFavorites((s) => s.starred);
+  const toggleFavorite = useFavorites((s) => s.toggle);
   const [picking, setPicking] = useState(false);
-  const starred = favorites.starred.has(node.path);
+  const starred = starredPaths.has(node.path);
   const isFile = node.kind !== "folder";
 
   useEffect(() => { if (ops.menuFor !== node.path) setPicking(false); }, [ops.menuFor, node.path]);
@@ -890,7 +904,7 @@ function RowMenu({ node }: { node: VaultNode }) {
         <>
           <button
             className="sb-menu-item"
-            onClick={() => { ops.setMenuFor(null); void favorites.toggle(node.path); }}
+            onClick={() => { ops.setMenuFor(null); void toggleFavorite(node.path); }}
           >{starred ? "Unstar" : "Star"}</button>
           {isFile && (
             <button
@@ -981,7 +995,8 @@ function MoreAffordance({ path }: { path: string }) {
 
 /** Hover-revealed soft-delete — moves the file to Recently Deleted. */
 function DeleteAffordance({ path }: { path: string }) {
-  const { current, removeFromTree } = useVault();
+  const current = useVault((s) => s.current);
+  const removeFromTree = useVault((s) => s.removeFromTree);
   return (
     <span
       className="sb-del"
@@ -1023,11 +1038,15 @@ function FileGlyph({ kind }: { kind: NodeKind }) {
  * The popover opens upward, since the chip is at the bottom of the column.
  */
 function WorkflowChip() {
-  const {
-    current, workflows, workflowsLoading, pending,
-    fetchWorkflows, openWorkflow, closeWorkflow, addWorkflowFromFolder,
-  } = useVault();
-  const overlay = useOverlay();
+  const current = useVault((s) => s.current);
+  const workflows = useVault((s) => s.workflows);
+  const workflowsLoading = useVault((s) => s.workflowsLoading);
+  const pending = useVault((s) => s.pending);
+  const fetchWorkflows = useVault((s) => s.fetchWorkflows);
+  const openWorkflow = useVault((s) => s.openWorkflow);
+  const closeWorkflow = useVault((s) => s.closeWorkflow);
+  const addWorkflowFromFolder = useVault((s) => s.addWorkflowFromFolder);
+  const openOverlay = useOverlay((s) => s.open);
   const [open, setOpen] = useState(false);
 
   // Fetched when the popover opens rather than on mount: the list is only ever
@@ -1100,7 +1119,7 @@ function WorkflowChip() {
           </button>
           <button
             className="sb-switch-item sb-switch-action"
-            onClick={() => { setOpen(false); overlay.open("settings", { tab: "workflows" }); }}
+            onClick={() => { setOpen(false); openOverlay("settings", { tab: "workflows" }); }}
           >
             Manage workflows…
           </button>
