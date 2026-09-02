@@ -4050,3 +4050,285 @@ in the tables above. Two worktrees, `4831524` and this branch, on the same
 each scenario driven from the page's own console with a 120–150ms pause between
 clicks so React could not batch eight interactions into one render. None of
 that scaffolding is in the commit — the diff is the selectors and nothing else.
+
+---
+
+---
+
+## 28. The Linux box can build the shell now
+
+*Setup pass, 2026-09-01, straight after §27l. That section ends with a note for
+"whoever picks this up on Linux": the app could not be built here, so the
+typing bench had to run in a bare WebKitGTK window with Tauri IPC excluded.
+This section closes that gap. The toolchain is installed, `cargo test` and
+`npm run build` are green, the real window opens on this desktop, and the bench
+has now been run **inside the shell** — which is where the readFile count
+finally means something.*
+
+### 28a. First, where "here" actually is
+
+This matters more than it sounds, and getting it wrong will waste an afternoon.
+
+The coding agent's shell runs in an **Ubuntu 24.04 container** whose hostname is
+`aquarius`. That is **not** AquariusOS. AquariusOS is the Fedora/Bazzite system
+underneath — immutable, updated by rebuilding an image, never by installing
+packages into it. The container is an ordinary mutable Ubuntu that happens to
+share three things with the desktop around it:
+
+- **the home directory**, so the repo is visible from inside;
+- **the screen** (`WAYLAND_DISPLAY=wayland-0`, `DISPLAY=:0`), so a window
+  launched in the container appears on the real desktop;
+- **the GPU device nodes**, though see §28e — the NVIDIA *driver* is not in
+  the container, only the hardware.
+
+So `sudo apt-get install` is fine and correct in this shell, and it is also
+completely irrelevant to AquariusOS. Nothing here is a step toward shipping.
+When the container is rebuilt everything below is gone, which is why it is a
+script (`scripts/linux-dev-env.sh`) rather than something anyone should
+remember.
+
+`uname -a` is the thing most likely to confuse you: it reports the *host's*
+kernel (`7.2.1-ogc3.1.fc44.x86_64` — Fedora), because a container shares the
+kernel it runs on. `cat /etc/os-release` reports Ubuntu, and for anything to do
+with packages, `/etc/os-release` is the one that is true.
+
+### 28b. The setup, in order
+
+All of this is in `scripts/linux-dev-env.sh`; run that instead of typing it.
+What the script does, and why:
+
+**One — the libraries Tauri compiles against.**
+
+```
+sudo apt-get update
+sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+  libayatana-appindicator3-dev librsvg2-dev libssl-dev \
+  pkg-config build-essential patchelf file curl
+```
+
+Tauri v2 on Linux draws its window with GTK3 and renders the page with
+WebKitGTK. The `-dev` packages are the header files a compiler needs; the
+runtime halves were already here, which is exactly why §27l could run a
+WebKitGTK window but could not *build* one. `build-essential` is the C compiler
+and linker — Rust needs a linker and there was none. `patchelf` and `file` are
+used by `tauri build` when it assembles the AppImage.
+
+The WebKitGTK that landed is **2.52.6**. §27l measured against 2.52.5 on the
+host. Same series, and the numbers in §28f line up with §27l's, so nothing
+about that minor difference appears to matter.
+
+**Two — Rust.**
+
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+sh /tmp/rustup-init.sh -y --default-toolchain stable --profile default --no-modify-path
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+This installs into `~/.cargo` — inside the home directory, nothing system-wide,
+no root. Landed `rustc 1.98.0` / `cargo 1.98.0`. Because the home directory is
+shared with the desktop, the toolchain **survives a container rebuild** even
+though the apt packages do not.
+
+**Three — a build folder that is not the Mac's.** This one is a real trap.
+
+`src-tauri/target` is a symlink to `target.nosync` (see `scripts/nosync-link.sh`
+for why), and on the Mac that folder holds **Mach-O arm64** output. Building
+Linux into the same folder mixes two architectures in one cargo cache. So:
+
+```
+export CARGO_TARGET_DIR="$HOME/.cache/aquarius-writer-target"
+```
+
+Linux output goes there and never touches `target.nosync`. It also keeps a
+multi-gigabyte build folder off the synced drive the repo lives on, which is
+the same reason `target.nosync` exists at all. As it happens a *fresh* worktree
+has no `src-tauri/target` at all — it is gitignored, and `nosync-link.sh`
+deliberately no-ops away from macOS — so the symlink is only a hazard in the
+main checkout. Set `CARGO_TARGET_DIR` anyway; it costs nothing and removes the
+question.
+
+**Four — the JavaScript packages, natively.** §27l's closing paragraph is
+correct and still bites: `node_modules` in the repo was installed on the Mac,
+so `esbuild` and `rollup` are arm64 binaries. One `npm ci` per checkout fixes
+it. On Linux the `postinstall` nosync script prints
+`nosync: no iCloud here — nothing to do` and exits, which is expected.
+
+Two lines in `~/.bashrc` make every new shell able to build:
+
+```
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+export CARGO_TARGET_DIR="$HOME/.cache/aquarius-writer-target"
+```
+
+(`~/.local/bin` is where Node 24 and npm live on this box — they are not in
+`/usr/bin`.)
+
+### 28c. Proving it works
+
+```
+cd src-tauri && cargo test        # 268 passed, 0 failed
+npm run build                     # tsc -b && vite build — green
+```
+
+**268 tests**, not the ~113 the handoff expected; the suite has roughly doubled
+since. First `cargo test` compiles the whole dependency tree and takes a few
+minutes. After that it is about two seconds.
+
+### 28d. The window opens, and it needs no special environment
+
+```
+npm run tauri:dev
+```
+
+opens the real Aquarius Writer window on the desktop — GTK3 title bar, the
+tree, the panes, all of it. **No `GDK_BACKEND`, no
+`WEBKIT_DISABLE_DMABUF_RENDERER`, nothing.** The escape hatches §27k and the
+os-image launcher carry are for the packaged AppImage on the real desktop
+session; from inside this container the plain command is enough.
+
+One wrinkle worth knowing. A Wayland-native window **cannot be found with
+`xdotool` or `wmctrl`**, and GNOME refuses both the shell's screenshot and its
+window-list D-Bus calls to a client like this. So there is no way to confirm
+from a script that the window is really on screen. If you need to *prove* it —
+which is worth doing once — relaunch under XWayland:
+
+```
+GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 npm run tauri:dev
+```
+
+and the window becomes an ordinary X client:
+
+```
+xdotool search --name "Aquarius Writer"
+import -window <id> shot.png        # ImageMagick; grabs the real pixels
+```
+
+**Use that for looking, never for measuring** — see §28f.
+
+### 28e. The EGL warnings are noise
+
+Every launch prints a wall of:
+
+```
+libEGL warning: pci id for fd 16: 10de:2684, driver (null)
+libEGL warning: egl: failed to create dri2 screen
+```
+
+`10de:2684` is the NVIDIA card. The device nodes are visible in the container
+but the NVIDIA userspace driver is not installed in it, so EGL cannot find a
+driver and WebKit falls back to software rendering. The app works fine. It is
+not a bug in the app, it does not happen to the packaged AppImage on the real
+desktop, and it is not worth chasing — but it does mean **this container is the
+wrong place to measure anything that depends on the GPU**, paint and
+compositing included.
+
+### 28f. The bench, in the real shell at last
+
+This is the measurement §27l could not take. Same instrument, same corpus, but
+now inside Tauri, so every `readFile` is a real IPC round trip to a real disk
+read rather than a map lookup.
+
+```
+AQ_DEV_VAULT="$HOME/aq-bench-vault" VITE_AQ_BENCH=1 npm run tauri:dev
+```
+
+| pane | p50 | p95 | worst | readFile |
+|---|---|---|---|---|
+| prose, 28,458 chars | 1 ms | 3 ms | 4 ms | **×0** |
+| note, 2,998 chars, 60-note vault | 1 ms | 2 ms | 4 ms | **×0** |
+| screenplay, 41,551 chars | 6 ms | 10 ms | 12 ms | **×0** |
+
+**Zero disk reads per keystroke in all three panes.** That is the number that
+mattered: §27l's 4,690 reads were invisible to it because it measured outside
+Tauri, and the fix could only ever be *assumed* to hold in the shell. It holds.
+
+The milliseconds also land on top of §27l's post-fix figures (1 / 1 / 5–6),
+which is a useful cross-check in both directions: it says the WebKitGTK host
+§27l improvised was an honest stand-in for the real shell on everything except
+IPC, and it says the screenplay's remaining ~5–6ms really is CodeMirror DOM and
+WebKit layout, exactly as §27l concluded. That work is still open.
+
+**Do not bench under `GDK_BACKEND=x11`.** The same run through XWayland with
+software rendering reports:
+
+| pane | p50 | p95 | worst | readFile |
+|---|---|---|---|---|
+| prose | 32 ms | 33 ms | 33 ms | ×0 |
+| note | 31 ms | 33 ms | 36 ms | ×0 |
+| screenplay | 35 ms | 41 ms | 45 ms | ×0 |
+
+That is a flat **~30ms added to every pane**, which is the environment, not the
+app — note that the differences between panes survive intact (screenplay minus
+prose is 3ms here, 5ms native, 4ms in §27l). A constant offset across three
+workloads that differ by 15× in document size is always the harness. Read the
+deltas if you are stuck with such a run; do not compare the absolutes to
+anything.
+
+### 28g. The mistake to not repeat: the bench wrote into the real vault
+
+This one cost real cleanup, and it will happen to the next person too unless
+they do the thing at the end of this section.
+
+`typing-bench.ts` seeds its corpus two different ways. The chapter and the
+screenplay go through `vault().writeFile(workflowId, …)` — an explicit
+workflow id, which is the one `AQ_DEV_VAULT` registered, so those are safe. But
+the sixty cross-linked notes go through `useVault.getState().createFile(…)`,
+**which writes to whichever workflow the store currently has open** — no id
+passed, no id checked.
+
+Those are usually the same workflow. They were not here. The app boots into the
+most recently registered workflow (`vault::registry` — "most recent wins the
+launch slot"), and this machine's registry already had Royce's real Workflow
+vault in it, so that is what the window opened. The bench's own
+`openWorkflow(devId, { quiet: true })` did not win the race. Result: sixty
+`Bench Note NN.md` files created in a brand-new `Characters/` folder at the
+root of the real vault, and a bench that then measured that vault — the log
+said `seeded: 3540 editable files in the tree`, against 62 for the scratch
+folder, which is the tell. **If that count is not ~62, stop: it is pointed at
+the wrong vault.** The prose and screenplay scenarios also reported
+`SKIPPED — no buffer`, because those paths existed only in the scratch vault.
+
+The fix needs no app change — give the app a registry of its own:
+
+```
+export XDG_CONFIG_HOME="$HOME/aq-dev-config"
+export XDG_DATA_HOME="$HOME/aq-dev-data"
+export AQ_DEV_VAULT="$HOME/aq-bench-vault"
+VITE_AQ_BENCH=1 npm run tauri:dev
+```
+
+`app_config_dir()` follows `XDG_CONFIG_HOME`, so the registry starts empty,
+`AQ_DEV_VAULT` becomes the only workflow the app has ever heard of, and there
+is nothing else for `createFile` to fall through to. Every number in §28f was
+taken this way.
+
+The deeper issue is still standing and is worth fixing properly one day:
+**`seed()` mixes an explicit-id write path with an ambient-current-workflow
+one.** A harness that takes a workflow id should use it for every write it
+makes. Until then, the isolated config dir is the guard, and it belongs in the
+command line every single time — the header comment in `typing-bench.ts`
+already says "point it at a scratch folder", and this is the sharp edge that
+warning is about.
+
+### 28h. Re-entering later
+
+Nothing above needs redoing unless the container has been rebuilt. A fresh
+shell needs only:
+
+```
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+export CARGO_TARGET_DIR="$HOME/.cache/aquarius-writer-target"
+cd <the checkout>
+```
+
+and then the one-liner for tests:
+
+```
+(cd src-tauri && cargo test)
+```
+
+If `cargo` is missing, the container was rebuilt — run
+`bash scripts/linux-dev-env.sh` again. If `cargo` is there but the build fails
+on a missing `.h` file, it is the same cause: the apt packages went, the home
+directory stayed.
