@@ -44,6 +44,26 @@ export function ConfirmDialog() {
     return () => window.clearTimeout(t);
   }, [id]);
 
+  // Escape is answered here, in the CAPTURE phase, instead of letting
+  // `Overlay`'s own handler do it. Every mounted `Overlay` listens for Escape
+  // on `window`, and the questions this dialog asks are now raised from
+  // *inside* other overlays — Empty trash and Purge come from the Recently
+  // Deleted sheet. Left alone, one Escape would cancel the question and close
+  // the sheet behind it, which is a sheet the writer never asked to leave.
+  // A capture listener on `window` runs before every bubble-phase one, so
+  // stopping propagation there means Escape does exactly one thing.
+  useEffect(() => {
+    if (id === undefined) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      answer(false);
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [id, answer]);
+
   if (!pending) return null;
 
   return (

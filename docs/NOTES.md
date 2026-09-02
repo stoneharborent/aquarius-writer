@@ -4843,11 +4843,13 @@ closest thing to a house style was `ConflictDialog` — a store, a component in
 built to that shape: `state/confirmStore.ts` (`ask()` returns a promise) plus
 `components/safety/ConfirmDialog.tsx`.
 
-**The other three are deliberately untouched.** They are not on the accident
-path this was asked for — every one of them is reached from inside a sheet the
-writer opened on purpose, and two of them are the *permanent* delete, which
-already reads as a different question. Migrating them is a tidy-up for a
-separate pass; noting it here is the whole of the debt.
+**The other three were left for a separate pass, and that pass happened the
+same day.** The reasoning at the time was that they are not on the accident
+path — every one is reached from inside a sheet the writer opened on purpose,
+and two of them are the *permanent* delete, which already reads as a different
+question. Royce asked for them anyway ("move those three onto the new dialog
+too"), and moving them turned up something the tidy-up framing had no way to
+see: **inside the app those three were not asking anything at all.** See §31f.
 
 ### 31d. Focus, Enter, and the two things that went wrong getting there
 
@@ -4893,5 +4895,120 @@ Getting focus onto Cancel took two tries, and both failures are worth keeping:
   1 file inside it?` (singular); adding an *empty* subfolder left it at 3, and
   putting one note inside that subfolder took it to 4 — so the count is files
   only, and recursive.
+
+`npm run build` green. No Rust changed, so `cargo test` was not re-run.
+
+### 31f. The other three, and the confirm that was never a confirm
+
+*Same day, straight after 31e. Royce: "move those three onto the new dialog
+too." Three call sites, one dialog, and a Linux question attached — and the
+Linux question turned out to be the whole story.*
+
+**What moved.** All three, and there is now no `window.confirm` left in `src/`
+(the only hits are the comments in `confirmStore.ts` and `ConfirmDialog.tsx`
+explaining why it is gone):
+
+| Where | Question | Button |
+|---|---|---|
+| `overlays/TrashSheet.tsx` — Empty trash | `Empty the trash?` / "N items will be deleted for good — removed from disk, not moved anywhere. This cannot be undone." | `Empty Trash`, destructive |
+| `overlays/TrashSheet.tsx` — Purge one row | `Delete “Drafts/Ch_02.md” for good?` / "It is removed from disk, not moved anywhere — this cannot be undone." | `Delete Forever`, destructive |
+| `rightpane/RightPane.tsx` — Versions Restore | `Restore “Drafts/Ch_01.md”?` / "The document goes back to “<label>”. What is in the editor now is snapshotted first, so you can come back to it from this same list." | `Restore`, **not** destructive |
+
+The count stays in the Empty trash copy, as §24c intended. It is one sentence
+for both counts on purpose — the obvious phrasing gives you "1 item … *They*
+are removed", and that seam is what makes a warning read as machine output.
+Purge was a synchronous inline `onClick`; it is a `purge(t)` beside `empty()`
+now, for no reason other than that the answer is awaited. Everything after each
+`if (!ok) return;` is byte-for-byte the code that was there before.
+
+**The finding: `window.confirm` inside the app returned a Promise.** This was
+supposed to be a cosmetic pass. It was not.
+
+`tauri-plugin-dialog` (a dependency in `src-tauri/Cargo.toml`) injects an
+initialization script into every webview — `init-iife.js` in the crate:
+
+```js
+window.alert = function (i) { n("plugin:dialog|message", { message: i.toString() }) },
+window.confirm = async function (i) { return await n("plugin:dialog|confirm", { message: i.toString() }) }
+```
+
+`window.confirm` is replaced by an **async** function. Called from synchronous
+code it returns a pending Promise *immediately*, and a Promise is truthy. So
+
+```js
+if (!window.confirm(`Restore …`)) return;   // never returns
+const ok = window.confirm(`Permanently delete ${n} …`);  // always truthy
+```
+
+**All three gates were dead.** Empty trash, Purge and Restore ran the instant
+the button was pressed, every time, inside the shell — no question, no way to
+back out, and the answer to whatever the plugin did ask discarded. They only
+ever behaved like gates in `npm run dev` in a plain browser, which is exactly
+where they were last looked at. This is not a Linux quirk: the shim is in the
+plugin, so it applies on every platform the app ships to.
+
+So §31c's "the closest thing to a house style was `ConflictDialog`" understated
+the case. There was no house style *and* no working confirm. The delete gate
+that started this was never at risk — `confirmAsk` was new code and never
+touched `window.confirm`.
+
+**Measured, not reasoned.** `src/main.tsx` carried a temporary probe behind
+`VITE_AQ_DIALOG_PROBE` that called the two dialogs and painted the result into
+the page, run under `npm run tauri:dev` on this box (X11 per §28d, scratch
+`XDG_CONFIG_HOME`/`AQ_DEV_VAULT` per §28g, so nothing went near a real vault).
+It printed:
+
+```
+PROBE confirm=[object Promise] ms=1
+```
+
+One millisecond, no dialog, a Promise. The probe was reverted before the
+commit.
+
+**`window.prompt` is fine, and is staying.** The plugin's shim covers `alert`
+and `confirm` and does **not** touch `prompt`, so the Versions "Snapshot
+label:" input falls through to WebKitGTK's own script dialog — which renders
+perfectly well: a real GTK modal titled `JavaScript - http://localhost:1420/`,
+with the default text selected, blocking the page until Cancel or OK. It was
+photographed doing exactly that in the same probe run. So the answer to "are
+script dialogs invisible on Linux?" is **no** — WebKitGTK draws them, and the
+old confirms were broken by the Tauri plugin, not by the platform. `prompt`
+stays a `window.prompt` for now; it is ugly and system-styled, and turning it
+into an in-app text field is a real piece of work (a new overlay with an input,
+not a re-labelled `confirmAsk`), so it is a separate task and not this one.
+
+**One behaviour change that is not the gate.** `Overlay` registers its Escape
+handler on `window`, and every mounted `Overlay` has one. Empty trash and Purge
+are asked from *inside* the Recently Deleted sheet, so a single Escape would
+have cancelled the question *and* closed the sheet behind it. `ConfirmDialog`
+now takes Escape itself in the **capture** phase and stops it there, so Escape
+does exactly one thing. A capture listener on `window` runs before every
+bubble-phase one, which is why it is the phase and not the ordering that
+settles this.
+
+### 31g. Checked in the browser preview (the other three)
+
+`npm run dev`, mock backend, Lantern vault. Two files deleted first to fill the
+trash:
+
+- **Empty trash, 2 items.** `Empty the trash?` / "2 items will be deleted for
+  good — removed from disk, not moved anywhere. This cannot be undone." /
+  `Empty Trash` in red. `document.activeElement` is `.ask-cancel`.
+- **Enter on the fresh dialog does not confirm** — dialog still open, still 2
+  rows in the sheet.
+- **Escape cancels the question and leaves the sheet open** — dialog gone,
+  sheet still there, still 2 rows. That is the capture-phase fix doing its job.
+- **Purge.** `Delete “Drafts/Ch_02.md” for good?` / `Delete Forever` in red.
+  Cancel → 2 rows. Confirm → 1 row, and the remaining row is `Drafts/Ch_01.md`.
+- **Empty trash, 1 item** reads "1 item will be deleted for good — removed from
+  disk…". Confirm → the sheet shows "The trash is empty" and the notice says
+  `Trash emptied — 1 item deleted for good`, i.e. the post-confirm path is
+  unchanged.
+- **Versions Restore.** `Restore “Drafts/Ch_01.md”?` / "The document goes back
+  to “Bench snapshot”…" / `Restore` in the ordinary blue, not red — the one
+  non-destructive question of the four. Focus on Cancel; Enter does not
+  restore; Escape cancels and the version list still has one entry. Confirm →
+  the list has two, `Before restore ★` above `Bench snapshot ★`, which is the
+  "snapshotted first" behaviour it always had.
 
 `npm run build` green. No Rust changed, so `cargo test` was not re-run.

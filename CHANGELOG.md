@@ -18,6 +18,16 @@ as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches
   changed: the file still goes to Recently Deleted, and it is still there
   waiting until you empty the trash.
 
+- **The other three "are you sure?" questions now actually ask — and they were
+  not asking at all.** Emptying the trash, deleting one item from the trash for
+  good, and restoring a document to an earlier version each used the system's
+  own confirm box. Inside the Aquarius window that box never appeared and its
+  answer was thrown away, so all three went ahead the instant you clicked, with
+  no question and no way to back out. They ask properly now, in the same box as
+  the delete question, with the count in the words — "Empty the trash? 12 items
+  will be deleted for good" — and with **Cancel** under your finger. What
+  happens after you say yes is exactly what happened before.
+
 ## v0.5.3 — 2026-09-01
 
 Your book is a thing the app knows about now, not just a folder of files —

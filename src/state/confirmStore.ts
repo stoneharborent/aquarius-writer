@@ -19,9 +19,13 @@ import { create } from "zustand";
  *
  * — rather than splitting itself across a callback.
  *
- * Only the delete gate uses this today. The three remaining `window.confirm`
- * sites (Empty trash, Purge one trash row, Restore a version) are unchanged
- * on purpose — see docs/NOTES.md §31.
+ * Every confirmation in the app comes through here: the delete gate, Empty
+ * trash, Purge one trash row, and Restore a version. There is no
+ * `window.confirm` left in `src/`, and there must not be one — inside the app
+ * it is not a confirm at all. `tauri-plugin-dialog` injects a script that
+ * replaces `window.confirm` with an **async** function, so it hands back a
+ * pending Promise, a Promise is truthy, and `if (!window.confirm(…)) return;`
+ * never returns. The three gates it guarded were open for months. NOTES §31f.
  */
 export interface ConfirmRequest {
   /** The question, as a sentence. e.g. `Delete “Ch_03.md”?` */

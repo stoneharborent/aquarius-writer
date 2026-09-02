@@ -12,6 +12,7 @@ import { useVault } from "@/state/vaultStore";
 import { useEditor } from "@/state/editorStore";
 import { useOverlay } from "@/state/overlayStore";
 import { useShell } from "@/state/shellStore";
+import { confirmAsk } from "@/state/confirmStore";
 import {
   addComment,
   deleteComment,
@@ -172,7 +173,14 @@ function VersionsTab({ wf, path }: { wf: string; path: string }) {
   };
 
   const restore = async (v: VersionEntry) => {
-    if (!window.confirm(`Restore "${path}" to “${v.label}”?\nThe current text is snapshotted first.`)) return;
+    const ok = await confirmAsk({
+      title: `Restore “${path}”?`,
+      body:
+        `The document goes back to “${v.label}”. What is in the editor now is ` +
+        "snapshotted first, so you can come back to it from this same list.",
+      confirmLabel: "Restore",
+    });
+    if (!ok) return;
     await restoreVersion(wf, path, v.id, bodyNow());
     // Reload the doc from disk so the editor shows the restored text (evict
     // cancels the debounced save that would otherwise clobber the restore).

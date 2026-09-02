@@ -20,6 +20,7 @@ import {
 } from "@/lib/vault/aux";
 import { useEditor } from "@/state/editorStore";
 import { useNotices } from "@/state/noticeStore";
+import { confirmAsk } from "@/state/confirmStore";
 import { EmptyState } from "@/components/shell/EmptyState";
 import "./FindReplace.css";
 
@@ -62,15 +63,37 @@ export function TrashSheet() {
     }
   };
 
+  // One row, gone for good. Separate question from Empty trash on purpose:
+  // the name is in the title, because "which one?" is the thing a writer who
+  // hit the wrong row needs answered.
+  const purge = async (t: TrashEntry) => {
+    if (!current) return;
+    const ok = await confirmAsk({
+      title: `Delete \u201c${t.path}\u201d for good?`,
+      body: "It is removed from disk, not moved anywhere — this cannot be undone.",
+      confirmLabel: "Delete Forever",
+      destructive: true,
+    });
+    if (!ok) return;
+    purgeTrashEntry(current.id, t.id);
+    reload();
+  };
+
   // The one bulk destruction in the app. The count is in the question because
   // "Empty the trash?" and "Destroy 41 documents?" are not the same question.
   const empty = async () => {
     if (!current || entries.length === 0) return;
     const n = entries.length;
-    const ok = window.confirm(
-      `Permanently delete ${n} ${n === 1 ? "item" : "items"} from the trash?\n\n` +
-      "This cannot be undone — the files are removed from disk, not moved.",
-    );
+    const ok = await confirmAsk({
+      title: "Empty the trash?",
+      // One sentence for both counts on purpose: "1 item … They are removed"
+      // is the sort of seam that makes a warning read as machine output.
+      body:
+        `${n} ${n === 1 ? "item" : "items"} will be deleted for good — removed ` +
+        "from disk, not moved anywhere. This cannot be undone.",
+      confirmLabel: "Empty Trash",
+      destructive: true,
+    });
     if (!ok) return;
     setEmptying(true);
     try {
@@ -110,11 +133,7 @@ export function TrashSheet() {
                       </span>
                     </div>
                     <button className="fr-replace" onClick={() => void restore(t)}>Restore</button>
-                    <button className="fr-replace danger" onClick={() => {
-                      if (current && window.confirm(`Permanently delete "${t.path}" from trash?`)) {
-                        purgeTrashEntry(current.id, t.id); reload();
-                      }
-                    }}>Purge</button>
+                    <button className="fr-replace danger" onClick={() => void purge(t)}>Purge</button>
                   </div>
                 );
               })}
