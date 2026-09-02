@@ -5295,3 +5295,240 @@ on Versions:
 `npm run build` green. No Rust changed, so `cargo test` was not re-run, and the
 shell was not rebuilt for this — there is no `prompt` call left for WebKitGTK
 to draw a modal for, so the §31f photograph has nothing to reproduce.
+
+---
+
+## 32. Search by meaning — the spike passed, and what it cost
+
+*PARITY row 19, 2026-09-02, the last open row. `docs/semantic-search-research.md`
+recommended `fastembed` + `BAAI/bge-small-en-v1.5` and put a **half-day spike in
+front of it that was allowed to change the answer**: prove ONNX Runtime builds
+and links on both CI runners, or switch to `candle`. It passed on the first
+attempt on both, so everything below is the recommended design as written,
+plus the numbers the research document could not have.*
+
+### 32a. The spike, and the six things it settled
+
+The gate was one dependency, one `Embedder` trait, one implementation that
+loads a model folder off disk, and one test that embeds a sentence — pushed to
+`feat/semantic-search` and run on `ubuntu-24.04` and `macos-14` through
+`workflow_dispatch`. Green on both, first run.
+
+Six of the research document's **unverified** items are now answered:
+
+| Question | Answer |
+|---|---|
+| Does pyke's prebuilt ONNX Runtime link statically or need a bundled dylib? | **Statically.** `ort-sys`'s build script prints `cargo:rustc-link-lib=static=onnxruntime` and pulls `ms@1.28.0/<target>.tar.lzma2` from `cdn.pyke.io`. **No dylib is bundled on either platform, no rpath, no `frameworks` or AppImage `files` entry.** Confirmed by unpacking both CI artifacts: the `.app` contains exactly one file in `Contents/MacOS/` and the AppImage exactly one in `usr/bin/`, and neither tree has anything matching `*onnx*` in it. |
+| How big is the static archive? | `libonnxruntime.a` is **101 MB** on disk on Linux. That is the archive, not the delta — the linker keeps a fraction of it. |
+| What does it add to the shipped app? | **AppImage 84.1 MB → 93.0 MB (+8.9 MB, +11%). Mac zip 10.3 MB → 19.1 MB (+8.8 MB, +85%).** The Linux binary itself is 59.7 MB and the Mac binary 53.1 MB. Well under the ~35 MB the research document budgeted for a bundled shared library, and the reason the "download the model separately" decision still pays: baking the 34 MB model in on top of this would have taken the AppImage past 125 MB. |
+| Does `minimumSystemVersion` have to be raised on macOS? | **Yes — to 13.3**, which is ONNX Runtime's own floor. Tauri's default is 10.13, and it is silent: the build succeeds and produces an app that cannot start on the machines it claims to support. `tauri.conf.json` now sets it, and the published `Info.plist` was checked to be sure it took. |
+| What does it cost in build time? | Almost nothing once the cache is warm. Cold (the lockfile changed, so the whole tree recompiled): **macOS 7m17s, Linux 9m20s**, against a warm baseline of 3m47s / 6m54s on `main`. The next run on the branch, warm: **macOS 4m25s, Linux 5m40s** — inside the noise of the baseline. `ort-sys` compiles in about 40 seconds and the download of the prebuilt runtime is a few seconds. |
+| How fast is one embedding, really? | The research document reasoned "10–60 ms per ~500-token chunk" and marked it unverified. Measured here: **loading the model and embedding four sentences takes about 120 ms total** on this container's CPU, and a four-document vault indexes and answers a query with no perceptible pause. Still not a benchmark — but it is the right order, and nothing about it needs a progress bar for a small vault. |
+
+What is **still** unverified, and honestly cannot be settled here: whether
+cosine *ranking* is stable across ONNX Runtime versions and execution
+providers. The index is keyed on the model file's hash and rebuilt on any
+mismatch, so the blast radius of that being false is a rebuild, not a wrong
+answer — which is why it was designed that way rather than measured.
+
+`candle`, the named fallback, was never needed. It stays named: the `Embedder`
+trait is one function, and if `ort`'s two-year release candidate ever becomes a
+problem, the swap does not touch the index, the UI or the MCP tool.
+
+### 32b. What the dependency actually is, and what was turned off
+
+```toml
+fastembed = { version = "6", default-features = false,
+              features = ["ort-download-binaries-rustls-tls"] }
+```
+
+Three deliberate omissions in that line:
+
+- **`hf-hub` is off.** `fastembed` will happily download a model from Hugging
+  Face itself. Leaving that on would give the app a second downloader, one
+  that checks nothing and points at a host we do not control. The app has
+  exactly one downloader — the updater's `ureq` + `sha2` path — and it is
+  reused here.
+- **`image-models` is off**, along with the `image` crate that comes with it.
+- **`rustls`, not native TLS**, for the same reason `ureq` is configured that
+  way: no OpenSSL on the build machine.
+
+The `Embedder` trait carries one real implementation (`FastEmbed`) and, in
+test builds only, a word-bag fake that lets chunking, the file format, the
+ranking and the refusals all be tested on a machine with no model.
+
+### 32c. bge wants CLS pooling and a query prefix, and getting either wrong is silent
+
+Two settings decide whether the vectors are embeddings or plausible-looking
+noise, and neither fails loudly if it is wrong:
+
+- **`Pooling::Cls`.** bge's sentence representation is the `[CLS]` token, not
+  a mean over the sequence. `fastembed` will let you pick either; the wrong
+  one produces vectors of exactly the right shape whose neighbours are wrong.
+- **The query prefix.** `"Represent this sentence for searching relevant
+  passages: "` goes in front of the **query** and never in front of a
+  document. It lives in the manifest's `model.queryPrefix` and is read from
+  there rather than hard-coded at the call site, so a model that wants a
+  different one — or none — needs no change to the search.
+
+The test that guards both is not "it returned 384 floats". It is that
+*"She decided to leave him and never come back"* scores higher against *"He
+walked out of the marriage for good"* than against *"The carburettor needs a
+new gasket."* That assertion fails if either setting is wrong.
+
+### 32d. The model is not in the app, and the pinned digest is the authority
+
+The five model files plus a licence notice live on this repo's **`models-v1`**
+release — a release with no app version attached to it, so an app update never
+touches the model and a model update never implies an app release.
+
+The download follows the updater's path (`ureq`, `sha2`, whole-percent
+progress) with one addition: **every file has to match a digest compiled into
+the binary.** The release's own `SHA256SUMS.txt` is fetched and cross-checked,
+and a disagreement stops the download before a single byte is written — but
+the constant is what is trusted. A release asset can be replaced later by
+anyone who can write to the repo; a constant in a shipped binary cannot. This
+matters more here than for an app update, because the file being fetched is a
+34 MB executable graph that will be handed to a runtime.
+
+A file that fails its check is deleted rather than left under its real name,
+so a half-finished download reads as **"no model"** rather than as a broken
+one — which is the state the card knows how to draw.
+
+Nothing downloads because a sheet was opened. It is a button somebody presses,
+in Find or in Settings → Search, and there is deliberately **no MCP tool for
+it**: 35 MB on the writer's disk is consent, the same way compile's output
+folder is a native dialog.
+
+### 32e. The index is a cache, and everything follows from that
+
+`.aquarius/semantic.nosync/<model-key>/` — a manifest and one `.vec` file per
+document, exactly as the research document proposed. `<model-key>` is
+`baai--bge-small-en-v1.5--6c9c6101a956`: publisher, model, and the first twelve
+hex of **the model file's own SHA-256**. Not a version string. Two builds of
+"the same" model are two models and must not share a folder.
+
+Because the index is derived, disposable state, five rules fall out and all
+five are tested:
+
+1. **Anything may delete it.** A corrupt manifest or a truncated `.vec` is
+   skipped and rebuilt, never reported. There is no error dialog anywhere in
+   this feature for a damaged index.
+2. **A key mismatch rebuilds; it never reinterprets.** Folders belonging to
+   other models are pruned rather than converted.
+3. **A stamp mismatch re-embeds that one document.** The stamp is the
+   `FileStamp.hash` the conflict guard already computes (§20), so nothing new
+   is being hashed for this.
+4. **Writes are atomic**, through the same `write_atomic` the sessions use,
+   and `.aquarius/` is outside the watcher, so indexing never looks like an
+   external edit (§3c).
+5. **Unknown keys survive** in both JSON layers, so a newer build of either
+   app can add a field without this one destroying it.
+
+Chunks are 180 words, matching the Swift app, packed from whole paragraphs and
+split at sentence ends only when one paragraph is itself over the limit. Each
+records the **0-based body line** it starts on — the same numbering
+`insert_text` and `replace_lines` count (§23b) — so a hit can be jumped to
+without anything re-deriving where it was.
+
+### 32f. Nothing here runs on the keystroke path
+
+§27l's rule is that nothing O(document) may sit between a key going down and a
+character appearing. Embedding a chapter is roughly a second's work, so this
+feature had to be kept off that path entirely, and there are four entry points
+where it could have crept on:
+
+| Entry point | What happens |
+|---|---|
+| Saving a document (`vault_write_file`) | Checks one boolean and hands a closure to `spawn_blocking`. The save returns before a chunk is embedded. The editor's own debounce is the only throttle needed — this fires at the cadence the disk does, not the keyboard. |
+| Opening a vault (`vault_load_workflow`) | Starts one background pass comparing content hashes with the manifest. Nothing is embedded unless something changed, so re-opening an indexed vault is a few KB of reads; opening one for the first time is the backfill, with progress on `semantic://state`. |
+| An MCP write | Hooked once, in `AquariusMcp::notify`, which every mutating tool already ends with — rather than at eight call sites, one of which would eventually be forgotten. |
+| An edit made outside the app | The watcher reloads the workflow, which is the entry above. Verified on the bench by appending to a file with `cat` while the app was running. |
+
+A rename or move **re-keys** the vectors and rewrites the header's path; it
+does not re-embed. A trashed document loses its vectors, so the index can
+never return a hit in a file that is not there.
+
+### 32g. What the writer sees, and the two words that are not used
+
+The Find sheet gets a two-way segmented control — **Exact · By meaning** —
+with Exact as the default, and the Replace field hides under By meaning
+because replacing everything that means something is not an operation to offer
+anyone. The sheet probes on open, so it knows which of four states it is in
+before anyone clicks: model ready, indexing, absent, or broken.
+
+With no model, the results slot holds a **card**, not a disabled tab: what the
+feature is, that it needs a one-time 35 MB download, the model's name and
+licence, that it runs on this computer and sends nothing anywhere, a Download
+button, and a way back to exact search. Offline, the button is disabled and
+says why rather than retrying in a loop.
+
+The copy says **"by meaning"**. It never says "AI search", and it never
+implies the results are authoritative. A 33-million-parameter model is a good
+small model, not magic — "the scene where she decides to leave" will find that
+scene most of the time, and a query naming a character the model has never
+heard of will lean on the words around it. That is why the exact search is
+always one click away and never changed.
+
+Settings gains a **Search** tab so the 35 MB is never invisible: the model's
+name, its licence, what it occupies, a rebuild button and a Remove. Removing
+the model leaves the index alone — it is keyed on that model, so a later
+re-download finds its own vectors intact.
+
+### 32h. The browser preview gets an honest fake, and compile still does not
+
+Compile's mock says "there is no backend here", because a fake that pretends
+to have produced an EPUB is a lie about a file on disk. A search writes
+nothing, so `src/lib/semantic.ts` carries a real — if crude — shared-word
+search over the mock vault. It exercises the whole layout in `npm run dev`:
+the toggle, the ranked results, the grouped previews and the line numbers.
+`?semantic=absent` draws the download card instead.
+
+It knows nothing about meaning, and the code says so where someone might
+otherwise mistake it for the real thing.
+
+### 32i. Bench checklist (Linux, in the real shell)
+
+Run as §28g requires — isolated `XDG_CONFIG_HOME` / `XDG_DATA_HOME`, a scratch
+vault, never Royce's. **`AQ_DEV_VAULT` and an isolated config dir are not
+optional here**: this feature writes into `.aquarius/` of whatever vault the
+app has open.
+
+```
+export XDG_CONFIG_HOME="$HOME/aq-sem-config"
+export XDG_DATA_HOME="$HOME/aq-sem-data"
+export AQ_DEV_VAULT="$HOME/aq-semantic-bench"
+```
+
+Pre-writing `mcp.json` with `{"enabled": true}` into
+`$XDG_CONFIG_HOME/os.aquarius.writer/` starts the MCP server on launch, which
+is how the tool below was exercised without clicking anything.
+
+What was checked, on a four-document scratch vault:
+
+- **No model:** `search_semantic` answers
+  `{"available": false, "reason": "model-missing", "hint": …}` with
+  `isError: false`. An answer, not a failure.
+- **Backfill:** with the model in place, opening the vault writes a manifest
+  and four `.vec` files with no prompting.
+- **A query keyword search cannot answer:** *"the moment she leaves her
+  husband"* returns the leaving scene at 0.56 — a passage containing none of
+  those words — while `search` for "leaves her husband" returns `[]`.
+- **Edit then requery:** an `insert_text` through MCP re-embeds **only** that
+  document (its `updatedAt` moves, the other three do not) and the document
+  climbs the ranking for a query about its new content.
+- **Rename then requery:** `rename_document` moves the vectors across
+  unchanged — same score, new path — and the next full pass embeds nothing.
+- **Delete then requery:** `trash_document` removes the entry and the `.vec`,
+  and the document stops appearing in results.
+- **An edit made outside the app:** appending to a file with `cat` while the
+  app runs updates the manifest's stamp to the file's new hash.
+- **The real download:** `AQ_SEMANTIC_LIVE_DOWNLOAD=1 cargo test` fetches all
+  six files from `models-v1` and checks every digest. About five seconds.
+
+The one thing **not** driven by hand in the shell is the Download button
+itself — a Wayland window here cannot be screenshotted (§28d, and X11 window
+capture is refused by this GNOME session too), so the click was not simulated.
+The button calls `model::download`, which is the function the live test above
+exercises end to end against the real release, and the card and the Settings
+panel were both reviewed in the browser preview.

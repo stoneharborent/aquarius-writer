@@ -566,7 +566,8 @@ src-tauri/               the desktop shell (Rust)
   src/commands.rs        every invoke() the interface makes, in one file
   src/vault/             workflow registry, workflow.json, the folder walk
   src/vault/ops.rs       the operations the UI and the MCP server both use
-  src/mcp/               the MCP server: the switch, and the 15 tools
+  src/mcp/               the MCP server: the switch, and the 33 tools
+  src/semantic/          search by meaning: the model, the index, the scan
   src/pty/               the terminal pane's shells (one pseudo-terminal each)
   src/fs_ops/            saving, trash + retention, the file watcher
   src/aux_store.rs       version history / comments / searches in .aquarius/

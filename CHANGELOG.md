@@ -6,6 +6,51 @@ description word for word. So write these entries for the person downloading the
 app, not for the person who wrote the code — and keep the heading shape exactly
 as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches on.
 
+## Unreleased
+
+- **You can search for what a passage is about, not just the words in it.**
+  Find (⇧⌘F) has a small switch on it now: **Exact** is the search you already
+  have, and **By meaning** looks for the passage you are describing. Ask it for
+  "the scene where she decides to leave" and it will find that scene even if
+  nobody in it uses the word "leave". Results are grouped by document, with the
+  matching passage shown and the line it starts on, so one click puts you in the
+  right place. Exact stays the default and is always one click away — the two
+  searches are good at different things, and this one is a helpful reader, not
+  an oracle.
+
+- **It needs a one-time download, and it asks first.** Searching by meaning uses
+  a 35 MB language model. It is not built into the app, because most of that
+  would be dead weight for anyone who never turns the feature on. The first time
+  you switch to By meaning you get a card explaining what it is and a
+  **Download** button — nothing is fetched until you press it. Every file is
+  checked against a fingerprint the app was built with, so a download that
+  arrives damaged is thrown away rather than used.
+
+- **Nothing you write leaves your computer.** The model runs on this machine, on
+  the processor, with no account and no internet connection after that first
+  download. There is no cloud service behind this and there is nothing to sign
+  in to.
+
+- **Settings has a new Search tab.** It tells you whether the model is
+  downloaded, exactly how much room it is taking, and gives you a **Remove**
+  button if you want the space back. Removing it leaves the ordinary search
+  working exactly as it does now.
+
+- **It keeps itself up to date quietly.** Your writing is indexed in the
+  background — when you open a workflow and as you save — and it never gets in
+  the way of typing. Renaming or moving a document carries its index across
+  without redoing the work, and deleting one takes it out of the results.
+
+- **AI assistants can use it too.** The app's MCP server gains a
+  `search_semantic` tool, so Claude Code can look through your vault the same
+  way you can. If you have not downloaded the model it says so plainly and falls
+  back to the exact-text search, rather than failing. It cannot start the
+  download — that stays your decision, in the app.
+
+- **Macs now need macOS 13.3 or newer.** The search engine underneath this
+  feature does not run on anything older. Everything else about the app is
+  unchanged.
+
 ## v0.5.5 — 2026-09-02
 
 - **Naming a snapshot happens inside Aquarius now.** "Take snapshot" in the

@@ -438,6 +438,19 @@ share one index by writing under the same key.
 
 ---
 
+## Shipped — and what that changed about this document
+
+**Built 2026-09-02, as recommended, on branch `feat/semantic-search`.** The
+spike in §7 passed on `ubuntu-24.04` and `macos-14` at the first attempt, so
+`candle` was never called for. Six of the unverified items below are now
+answered — the ONNX Runtime prebuilt links **statically** (no dylib, no rpath),
+the AppImage grew 84.1 → 93.0 MB and the Mac zip 10.3 → 19.1 MB,
+`minimumSystemVersion` did have to go to 13.3, warm CI build time is inside the
+baseline's noise, and loading the model plus embedding four sentences is about
+120 ms. **See `docs/NOTES.md` §32 for the measurements and for what shipped.**
+The list below is left as it was written, so it stays a record of what was and
+was not known at the time.
+
 ## Things this document could not verify
 
 - The uncompressed size of the ONNX Runtime CPU library on either platform,
