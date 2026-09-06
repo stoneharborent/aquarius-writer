@@ -541,6 +541,13 @@ Two things to know:
   operating system, and an app wearing the OS's own logo in the OS's own
   taskbar reads as "system settings", not "the writing app". The OS mark belongs
   to the OS. Easily reversed if Royce disagrees — one `npx tauri icon` run.
+- **Superseded 2026-09-06.** The 4K Swift logo was always a stand-in. The whole
+  set is now generated from a designed mark checked in at
+  `src-tauri/icons/aquarius-writer.svg` (1024×1024, plate baked in, Midnight
+  tokens), with `npx tauri icon src-tauri/icons/aquarius-writer.svg`. The
+  reasoning below still holds — it is the Writer's mark, not the OS's — only the
+  source file changed, and it now lives in this repo instead of pointing at the
+  Swift app's folder.
 - Stage 4 added `icons/64x64.png` and the 512×512 `icons/icon.png` to
   `bundle.icon`. The Linux bundler installs each PNG into
   `/usr/share/icons/hicolor/<size>/apps/` by reading its real dimensions, so

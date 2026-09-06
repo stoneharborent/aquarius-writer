@@ -583,15 +583,22 @@ docs/screenshots/        review shots, one folder per theme
 scripts/nosync-link.sh   iCloud housekeeping (see below)
 ```
 
-**Regenerating the icons.** Every icon comes from one 4096×4096 master, the
-Swift app's own logo. If it ever changes, one command redoes the whole set:
+**Regenerating the icons.** Every icon comes from one master that lives in this
+repo: `src-tauri/icons/aquarius-writer.svg`, a 1024×1024 drawing of the Writer's
+mark with its rounded plate already part of the artwork. If it ever changes, one
+command redoes the whole set:
 
 ```bash
-npx tauri icon "/path/to/Branches/Apps/AquariusWriter/swift/Logo-Master-4K.png"
+npx tauri icon src-tauri/icons/aquarius-writer.svg
 ```
 
+That also writes `src-tauri/icons/android/` and `src-tauri/icons/ios/`, which
+this desktop-only app has no use for — delete both folders afterwards.
+
 It is the Writer's own mark on purpose, not the AquariusOS logo — this is an app
-in the Aquarius suite, not the operating system itself.
+in the Aquarius suite, not the operating system itself. The colours in it are the
+AquariusOS Midnight tokens, which is what makes it look like it belongs to the
+suite without being the OS's own logo.
 
 **The seam that matters:** `src/lib/vault/service.ts` defines nine methods.
 `browser-service.ts` implements them with fake data (the browser preview).
