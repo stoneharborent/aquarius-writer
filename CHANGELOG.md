@@ -8,6 +8,11 @@ as it is (`## v0.1.0 — 2026-08-28`), because that is what the workflow matches
 
 ## Unreleased
 
+- **Aquarius Writer has its own icon.** The one you have seen until now was
+  borrowed from the old Mac app's logo as a stand-in. The new mark is drawn for
+  this app, in the AquariusOS Midnight colours, and it shows up everywhere the
+  old one did: the dock, the app switcher, the window, and the welcome screen.
+
 - **Building the search index no longer stops on one odd file.** If a single
   file in your vault could not be read, the whole indexing pass gave up
   silently — and the window sat on "Reading 857 of 858…" forever, with the 857
